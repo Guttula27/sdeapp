@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { OrdersGateway } from '../orders/orders.gateway';
 import { PaymentMode } from '@prisma/client';
 import { LifecycleDispatcherService } from '../customer-alerts/lifecycle-dispatcher.service';
+import { RazorpayService } from './razorpay.service';
 
 @Injectable()
 export class PaymentsService {
@@ -10,6 +11,7 @@ export class PaymentsService {
     private prisma: PrismaService,
     private ordersGateway: OrdersGateway,
     private dispatcher: LifecycleDispatcherService,
+    private razorpay: RazorpayService,
   ) {}
 
   async initiatePayment(orderId: string, mode: PaymentMode, amount: number) {
@@ -79,8 +81,67 @@ export class PaymentsService {
     return this.prisma.payment.findMany({ where: { orderId } });
   }
 
-  async handleRazorpayWebhook(payload: any, signature: string) {
-    // Verify signature and process webhook
+  // Create a Razorpay order for an existing PENDING Payment. We persist the
+  // razorpay order id on the gatewayResponse so the verify endpoint can
+  // cross-check it against the handler payload.
+  async createRazorpayOrder(paymentId: string) {
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { order: { include: { outlet: { select: { name: true } } } } },
+    });
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.status !== 'PENDING') {
+      throw new BadRequestException('Payment is not in PENDING state');
+    }
+
+    const order = await this.razorpay.createOrder({
+      amountInRupees: Number(payment.amount),
+      receipt: `pay_${payment.id}`,
+      notes: { paymentId: payment.id, orderId: payment.orderId },
+    });
+
+    await this.prisma.payment.update({
+      where: { id: paymentId },
+      data: {
+        gatewayRef: order.id,
+        gatewayResponse: { provider: 'razorpay', order } as any,
+      },
+    });
+
+    return {
+      paymentId: payment.id,
+      keyId: this.razorpay.keyId,
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      outletName: payment.order.outlet?.name ?? 'Outlet',
+    };
+  }
+
+  async verifyRazorpayPayment(input: {
+    paymentId: string;
+    razorpayOrderId: string;
+    razorpayPaymentId: string;
+    razorpaySignature: string;
+  }) {
+    const payment = await this.prisma.payment.findUnique({ where: { id: input.paymentId } });
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.gatewayRef !== input.razorpayOrderId) {
+      throw new BadRequestException('Razorpay order id mismatch');
+    }
+    const ok = this.razorpay.verifyHandlerSignature(
+      input.razorpayOrderId,
+      input.razorpayPaymentId,
+      input.razorpaySignature,
+    );
+    if (!ok) throw new UnauthorizedException('Invalid Razorpay signature');
+    return this.confirmPayment(payment.id, input.razorpayPaymentId);
+  }
+
+  async handleRazorpayWebhook(payload: any, signature: string, rawBody: string) {
+    if (!this.razorpay.verifyWebhookSignature(rawBody, signature)) {
+      throw new UnauthorizedException('Invalid webhook signature');
+    }
     const event = payload.event;
     if (event === 'payment.captured') {
       const paymentId = payload.payload?.payment?.entity?.notes?.paymentId;

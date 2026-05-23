@@ -187,13 +187,86 @@ export default function PaymentPage() {
     paymentMode: 'UPI',
     notes: 'TEST BYPASS: payment auto-marked SUCCESS during dev testing.',
   });
-  const finishGateway  = () => {
+
+  // Gateway flow opens Razorpay checkout. Unlike UPI/Bypass which mark the
+  // Payment SUCCESS at order-creation time, this path leaves the Payment
+  // PENDING until Razorpay's handler returns a verified signature.
+  const finishGateway = async () => {
+    if (typeof window === 'undefined' || !(window as any).Razorpay) {
+      toast.error('Payment gateway not loaded — refresh and try again');
+      return;
+    }
     const modeInfo = GATEWAY_MODES.find(m => m.key === gatewayMode)!;
-    placeOrder({
-      paymentMode: modeInfo.apiMode,
-      notes: `Paid via ${gateway?.providerName ?? 'Gateway'} (${modeInfo.label}). ` +
-        `Gateway charge: ₹${gatewayCharge.toFixed(2)} (${gatewayChargePct}%).`,
-    });
+    setCreating(true);
+    try {
+      let orderId = state.billOrderId;
+      // Cart path: create the order WITHOUT paymentMode so no SUCCESS payment
+      // is auto-stamped. We attach payment via /payments/initiate next.
+      if (!orderId) {
+        const { data } = await api.post(`/outlets/${state.outletId}/orders`, {
+          tableId: state.tableId || undefined,
+          isParcel: state.isParcel,
+          items: (state.cart || []).map((c: any) => ({
+            itemId: c.itemId,
+            variantId: c.variantId,
+            quantity: c.quantity,
+            toppings: c.toppings?.map((t: any) => ({ toppingId: t.toppingId, optionId: t.optionId })) || undefined,
+          })),
+        });
+        orderId = data.data.id;
+        try { sessionStorage.removeItem(`cart-${state.outletId}`); } catch {}
+      }
+
+      const { data: init } = await api.post('/payments/initiate', {
+        orderId,
+        mode: modeInfo.apiMode,
+        amount: gatewayFinal,
+      });
+      const paymentId = init?.data?.paymentId;
+      if (!paymentId) throw new Error('Payment could not be initiated');
+
+      const { data: rzp } = await api.post('/payments/razorpay/order', { paymentId });
+      const { keyId, orderId: rzpOrderId, amount, currency, outletName: payeeName } = rzp.data || {};
+      if (!keyId || !rzpOrderId) throw new Error('Gateway order could not be created');
+
+      await new Promise<void>((resolve, reject) => {
+        const rzpInstance = new (window as any).Razorpay({
+          key: keyId,
+          order_id: rzpOrderId,
+          amount,
+          currency,
+          name: payeeName || outletName,
+          description: `Order ${orderId}`,
+          prefill: user ? { name: user.name, contact: user.phone, email: user.email || undefined } : undefined,
+          notes: { paymentId, orderId },
+          theme: { color: '#f97316' },
+          modal: { ondismiss: () => reject(new Error('Payment cancelled')) },
+          handler: async (response: any) => {
+            try {
+              await api.post('/payments/razorpay/verify', {
+                paymentId,
+                razorpayOrderId: response.razorpay_order_id,
+                razorpayPaymentId: response.razorpay_payment_id,
+                razorpaySignature: response.razorpay_signature,
+              });
+              resolve();
+            } catch (err) {
+              reject(err);
+            }
+          },
+        });
+        rzpInstance.on('payment.failed', (resp: any) => {
+          reject(new Error(resp?.error?.description || 'Payment failed'));
+        });
+        rzpInstance.open();
+      });
+
+      navigate(`/receipt/${orderId}`, { replace: true });
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || e.message || `Paid via ${gateway?.providerName ?? 'Gateway'} failed`);
+    } finally {
+      setCreating(false);
+    }
   };
 
   /* ── Shared header ── */

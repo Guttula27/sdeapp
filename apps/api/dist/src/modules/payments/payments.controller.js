@@ -32,9 +32,15 @@ let PaymentsController = class PaymentsController {
     getByOrder(orderId) {
         return this.service.getPaymentsByOrder(orderId);
     }
-    razorpayWebhook(payload) {
-        const signature = '';
-        return this.service.handleRazorpayWebhook(payload, signature);
+    razorpayOrder(paymentId) {
+        return this.service.createRazorpayOrder(paymentId);
+    }
+    razorpayVerify(body) {
+        return this.service.verifyRazorpayPayment(body);
+    }
+    razorpayWebhook(payload, signature, req) {
+        const raw = req?.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(payload);
+        return this.service.handleRazorpayWebhook(payload, signature || '', raw);
     }
 };
 exports.PaymentsController = PaymentsController;
@@ -70,12 +76,34 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], PaymentsController.prototype, "getByOrder", null);
 __decorate([
+    (0, swagger_1.ApiBearerAuth)(),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)('razorpay/order'),
+    openapi.ApiResponse({ status: 201 }),
+    __param(0, (0, common_1.Body)('paymentId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], PaymentsController.prototype, "razorpayOrder", null);
+__decorate([
+    (0, swagger_1.ApiBearerAuth)(),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)('razorpay/verify'),
+    openapi.ApiResponse({ status: 201 }),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], PaymentsController.prototype, "razorpayVerify", null);
+__decorate([
     (0, public_decorator_1.Public)(),
     (0, common_1.Post)('webhooks/razorpay'),
     openapi.ApiResponse({ status: 201, type: Object }),
     __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Headers)('x-razorpay-signature')),
+    __param(2, (0, common_1.Req)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, String, Object]),
     __metadata("design:returntype", void 0)
 ], PaymentsController.prototype, "razorpayWebhook", null);
 exports.PaymentsController = PaymentsController = __decorate([

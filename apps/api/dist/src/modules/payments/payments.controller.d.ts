@@ -48,7 +48,32 @@ export declare class PaymentsController {
         gatewayResponse: import("@prisma/client/runtime/library").JsonValue | null;
         orderId: string;
     }[]>;
-    razorpayWebhook(payload: any): Promise<{
+    razorpayOrder(paymentId: string): Promise<{
+        paymentId: string;
+        keyId: string | undefined;
+        orderId: string;
+        amount: number;
+        currency: string;
+        outletName: string;
+    }>;
+    razorpayVerify(body: {
+        paymentId: string;
+        razorpayOrderId: string;
+        razorpayPaymentId: string;
+        razorpaySignature: string;
+    }): Promise<{
+        id: string;
+        status: import(".prisma/client").$Enums.PaymentStatus;
+        createdAt: Date;
+        updatedAt: Date;
+        amount: import("@prisma/client/runtime/library").Decimal;
+        mode: import(".prisma/client").$Enums.PaymentMode;
+        isRefund: boolean;
+        gatewayRef: string | null;
+        gatewayResponse: import("@prisma/client/runtime/library").JsonValue | null;
+        orderId: string;
+    }>;
+    razorpayWebhook(payload: any, signature: string, req: any): Promise<{
         id: string;
         status: import(".prisma/client").$Enums.PaymentStatus;
         createdAt: Date;

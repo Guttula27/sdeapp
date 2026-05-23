@@ -15,11 +15,13 @@ const prisma_service_1 = require("../../config/prisma/prisma.service");
 const orders_gateway_1 = require("../orders/orders.gateway");
 const client_1 = require("@prisma/client");
 const lifecycle_dispatcher_service_1 = require("../customer-alerts/lifecycle-dispatcher.service");
+const razorpay_service_1 = require("./razorpay.service");
 let PaymentsService = class PaymentsService {
-    constructor(prisma, ordersGateway, dispatcher) {
+    constructor(prisma, ordersGateway, dispatcher, razorpay) {
         this.prisma = prisma;
         this.ordersGateway = ordersGateway;
         this.dispatcher = dispatcher;
+        this.razorpay = razorpay;
     }
     async initiatePayment(orderId, mode, amount) {
         const order = await this.prisma.order.findUnique({ where: { id: orderId } });
@@ -74,7 +76,53 @@ let PaymentsService = class PaymentsService {
     async getPaymentsByOrder(orderId) {
         return this.prisma.payment.findMany({ where: { orderId } });
     }
-    async handleRazorpayWebhook(payload, signature) {
+    async createRazorpayOrder(paymentId) {
+        const payment = await this.prisma.payment.findUnique({
+            where: { id: paymentId },
+            include: { order: { include: { outlet: { select: { name: true } } } } },
+        });
+        if (!payment)
+            throw new common_1.NotFoundException('Payment not found');
+        if (payment.status !== 'PENDING') {
+            throw new common_1.BadRequestException('Payment is not in PENDING state');
+        }
+        const order = await this.razorpay.createOrder({
+            amountInRupees: Number(payment.amount),
+            receipt: `pay_${payment.id}`,
+            notes: { paymentId: payment.id, orderId: payment.orderId },
+        });
+        await this.prisma.payment.update({
+            where: { id: paymentId },
+            data: {
+                gatewayRef: order.id,
+                gatewayResponse: { provider: 'razorpay', order },
+            },
+        });
+        return {
+            paymentId: payment.id,
+            keyId: this.razorpay.keyId,
+            orderId: order.id,
+            amount: order.amount,
+            currency: order.currency,
+            outletName: payment.order.outlet?.name ?? 'Outlet',
+        };
+    }
+    async verifyRazorpayPayment(input) {
+        const payment = await this.prisma.payment.findUnique({ where: { id: input.paymentId } });
+        if (!payment)
+            throw new common_1.NotFoundException('Payment not found');
+        if (payment.gatewayRef !== input.razorpayOrderId) {
+            throw new common_1.BadRequestException('Razorpay order id mismatch');
+        }
+        const ok = this.razorpay.verifyHandlerSignature(input.razorpayOrderId, input.razorpayPaymentId, input.razorpaySignature);
+        if (!ok)
+            throw new common_1.UnauthorizedException('Invalid Razorpay signature');
+        return this.confirmPayment(payment.id, input.razorpayPaymentId);
+    }
+    async handleRazorpayWebhook(payload, signature, rawBody) {
+        if (!this.razorpay.verifyWebhookSignature(rawBody, signature)) {
+            throw new common_1.UnauthorizedException('Invalid webhook signature');
+        }
         const event = payload.event;
         if (event === 'payment.captured') {
             const paymentId = payload.payload?.payment?.entity?.notes?.paymentId;
@@ -91,6 +139,7 @@ exports.PaymentsService = PaymentsService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         orders_gateway_1.OrdersGateway,
-        lifecycle_dispatcher_service_1.LifecycleDispatcherService])
+        lifecycle_dispatcher_service_1.LifecycleDispatcherService,
+        razorpay_service_1.RazorpayService])
 ], PaymentsService);
 //# sourceMappingURL=payments.service.js.map

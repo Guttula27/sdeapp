@@ -127,7 +127,7 @@ export default function ScanPage() {
         )}
       </div>
 
-      {/* Outlet picker (test-mode shortcut, until QR scanning is wired up) */}
+      {/* Outlet picker — kept alongside the live QR scanner for desktop/testing where a camera isn't available. */}
       <div className="px-4 pt-5 pb-6 flex-1 overflow-y-auto">
         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Or pick an outlet</p>
         {outletsLoading ? (

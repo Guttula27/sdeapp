@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Param, Body, Headers, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -31,10 +31,33 @@ export class PaymentsController {
     return this.service.getPaymentsByOrder(orderId);
   }
 
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Post('razorpay/order')
+  razorpayOrder(@Body('paymentId') paymentId: string) {
+    return this.service.createRazorpayOrder(paymentId);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Post('razorpay/verify')
+  razorpayVerify(@Body() body: {
+    paymentId: string;
+    razorpayOrderId: string;
+    razorpayPaymentId: string;
+    razorpaySignature: string;
+  }) {
+    return this.service.verifyRazorpayPayment(body);
+  }
+
   @Public()
   @Post('webhooks/razorpay')
-  razorpayWebhook(@Body() payload: any) {
-    const signature = '';
-    return this.service.handleRazorpayWebhook(payload, signature);
+  razorpayWebhook(
+    @Body() payload: any,
+    @Headers('x-razorpay-signature') signature: string,
+    @Req() req: any,
+  ) {
+    const raw = req?.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(payload);
+    return this.service.handleRazorpayWebhook(payload, signature || '', raw);
   }
 }
