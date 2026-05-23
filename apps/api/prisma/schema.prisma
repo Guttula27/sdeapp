@@ -1,0 +1,1365 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum BusinessType {
+  RESTAURANT
+  QSR
+  FOOD_COURT
+  CAFETERIA
+  PARCEL_OUTLET
+  DINE_IN
+  HYBRID
+}
+
+enum OutletType {
+  SELF_SERVICE
+  SELF_SERVICE_PARCEL
+  DINE_IN_PREPAID
+  DINE_IN_POSTPAID
+  HYBRID
+}
+
+enum OrderStatus {
+  CREATED
+  QUEUED
+  PREPARING
+  READY
+  OUT_FOR_SERVICE
+  SERVED
+  CANCELLED
+  DISPUTED
+  RESOLVED
+  FOR_REFUND
+  REFUND_COMPLETE
+}
+
+enum OrderItemStatus {
+  PENDING
+  PREPARING
+  READY
+  SERVED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMode {
+  UPI
+  CARD
+  CASH
+  WALLET
+  NET_BANKING
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+}
+
+enum QRType {
+  TABLE
+  OUTLET
+  CUSTOMER
+  PAYMENT
+}
+
+// ─── 3rd-party integrations & messaging ──────────────────
+enum IntegrationChannel {
+  WHATSAPP
+  SMS
+  EMAIL
+  PAYMENT_GATEWAY
+}
+
+enum TemplateChannel {
+  WHATSAPP
+  SMS
+  EMAIL
+}
+
+enum TemplateScope {
+  PLATFORM
+  BUSINESS
+  OUTLET
+}
+
+enum TemplateCategory {
+  TRANSACTIONAL
+  PROMOTIONAL
+  UTILITY
+  AUTH
+}
+
+// Approval workflow:
+//   DRAFT             → editable by author
+//   PENDING_PLATFORM  → submitted by business/outlet, awaiting platform admin review
+//   PENDING_PROVIDER  → platform approved, awaiting provider (Meta/Gupshup/etc.) review
+//   APPROVED          → live, usable for sending
+//   REJECTED          → rejected by platform or provider, see rejectionReason
+enum TemplateApprovalStatus {
+  DRAFT
+  PENDING_PLATFORM
+  PENDING_PROVIDER
+  APPROVED
+  REJECTED
+}
+
+// ─── Platform / Auth ─────────────────────────────────────
+
+model User {
+  id           String     @id @default(cuid())
+  email        String?    @unique
+  phone        String     @unique
+  name         String
+  passwordHash String?
+  status       UserStatus @default(ACTIVE)
+  avatarUrl    String?
+
+  roleId     String?
+  role       Role?     @relation(fields: [roleId], references: [id])
+  businessId String?
+  business   Business? @relation(fields: [businessId], references: [id])
+  outletId   String?
+  outlet     Outlet?   @relation(fields: [outletId], references: [id])
+
+  customerOrders Order[]  @relation("CustomerOrders")
+  staffOrders    Order[]  @relation("StaffOrders")
+  customerAlerts CustomerAlert[]
+  sessions       Session[]
+  auditLogs      AuditLog[]
+  kitchenStations KitchenStation[] @relation("StationWorker")
+  serviceStationWorkers ServiceStationWorker[]
+  customerTagAssignments CustomerTagAssignment[] @relation("UserCustomerTagAssignments")
+  favorites       Favorite[]
+  outletLinks     OutletCustomer[] @relation("UserOutletLinks")
+  responsibilities UserResponsibility[]
+  orderItemReviews OrderItemReview[] @relation("ReviewByCustomer")
+  reviewReplies    OrderItemReview[] @relation("ReviewReplyBy")
+  preferredUpiApp String?
+  profileImageUrl String? @db.Text
+  alertRingtone   String? @default("chime")
+  alertVolume     Int?    @default(70)
+  mustChangePassword Boolean @default(false)
+  preferredLanguage String? @default("en")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_users")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  isSystem    Boolean  @default(false)
+  // Template roles live at platform scope (businessId null) and act as
+  // defaults that get cloned into each new business's role of the same name.
+  // Edits to a template cascade to every per-business copy.
+  isTemplate  Boolean  @default(false)
+  businessId  String?
+  business    Business? @relation(fields: [businessId], references: [id])
+  outletId    String?
+  outlet      Outlet?   @relation(fields: [outletId], references: [id])
+
+  responsibilities RoleResponsibility[]
+  users            User[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId])
+  @@index([outletId])
+  @@map("paynpik_roles")
+}
+
+model Responsibility {
+  id          String @id @default(cuid())
+  name        String @unique
+  description String?
+  module      String
+
+  roles RoleResponsibility[]
+  users UserResponsibility[]
+
+  @@map("paynpik_responsibilities")
+}
+
+model UserResponsibility {
+  userId           String
+  responsibilityId String
+  // true  → grant this permission on top of the user's role
+  // false → revoke this permission from the user's role
+  granted          Boolean
+
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  responsibility   Responsibility @relation(fields: [responsibilityId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([userId, responsibilityId])
+  @@map("paynpik_user_responsibilities")
+}
+
+// ─── Internationalisation ─────────────────────────────────
+model Language {
+  code       String  @id              // ISO 639-1, e.g. "en", "hi", "ta"
+  name       String                   // English display name, e.g. "Hindi"
+  nativeName String                   // Native display name, e.g. "हिन्दी"
+  isEnabled  Boolean @default(true)
+
+  translations Translation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_languages")
+}
+
+model Translation {
+  entityType   String     // e.g. "Item", "Category", "Outlet", "Order.itemSnapshot"
+  entityId     String
+  fieldName    String     // e.g. "name", "description", "address"
+  languageCode String
+  value        String     @db.Text
+  source       String     @default("auto") // "auto" | "manual"
+
+  language Language @relation(fields: [languageCode], references: [code], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([entityType, entityId, fieldName, languageCode])
+  @@index([entityType, languageCode])
+  @@map("paynpik_translations")
+}
+
+model RoleResponsibility {
+  roleId           String
+  responsibilityId String
+  role             Role           @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  responsibility   Responsibility @relation(fields: [responsibilityId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, responsibilityId])
+  @@map("paynpik_role_responsibilities")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // JWTs comfortably exceed VARCHAR(191). Bump to 500 so MySQL can still
+  // index the column (TEXT can't hold a unique index without a prefix).
+  token     String   @unique @db.VarChar(500)
+  ipAddress String?
+  userAgent String?
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+
+  @@map("paynpik_sessions")
+}
+
+model AuditLog {
+  id        String  @id @default(cuid())
+  userId    String?
+  user      User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  module    String
+  entityId  String?
+  oldValue  Json?
+  newValue  Json?
+  ipAddress String?
+
+  createdAt DateTime @default(now())
+
+  @@map("paynpik_audit_logs")
+}
+
+// ─── Business Hierarchy ──────────────────────────────────
+
+model Facility {
+  id               String   @id @default(cuid())
+  name             String
+  address          String
+  facilityType     String
+  totalSeating     Int?
+  operationalHours Json?
+  businessId       String
+  business         Business @relation(fields: [businessId], references: [id])
+
+  outlets Outlet[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_facilities")
+}
+
+model Business {
+  id           String       @id @default(cuid())
+  name         String
+  description  String?      @db.VarChar(250)
+  address      String?
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  pincode      String?
+  country      String?      @default("India")
+  mapsLocation String?
+  gstNumber    String?
+  upiId        String?
+  businessType BusinessType
+  logoUrl      String?  @db.Text
+  primaryImageUrl String? @db.Text
+  status       UserStatus   @default(ACTIVE)
+
+  subscriptionId String?       @unique
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  outlets    Outlet[]
+  users      User[]
+  roles      Role[]
+  facilities Facility[]
+  vendors    Vendor[]
+  materials  Material[]
+  images     BusinessImage[]
+  categories Category[]
+
+  messageTemplates MessageTemplate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_businesses")
+}
+
+model BusinessImage {
+  id           String   @id @default(cuid())
+  businessId   String
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  url          String   @db.Text
+  displayOrder Int      @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([businessId, displayOrder])
+  @@map("paynpik_business_images")
+}
+
+model Outlet {
+  id              String     @id @default(cuid())
+  name            String
+  outletType      OutletType
+  address         String?
+  addressLine1    String?
+  addressLine2    String?
+  city            String?
+  state           String?
+  pincode         String?
+  country         String?    @default("India")
+  mapsLocation    String?
+  description     String?    @db.VarChar(250)
+  phone           String?
+  gstNumber       String?
+  upiId           String?
+  logoUrl         String?    @db.Text
+  primaryImageUrl String?    @db.Text
+  isActive        Boolean    @default(true)
+
+  // Outlet-level operations defaults
+  defaultPrepTime       Int?
+  parcelChargeEnabled   Boolean @default(false)
+  defaultParcelCharge   Decimal @db.Decimal(10, 2) @default(0)
+
+  // Persistent order sequence (continuous across days). orderNumber on each
+  // created order pulls + increments this counter atomically. Token counter is
+  // configurable: tokenStartNumber is the value reset() returns to, and
+  // nextTokenNumber is the next token to be issued.
+  nextOrderSequence Int @default(1)
+  tokenStartNumber  Int @default(1)
+  nextTokenNumber   Int @default(1)
+
+  // GST / tax config
+  gstApplicable    Boolean @default(false)
+  gstPercent       Decimal @db.Decimal(5, 2) @default(0)
+  priceIncludesGst Boolean @default(false)
+  businessId String
+  business   Business   @relation(fields: [businessId], references: [id])
+  facilityId String?
+  facility   Facility?  @relation(fields: [facilityId], references: [id])
+
+  users      User[]
+  sections   Section[]
+  categories Category[]
+  orders     Order[]
+  tables     Table[]
+  qrCodes    QRCode[]
+  kitchenStations KitchenStation[]
+  serviceStations ServiceStation[]
+  customerTags CustomerTag[]
+  customerTagAssignments CustomerTagAssignment[] @relation("OutletCustomerTagAssignments")
+  toppings   Topping[]
+  images     OutletImage[]
+  hours      OutletHour[]
+  tableTypes TableType[]
+  customerLinks OutletCustomer[] @relation("OutletCustomerLinks")
+  roles         Role[]
+  messageTemplates MessageTemplate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_outlets")
+}
+
+model Section {
+  id       String  @id @default(cuid())
+  name     String
+  isActive Boolean @default(true)
+  outletId String
+  outlet   Outlet  @relation(fields: [outletId], references: [id])
+
+  tables Table[]
+  orders Order[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_sections")
+}
+
+model Table {
+  id        String   @id @default(cuid())
+  number    String
+  capacity  Int      @default(4)
+  isActive  Boolean  @default(true)
+  sectionId String?
+  section   Section? @relation(fields: [sectionId], references: [id])
+  outletId  String
+  outlet    Outlet  @relation(fields: [outletId], references: [id])
+  tableTypeId String?
+  tableType   TableType? @relation(fields: [tableTypeId], references: [id])
+
+  qrCode QRCode?
+  orders Order[]
+  serviceStationLinks ServiceStationTable[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_tables")
+}
+
+model QRCode {
+  id       String  @id @default(cuid())
+  type     QRType
+  code     String  @unique
+  // Base64 PNG data URL — easily 5-20KB, so it has to be Text on MySQL.
+  imageUrl String? @db.Text
+  isActive Boolean @default(true)
+
+  outletId String?
+  outlet   Outlet? @relation(fields: [outletId], references: [id])
+  tableId  String? @unique
+  table    Table?  @relation(fields: [tableId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_qr_codes")
+}
+
+// ─── Menu ─────────────────────────────────────────────────
+
+model Category {
+  id           String    @id @default(cuid())
+  name         String
+  imageUrl     String?   @db.Text
+  displayOrder Int       @default(0)
+  isActive     Boolean   @default(true)
+
+  // A category belongs to either an outlet (the outlet's live menu) or a
+  // business (a template menu outlets can import). Exactly one of outletId /
+  // businessId must be set — enforced in service layer.
+  outletId   String?
+  outlet     Outlet?   @relation(fields: [outletId], references: [id])
+  businessId String?
+  business   Business? @relation(fields: [businessId], references: [id])
+
+  subcategories Subcategory[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([outletId])
+  @@index([businessId])
+  @@map("paynpik_categories")
+}
+
+model Subcategory {
+  id           String   @id @default(cuid())
+  name         String
+  imageUrl     String?   @db.Text
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  categoryId   String
+  category     Category @relation(fields: [categoryId], references: [id])
+
+  items Item[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_subcategories")
+}
+
+enum FoodGrade {
+  VEG
+  NON_VEG
+  VEGAN
+}
+
+model Item {
+  id               String      @id @default(cuid())
+  name             String
+  description      String?
+  shortDescription String?     @db.VarChar(50)
+  longDescription  String?     @db.VarChar(250)
+  thumbnailUrl     String?
+  imageUrl         String? @db.Text
+  basePrice        Decimal     @db.Decimal(10, 2)
+  // Default GST % at item level. Used unless overridden per customer-tag or
+  // per table-type (CustomerTagPrice.gstRate / TableTypePrice.gstRate). If
+  // null, falls back to outlet's gstPercent.
+  gstRate          Decimal?    @db.Decimal(5, 2)
+  parcelAvailable  Boolean     @default(true)
+  useCustomParcelCharge Boolean @default(false)
+  parcelCharge     Decimal?    @db.Decimal(10, 2)
+  preparationTime  Int?
+  foodGrade        FoodGrade   @default(VEG)
+  isAvailable      Boolean     @default(true)
+  isDisplayed      Boolean     @default(true)
+  isPopular        Boolean     @default(false)
+  isSpecial        Boolean     @default(false)
+  // Limited-stock mode: when true, this item tracks `availableQuantity` and is
+  // auto-flipped to isAvailable=false once stock hits 0. Outlet staff add stock
+  // by incrementing (not replacing) via PATCH /items/:id/stock { addQuantity }.
+  // When false, the item is unlimited and the count is ignored.
+  hasLimitedStock    Boolean   @default(false)
+  availableQuantity  Int       @default(0)
+  displayOrder     Int         @default(0)
+  subcategoryId    String
+  subcategory      Subcategory @relation(fields: [subcategoryId], references: [id])
+
+  kitchenStationId String?
+  kitchenStation   KitchenStation? @relation(fields: [kitchenStationId], references: [id])
+
+  variants   Variant[]
+  options    Option[]
+  orderItems OrderItem[]
+  reviews    OrderItemReview[]
+  tags       ItemTag[]
+  customerTagPrices CustomerTagPrice[]
+  tableTypePrices   TableTypePrice[]
+  images       ItemImage[]
+  itemToppings ItemTopping[]
+  favorites    Favorite[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_items")
+}
+
+model ItemImage {
+  id           String   @id @default(cuid())
+  itemId       String
+  item         Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  url          String   @db.Text
+  displayOrder Int      @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([itemId, displayOrder])
+  @@map("paynpik_item_images")
+}
+
+model Variant {
+  id               String  @id @default(cuid())
+  name             String
+  shortDescription String? @db.VarChar(80)
+  price            Decimal @db.Decimal(10, 2)
+  isAvailable      Boolean @default(true)
+  itemId           String
+  item             Item    @relation(fields: [itemId], references: [id])
+
+  orderItems OrderItem[]
+  customerTagPrices CustomerTagPrice[]
+  tableTypePrices   TableTypePrice[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_variants")
+}
+
+model Option {
+  id     String  @id @default(cuid())
+  name   String
+  price  Decimal @db.Decimal(10, 2) @default(0)
+  itemId String
+  item   Item    @relation(fields: [itemId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_options")
+}
+
+model ItemTag {
+  id     String @id @default(cuid())
+  name   String
+  itemId String
+  item   Item   @relation(fields: [itemId], references: [id])
+
+  @@map("paynpik_item_tags")
+}
+
+model KitchenStation {
+  id              String  @id @default(cuid())
+  name            String
+  isActive        Boolean @default(true)
+  isMaster        Boolean @default(false)
+  outletId        String
+  outlet          Outlet  @relation(fields: [outletId], references: [id])
+  currentWorkerId String?
+  currentWorker   User?   @relation("StationWorker", fields: [currentWorkerId], references: [id], onDelete: SetNull)
+
+  items Item[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_kitchen_stations")
+}
+
+model Offer {
+  id           String    @id @default(cuid())
+  name         String
+  description  String?
+  type         String    // PERCENTAGE, FLAT, COMBO, HAPPY_HOUR
+  value        Decimal   @db.Decimal(10, 2)
+  couponCode   String?   @unique
+  minOrderValue Decimal? @db.Decimal(10, 2)
+  maxDiscount  Decimal?  @db.Decimal(10, 2)
+  validFrom    DateTime
+  validUntil   DateTime
+  isActive     Boolean   @default(true)
+  outletId     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_offers")
+}
+
+// ─── Orders ──────────────────────────────────────────────
+
+model Order {
+  id          String      @id @default(cuid())
+  orderNumber String      @unique
+  tokenNumber Int?
+  status      OrderStatus @default(CREATED)
+  isParcel    Boolean     @default(false)
+  // True for Dine-in Postpaid orders: created without payment, accepts
+  // additional items until `billRequestedAt` is set (Bill Now). Once set,
+  // the order is locked and the Cash/UPI payment flow takes over.
+  isPostpaid       Boolean   @default(false)
+  billRequestedAt  DateTime?
+  notes       String?
+
+  subtotal       Decimal @db.Decimal(10, 2)
+  taxAmount      Decimal @db.Decimal(10, 2) @default(0)
+  // SGST + CGST always sum to taxAmount; stored explicitly for cleaner
+  // reporting / invoice display. For intra-state Indian GST they're 50/50.
+  sgstAmount     Decimal @db.Decimal(10, 2) @default(0)
+  cgstAmount     Decimal @db.Decimal(10, 2) @default(0)
+  parcelAmount   Decimal @db.Decimal(10, 2) @default(0)
+  discountAmount Decimal @db.Decimal(10, 2) @default(0)
+  totalAmount    Decimal @db.Decimal(10, 2)
+
+  outletId   String
+  outlet     Outlet   @relation(fields: [outletId], references: [id])
+  sectionId  String?
+  section    Section? @relation(fields: [sectionId], references: [id])
+  tableId    String?
+  table      Table?   @relation(fields: [tableId], references: [id])
+  customerId String?
+  customer   User?    @relation("CustomerOrders", fields: [customerId], references: [id])
+  staffId    String?
+  staff      User?    @relation("StaffOrders", fields: [staffId], references: [id])
+
+  items         OrderItem[]
+  payments      Payment[]
+  statusHistory OrderStatusHistory[]
+  disputes      Dispute[]
+  customerAlerts CustomerAlert[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_orders")
+}
+
+model OrderItem {
+  id         String          @id @default(cuid())
+  quantity   Int
+  unitPrice  Decimal         @db.Decimal(10, 2)
+  totalPrice Decimal         @db.Decimal(10, 2)
+  // Resolved GST % captured at order time (sticky against future config changes).
+  gstRate    Decimal         @db.Decimal(5, 2) @default(0)
+  gstAmount  Decimal         @db.Decimal(10, 2) @default(0)
+  notes      String?
+  status     OrderItemStatus @default(PENDING)
+  orderId    String
+  order      Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId     String
+  item       Item            @relation(fields: [itemId], references: [id])
+  variantId  String?
+  variant    Variant?        @relation(fields: [variantId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  review OrderItemReview?
+
+  @@map("paynpik_order_items")
+}
+
+// ─── Reviews ───────────────────────────────────────────────────
+// Per-OrderItem customer rating (1-5) + optional comment. itemId is
+// denormalized so the menu can compute aggregates without joining through
+// Order. Owner reply + payback fields are added in Phase B.
+model OrderItemReview {
+  id          String    @id @default(cuid())
+  orderItemId String    @unique
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  itemId      String
+  item        Item      @relation(fields: [itemId], references: [id])
+  customerId  String
+  customer    User      @relation("ReviewByCustomer", fields: [customerId], references: [id])
+  rating      Int
+  comment     String?   @db.Text
+
+  // Owner/manager response. Reply is optional; once set, repliedAt is too.
+  replyText      String?   @db.Text
+  replyByUserId  String?
+  replyBy        User?     @relation("ReviewReplyBy", fields: [replyByUserId], references: [id])
+  repliedAt      DateTime?
+
+  // Payback: links to a Payment row marked isRefund=true. paybackAmount is
+  // duplicated for fast reads; the Payment row is the source of truth.
+  paybackAmount    Decimal? @db.Decimal(10, 2)
+  paybackPaymentId String?  @unique
+  paybackPayment   Payment? @relation(fields: [paybackPaymentId], references: [id])
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([itemId])
+  @@index([customerId])
+  @@map("paynpik_order_item_reviews")
+}
+
+model OrderStatusHistory {
+  id        String      @id @default(cuid())
+  status    OrderStatus
+  changedBy String?
+  notes     String?
+  orderId   String
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@map("paynpik_order_status_history")
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  amount          Decimal       @db.Decimal(10, 2)
+  mode            PaymentMode
+  status          PaymentStatus @default(PENDING)
+  // Record-only refund: when an outlet records a payback against a customer
+  // review, we mint a Payment with isRefund=true and link it from the review.
+  // The mode (CASH/UPI/...) still records how the money was actually returned.
+  isRefund        Boolean       @default(false)
+  gatewayRef      String?
+  gatewayResponse Json?
+  orderId         String
+  order           Order         @relation(fields: [orderId], references: [id])
+
+  reviewPayback   OrderItemReview?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_payments")
+}
+
+model Dispute {
+  id          String   @id @default(cuid())
+  description String
+  claimAmount Decimal? @db.Decimal(10, 2)
+  status      String   @default("OPEN")
+  resolution  String?
+  // Stored as Json (array of URL strings) since MySQL lacks native array types.
+  attachments Json     @default("[]")
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_disputes")
+}
+
+// ─── Inventory ───────────────────────────────────────────
+
+model MaterialCategory {
+  id         String   @id @default(cuid())
+  name       String
+  businessId String
+  parentId   String?
+  parent     MaterialCategory?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children   MaterialCategory[] @relation("CategoryTree")
+  materials  Material[]
+
+  @@map("paynpik_material_categories")
+}
+
+model Material {
+  id           String  @id @default(cuid())
+  name         String
+  unit         String
+  currentStock Decimal @db.Decimal(10, 3) @default(0)
+  reorderLevel Decimal? @db.Decimal(10, 3)
+  costPerUnit  Decimal? @db.Decimal(10, 2)
+  businessId   String
+  business     Business @relation(fields: [businessId], references: [id])
+  categoryId   String?
+  category     MaterialCategory? @relation(fields: [categoryId], references: [id])
+
+  purchaseOrders PurchaseOrder[]
+  consumptions   ConsumptionLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_materials")
+}
+
+model Vendor {
+  id         String   @id @default(cuid())
+  name       String
+  gstNumber  String?
+  phone      String?
+  email      String?
+  address    String?
+  isActive   Boolean  @default(true)
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+
+  purchaseOrders PurchaseOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_vendors")
+}
+
+model PurchaseOrder {
+  id            String  @id @default(cuid())
+  poNumber      String  @unique
+  quantity      Decimal @db.Decimal(10, 3)
+  unitPrice     Decimal @db.Decimal(10, 2)
+  totalAmount   Decimal @db.Decimal(10, 2)
+  status        String  @default("PENDING")
+  paymentStatus String  @default("UNPAID")
+  vendorId      String
+  vendor        Vendor  @relation(fields: [vendorId], references: [id])
+  materialId    String
+  material      Material @relation(fields: [materialId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_purchase_orders")
+}
+
+model ConsumptionLog {
+  id         String   @id @default(cuid())
+  quantity   Decimal  @db.Decimal(10, 3)
+  purpose    String?
+  issuedBy   String?
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@map("paynpik_consumption_logs")
+}
+
+// ─── Subscriptions & Billing ─────────────────────────────
+
+model Plan {
+  id               String  @id @default(cuid())
+  name             String
+  description      String?
+  monthlyCost      Decimal @db.Decimal(10, 2)
+  annualCost       Decimal @db.Decimal(10, 2)
+  maxOutlets       Int
+  maxUsers         Int
+  transactionLimit Int?
+  storageLimit     Int?
+  features         Json
+  isActive         Boolean @default(true)
+
+  subscriptions Subscription[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_plans")
+}
+
+model Subscription {
+  id        String             @id @default(cuid())
+  status    SubscriptionStatus @default(TRIAL)
+  startDate DateTime
+  endDate   DateTime
+  autoRenew Boolean            @default(true)
+  planId    String
+  plan      Plan               @relation(fields: [planId], references: [id])
+
+  business Business?
+  invoices Invoice[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_subscriptions")
+}
+
+model Invoice {
+  id             String   @id @default(cuid())
+  amount         Decimal  @db.Decimal(10, 2)
+  gstAmount      Decimal  @db.Decimal(10, 2)
+  totalAmount    Decimal  @db.Decimal(10, 2)
+  status         String   @default("PENDING")
+  dueDate        DateTime
+  paidAt         DateTime?
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@map("paynpik_invoices")
+}
+
+// ─── Marketing leads ────────────────────────────────────
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  CONVERTED
+  LOST
+}
+
+model Lead {
+  id             String     @id @default(cuid())
+  name           String
+  restaurantName String
+  phone          String
+  email          String?
+  outletCount    Int?
+  businessType   String?
+  message        String?
+  source         String?    @default("landing-page")
+  status         LeadStatus @default(NEW)
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("paynpik_leads")
+}
+
+// ─── Customer tags & tag-based pricing ────────────────────
+
+model CustomerTag {
+  id       String @id @default(cuid())
+  name     String
+  color    String @default("#f97316")
+  outletId String
+  outlet   Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  itemPrices  CustomerTagPrice[]
+  assignments CustomerTagAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([outletId, name])
+  @@map("paynpik_customer_tags")
+}
+
+model CustomerTagPrice {
+  id            String      @id @default(cuid())
+  itemId        String
+  item          Item        @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  variantId     String?
+  variant       Variant?    @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  customerTagId String
+  customerTag   CustomerTag @relation(fields: [customerTagId], references: [id], onDelete: Cascade)
+  price         Decimal     @db.Decimal(10, 2)
+  // Optional GST % override for this (item, customerTag). null = use item.gstRate.
+  gstRate       Decimal?    @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([itemId, variantId, customerTagId])
+  @@map("paynpik_customer_tag_prices")
+}
+
+model CustomerTagAssignment {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation("UserCustomerTagAssignments", fields: [userId], references: [id], onDelete: Cascade)
+  outletId      String
+  outlet        Outlet      @relation("OutletCustomerTagAssignments", fields: [outletId], references: [id], onDelete: Cascade)
+  customerTagId String
+  customerTag   CustomerTag @relation(fields: [customerTagId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, outletId])
+  @@map("paynpik_customer_tag_assignments")
+}
+
+// ─── Toppings (outlet-level catalog) ──────────────────────
+
+model Topping {
+  id           String  @id @default(cuid())
+  name         String
+  basePriceAdd Decimal @db.Decimal(10, 2) @default(0)
+  outletId     String
+  outlet       Outlet  @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  options    ToppingOption[]
+  itemLinks  ItemTopping[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([outletId, name])
+  @@map("paynpik_toppings")
+}
+
+model ToppingOption {
+  id           String  @id @default(cuid())
+  toppingId    String
+  topping      Topping @relation(fields: [toppingId], references: [id], onDelete: Cascade)
+  name         String
+  priceAdd     Decimal @db.Decimal(10, 2) @default(0)
+  displayOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_topping_options")
+}
+
+model ItemTopping {
+  id         String  @id @default(cuid())
+  itemId     String
+  item       Item    @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  toppingId  String
+  topping    Topping @relation(fields: [toppingId], references: [id], onDelete: Cascade)
+  priceAdd   Decimal? @db.Decimal(10, 2)
+  isRequired Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([itemId, toppingId])
+  @@map("paynpik_item_toppings")
+}
+
+// ─── Outlet imagery + hours ───────────────────────────────
+
+model OutletImage {
+  id           String   @id @default(cuid())
+  outletId     String
+  outlet       Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  url          String   @db.Text
+  displayOrder Int      @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([outletId, displayOrder])
+  @@map("paynpik_outlet_images")
+}
+
+// Multiple rows per (outlet, dayOfWeek) = multiple open ranges.
+// No rows for a day = closed that day.
+// dayOfWeek: 0=Sun … 6=Sat
+model OutletHour {
+  id        String @id @default(cuid())
+  outletId  String
+  outlet    Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  dayOfWeek Int
+  openTime  String // "HH:MM"
+  closeTime String // "HH:MM"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([outletId, dayOfWeek])
+  @@map("paynpik_outlet_hours")
+}
+
+model Favorite {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  itemId String
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, itemId])
+  @@index([userId])
+  @@map("paynpik_favorites")
+}
+
+// ─── Manually-added customers (per outlet) ────────────────
+model OutletCustomer {
+  id        String   @id @default(cuid())
+  outletId  String
+  outlet    Outlet   @relation("OutletCustomerLinks", fields: [outletId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation("UserOutletLinks", fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([outletId, userId])
+  @@index([outletId])
+  @@map("paynpik_outlet_customers")
+}
+
+// ─── Table types (outlet-level) + per-item pricing ────────
+
+model TableType {
+  id       String @id @default(cuid())
+  name     String
+  color    String @default("#0ea5e9")
+  outletId String
+  outlet   Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  tables Table[]
+  prices TableTypePrice[]
+  serviceStations ServiceStation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([outletId, name])
+  @@map("paynpik_table_types")
+}
+
+model TableTypePrice {
+  id          String    @id @default(cuid())
+  itemId      String
+  item        Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  variantId   String?
+  variant     Variant?  @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  tableTypeId String
+  tableType   TableType @relation(fields: [tableTypeId], references: [id], onDelete: Cascade)
+  price       Decimal   @db.Decimal(10, 2)
+  // Optional GST % override for this (item, tableType). null = use item.gstRate.
+  gstRate     Decimal?  @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([itemId, variantId, tableTypeId])
+  @@map("paynpik_table_type_prices")
+}
+
+// ─── Service stations (outlet-level) ─────────────────────
+// Floor counterpart of KitchenStation: service staff (supervisor + service
+// persons) are grouped into a station that's pinned to one TableType and a
+// specific subset of tables under that type. Orders for those tables become
+// visible to the station's workers.
+model ServiceStation {
+  id          String     @id @default(cuid())
+  name        String
+  isActive    Boolean    @default(true)
+  outletId    String
+  outlet      Outlet     @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  tableTypeId String?
+  tableType   TableType? @relation(fields: [tableTypeId], references: [id], onDelete: SetNull)
+
+  workers ServiceStationWorker[]
+  tables  ServiceStationTable[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([outletId])
+  @@map("paynpik_service_stations")
+}
+
+model ServiceStationWorker {
+  id        String         @id @default(cuid())
+  stationId String
+  station   ServiceStation @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([stationId, userId])
+  @@map("paynpik_service_station_workers")
+}
+
+model ServiceStationTable {
+  id        String         @id @default(cuid())
+  stationId String
+  station   ServiceStation @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  tableId   String
+  table     Table          @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([stationId, tableId])
+  @@map("paynpik_service_station_tables")
+}
+
+// ─── Customer alerts feed (in-app fallback when WhatsApp not configured) ──
+// Always written by the lifecycle dispatcher, regardless of whether the
+// WhatsApp send succeeded — so the customer sees the same message under
+// "Alerts" in the customer app. `sentVia` records how it was delivered:
+// IN_APP, WHATSAPP, or BOTH.
+model CustomerAlert {
+  id           String   @id @default(cuid())
+  customerId   String
+  customer     User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  orderId      String?
+  order        Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderItemId  String?  // not FK'd — order items are mutable and may be cancelled
+  trigger      String   // e.g. ORDER_PLACED, PAYMENT_RECEIVED, ITEM_READY
+  title        String
+  body         String   @db.Text
+  ringtone     String?  // resolved at send-time from User.alertRingtone
+  sentVia      String   @default("IN_APP") // IN_APP | WHATSAPP | BOTH
+  whatsappError String?
+  isRead       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([customerId])
+  @@index([orderId])
+  @@index([isRead])
+  @@map("paynpik_customer_alerts")
+}
+
+// ─── 3rd-party integration provider credentials (platform-managed) ──
+// Each row is one configured provider for one channel — e.g.
+// (WHATSAPP, "GUPSHUP"), (SMS, "TWILIO"), (PAYMENT_GATEWAY, "RAZORPAY").
+// `config` holds opaque credentials (api keys, secrets, sender ids, etc.)
+// kept as JSON so each provider can have its own shape without schema churn.
+model IntegrationConfig {
+  id           String             @id @default(cuid())
+  channel      IntegrationChannel
+  providerKey  String             // stable key, e.g. "RAZORPAY", "GUPSHUP"
+  providerName String             // display name
+  isDefault    Boolean            @default(false)
+  isActive     Boolean            @default(true)
+  config       Json               @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([channel, providerKey])
+  @@index([channel, isDefault])
+  @@map("paynpik_integration_configs")
+}
+
+// ─── Messaging templates (WhatsApp / SMS / Email) ───────
+// Templates can be authored at three scopes:
+//   PLATFORM  — boilerplate available to every business (businessId/outletId null)
+//   BUSINESS  — created by a Business Owner, visible to that business's outlets
+//   OUTLET    — created by an Outlet Admin, scoped to one outlet
+// Approval flow runs through the platform admin; see TemplateApprovalStatus.
+model MessageTemplate {
+  id          String                 @id @default(cuid())
+  scope       TemplateScope
+  channel     TemplateChannel
+  name        String                 // human-friendly slug, unique within scope
+  category    TemplateCategory       @default(TRANSACTIONAL)
+  trigger     String?                // optional: ORDER_PLACED | ORDER_READY | PAYMENT_RECEIVED | CUSTOM
+  language    String                 @default("en")
+  body        String                 @db.Text
+  // Json array of {{var}} names extracted from the body. Json instead of
+  // String[] because MySQL has no native array type.
+  variables   Json                   @default("[]")
+
+  approvalStatus    TemplateApprovalStatus @default(DRAFT)
+  providerKey       String?          // resolved provider that approved it (e.g. "GUPSHUP")
+  providerTemplateId String?         // id returned by provider once live
+  submittedAt       DateTime?
+  reviewedAt        DateTime?
+  rejectionReason   String?
+
+  businessId String?
+  business   Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  outletId   String?
+  outlet     Outlet?   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  createdById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([scope, channel, approvalStatus])
+  @@index([businessId])
+  @@index([outletId])
+  @@map("paynpik_message_templates")
+}

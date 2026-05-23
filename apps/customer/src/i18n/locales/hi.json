@@ -1,0 +1,38 @@
+{
+  "common": {
+    "save": "सहेजें",
+    "cancel": "रद्द करें",
+    "loading": "लोड हो रहा है…",
+    "back": "वापस",
+    "search": "खोजें",
+    "ok": "ठीक है"
+  },
+  "auth": {
+    "signIn": "साइन इन",
+    "phone": "फ़ोन नंबर",
+    "sendOtp": "OTP भेजें",
+    "enterOtp": "OTP दर्ज करें",
+    "resend": "OTP फिर से भेजें",
+    "verifyAndSignIn": "सत्यापित करें और साइन इन करें",
+    "yourName": "आपका नाम (वैकल्पिक)",
+    "changeNumber": "नंबर बदलें"
+  },
+  "profile": {
+    "title": "प्रोफ़ाइल",
+    "preferredLanguage": "पसंदीदा भाषा",
+    "preferredLanguageHint": "आइटम के नाम, ऑर्डर विवरण और आउटलेट जानकारी इस भाषा में दिखाई जाएगी।",
+    "signOut": "साइन आउट"
+  },
+  "menu": {
+    "search": "मेन्यू खोजें",
+    "addToCart": "कार्ट में जोड़ें",
+    "outOfStock": "स्टॉक में नहीं"
+  },
+  "order": {
+    "myOrders": "मेरे ऑर्डर",
+    "trackOrder": "ऑर्डर ट्रैक करें",
+    "raiseDispute": "विवाद उठाएँ",
+    "items": "आइटम",
+    "total": "कुल"
+  }
+}

@@ -1,0 +1,146 @@
+version: "3.9"
+
+services:
+  # ─── Infrastructure ──────────────────────────────────────
+  # MySQL is the default DB for parity with the production host. Postgres is
+  # kept alongside it so we can run the one-shot data migration script and
+  # so we can flip back later for scale testing.
+  mysql:
+    image: mysql:8.0
+    container_name: paynpik_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: paynpik_db
+      MYSQL_USER: paynpik
+      MYSQL_PASSWORD: paynpik_pass
+      MYSQL_ROOT_PASSWORD: paynpik_root
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=caching_sha2_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u paynpik -ppaynpik_pass"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: paynpik_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: paynpik
+      POSTGRES_PASSWORD: paynpik_pass
+      POSTGRES_DB: paynpik_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paynpik"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: paynpik_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: paynpik_elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ─── Applications ────────────────────────────────────────
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+      target: development
+    container_name: paynpik_api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: mysql://paynpik:paynpik_pass@mysql:3306/paynpik_db
+      # Kept for one-shot data migration scripts that read the legacy DB.
+      DATABASE_URL_PG: postgresql://paynpik:paynpik_pass@postgres:5432/paynpik_db
+      REDIS_URL: redis://redis:6379
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./apps/api:/app
+      - /app/node_modules
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: npm run start:dev
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      target: development
+    container_name: paynpik_web
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: http://localhost:3001/api/v1
+      VITE_WS_URL: http://localhost:3001
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+    command: npm run dev -- --host
+
+  customer:
+    build:
+      context: ./apps/customer
+      dockerfile: Dockerfile
+      target: development
+    container_name: paynpik_customer
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: http://localhost:3001/api/v1
+      VITE_WS_URL: http://localhost:3001
+    ports:
+      - "5174:5174"
+    volumes:
+      - ./apps/customer:/app
+      - /app/node_modules
+    command: npm run dev -- --host --port 5174
+
+volumes:
+  mysql_data:
+  postgres_data:
+  redis_data:
+  es_data:

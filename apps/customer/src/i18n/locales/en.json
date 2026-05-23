@@ -1,0 +1,38 @@
+{
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "loading": "Loading…",
+    "back": "Back",
+    "search": "Search",
+    "ok": "OK"
+  },
+  "auth": {
+    "signIn": "Sign in",
+    "phone": "Phone number",
+    "sendOtp": "Send OTP",
+    "enterOtp": "Enter the OTP",
+    "resend": "Resend OTP",
+    "verifyAndSignIn": "Verify & Sign In",
+    "yourName": "Your name (optional)",
+    "changeNumber": "Change number"
+  },
+  "profile": {
+    "title": "Profile",
+    "preferredLanguage": "Preferred language",
+    "preferredLanguageHint": "Item names, order details, and outlet info will be shown in this language.",
+    "signOut": "Sign out"
+  },
+  "menu": {
+    "search": "Search the menu",
+    "addToCart": "Add to cart",
+    "outOfStock": "Out of stock"
+  },
+  "order": {
+    "myOrders": "My orders",
+    "trackOrder": "Track order",
+    "raiseDispute": "Raise a dispute",
+    "items": "Items",
+    "total": "Total"
+  }
+}

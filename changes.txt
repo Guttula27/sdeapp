@@ -1,0 +1,183 @@
+PayNPik Landing Page — Gap Analysis vs SRS/HLD (app_desc.txt)
+===============================================================
+Initial review:    2026-05-16 (gap analysis)
+Last updated:      2026-05-16 (after Phase 1 + Phase 2 implementation)
+
+Legend: [P0] critical / must-fix    [P1] important / should-fix    [P2] nice-to-have
+        [✓ DONE]   implemented in current code
+        [⏳ DEFER] explicitly deferred, see "Open / future" section
+
+---------------------------------------------------------------
+A. HONESTY / ACCURACY ISSUES
+---------------------------------------------------------------
+
+[✓ DONE] [P0] A1. Fabricated stats in SocialProof + Hero
+   Action: Deleted sections/SocialProof.tsx entirely. Removed
+           "Live in 2,000+ outlets" pill from Hero; replaced with
+           neutral capability framing ("Built for restaurants,
+           food courts & cloud kitchens").
+
+[✓ DONE] [P0] A2. Fabricated testimonials
+   Action: Deleted sections/Testimonials.tsx entirely. Section
+           removed from page flow.
+
+[✓ DONE] [P0] A3. Fabricated pricing
+   Action: Rewrote sections/Pricing.tsx. All three tiers now show
+           "Custom pricing — based on outlets, users & usage" with
+           "Talk to sales" CTAs routing to the demo form. Monthly/
+           annual toggle removed. Tier *structure* and feature
+           breakdown retained (aligned with doc §6.1.6 parameters).
+
+[✓ DONE] [P1] A4. Unverified setup-speed claims
+   Action: Hero "Same-day setup" → "Fast onboarding".
+           Hero "Go live the same day" removed from sub-copy.
+           CTA "Live in 24 hours" → "Onboarding in days, not weeks".
+           CTA "14-day free trial" → "Free trial — no card required".
+           FAQ "live within 24 hours" → "in days, not weeks".
+
+[✓ DONE] [P1] A5. Specific GST rate hardcoded
+   Action: FAQ answer rewritten to "auto-applied at the rate
+           configured for your registration. Input tax tracking
+           and due-date reminders are built in."
+
+---------------------------------------------------------------
+B. CAPABILITY COVERAGE
+---------------------------------------------------------------
+
+[✓ DONE] [P0] B1. Facility Management
+   Action: (a) New Features card "Facility management" — mall food
+           courts, airport terminals, IT-park cafeterias, corporate
+           campuses, shared seating, multi-business.
+           (b) Audience tab renamed "Food court & facilities"; body
+           expanded with all four facility types.
+           (c) New FAQ entry: "Do you support food courts with
+           multiple vendors?"
+
+[✓ DONE] [P0] B2. Online ordering platform integrations
+   Action: New Features card "Aggregator integrations" with an
+           "On roadmap" badge (Swiggy, Zomato, ONDC). New FAQ
+           entry framing them as roadmap with the option to
+           prioritise on demand. Enterprise plan calls them out
+           explicitly. Cloud-kitchen Audience tab references them.
+
+[✓ DONE] [P1] B3. Customer experience / loyalty / engagement
+   Action: New dedicated section DinerExperience.tsx with 6 cards
+           (Favourites, Order history & re-order, Offers & coupons,
+           Live order tracking, Reviews & loyalty tags, Dispute
+           arbitration). Placed between Features and HowItWorks.
+           Nav link "For diners" added.
+
+[✓ DONE] [P1] B4. Offers, coupons, happy-hour, time-based deals
+   Action: Covered as the "Offers & coupons" card in the new
+           DinerExperience section (mentions percentage/flat/combo/
+           happy-hour/coupon-code framing from doc §6.3.4).
+
+[✓ DONE] [P1] B5. Staff management — attendance / shifts / geo-tagging
+   Action: New Features card "Workforce" — staff onboarding, shift
+           allocation, punch-in/out with geo-tagging, overtime
+           tracking, section assignments. Workforce also listed
+           in the Growth plan features.
+
+[✓ DONE] [P1] B6. Tax management beyond a footnote
+   Action: New Features card "Tax & compliance" — GST auto-applied,
+           input tax tracking, due-date reminders, GST-ready
+           invoices. FAQ entry updated to match.
+
+[✓ DONE] [P1] B7. Operational service models
+   Action: Each Audience tab now shows a "Service models" badge
+           strip (e.g. Dine-in: prepaid/postpaid/hybrid; QSR:
+           self-service/self-service with parcel; etc.). Captures
+           the four operational types from doc §6.1.11 within the
+           existing vertical framing.
+
+[✓ DONE] [P2] B8. Customer dispute management
+   Action: Covered in DinerExperience as "Dispute arbitration".
+
+[✓ DONE] [P2] B11. PCI DSS / data privacy compliance posture
+   Action: Compliance strip added to Footer above the copyright
+           line: GST-compliant billing, PCI DSS-aligned payment
+           flows, JWT + encryption in transit & at rest, audit-
+           logged actions.
+
+[⏳ DEFER] [P2] B9.  Variants, add-ons, combos, bundles
+   Why deferred: Generic "menu" mention is enough at landing
+                 stage; details belong on a product page.
+
+[⏳ DEFER] [P2] B10. Multi-region / multi-city / multi-country
+   Status:  Partially covered — multi-outlet card now says
+            "across cities". Multi-country left for a future
+            dedicated page when needed.
+
+[⏳ DEFER] [P2] B12. Search across the platform
+   Why deferred: Operational detail, not a landing-page hook.
+
+[⏳ DEFER] [P2] B13. Vendors as a stakeholder
+   Why deferred: Vendor-self-serve portal is not in current
+                 backend; would be misleading to advertise.
+
+[⏳ DEFER] [P2] B14. Roadmap / vision (AI, IoT, ONDC, voice)
+   Status:  Aggregators + ONDC roadmap acknowledged on the
+            Features card. AI/IoT future left off until concrete
+            milestones exist.
+
+---------------------------------------------------------------
+C. ALIGNMENT WINS (preserved through edits)
+---------------------------------------------------------------
+
+C1.  QR ordering (table + outlet) — Features card + HowItWorks.
+C2.  Kitchen Display System — Features card + ProblemSolution.
+C3.  Multi-outlet, multi-business types — Features card + Audience.
+C4.  Inventory + vendors + low-stock → PO loop — Features card.
+C5.  Payments: UPI/cards/wallets/NB/cash + Razorpay — Features card.
+C6.  Reports: revenue, top items, hourly, prep time — Features card.
+C7.  RBAC + audit logs — Features card + Footer compliance strip.
+C8.  Realtime WebSocket — implied in KDS card.
+C9.  Notifications (SMS/WhatsApp/email) — Features card.
+C10. Pricing follows doc's plan parameters (outlets/users/features).
+
+---------------------------------------------------------------
+D. CURRENT LANDING PAGE SECTION ORDER
+---------------------------------------------------------------
+
+1.  Nav                  (links: Features, For diners, For you, Pricing, FAQ)
+2.  Hero                 (no fake stats; honest capability framing)
+3.  ProblemSolution
+4.  Features             (12 cards in 4-col grid)
+5.  DinerExperience      (NEW — 6 cards)
+6.  HowItWorks           (3 steps)
+7.  Audience             (4 tabs with service-model badges)
+8.  Pricing              (3 tiers, all "Talk to sales")
+9.  FAQ                  (8 questions, added food-court + aggregator)
+10. CTA                  (demo form → POST /api/v1/leads)
+11. Footer               (compliance strip added)
+
+---------------------------------------------------------------
+E. STILL-OPEN ITEMS / KNOWN PLACEHOLDERS
+---------------------------------------------------------------
+
+E1. Footer contact details (hello@paynpik.com, +91 80 4567 8900,
+    Bengaluru) are placeholders — replace with real ones before
+    launch.
+E2. Hero "dashboard mock" uses invented numbers (₹84,210 revenue,
+    142 orders). Acceptable as a visual mock but flag if the brand
+    team wants neutral placeholders.
+E3. Privacy & Terms footer links go to "#" — need real pages.
+E4. Aggregator integrations (B2) treated as roadmap. If/when
+    they ship, remove the "On roadmap" badge from the Features
+    card, update FAQ, and consider an integration-logo strip.
+E5. Real customer testimonials should replace the removed
+    section once pilot operators are willing to be quoted.
+E6. Pricing: when ready, swap "Talk to sales" cards back to
+    actual prices.
+
+---------------------------------------------------------------
+F. NOT IN THIS PASS — TRACKED FOR FUTURE
+---------------------------------------------------------------
+
+F1. Resource centre / blog / case-studies hub.
+F2. Live chat widget.
+F3. Internationalisation (English-only for v1).
+F4. Code-splitting (the build warning about >500 kB bundle is
+    inherited from the existing admin app, not landing-page work).
+F5. SEO: og:image, structured data, sitemap.xml, robots.txt.
+F6. Cookie banner / consent management (when launching in EU/IN).

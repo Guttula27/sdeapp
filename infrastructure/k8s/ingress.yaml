@@ -1,0 +1,52 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: paynpik-ingress
+  namespace: paynpik
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "3600"
+    nginx.ingress.kubernetes.io/upgrade: websocket
+    nginx.ingress.kubernetes.io/connection: Upgrade
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.paynpik.com
+        - admin.paynpik.com
+        - order.paynpik.com
+      secretName: paynpik-tls
+  rules:
+    - host: api.paynpik.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: paynpik-api-service
+                port:
+                  number: 80
+    - host: admin.paynpik.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: paynpik-web-service
+                port:
+                  number: 80
+    - host: order.paynpik.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: paynpik-customer-service
+                port:
+                  number: 80
