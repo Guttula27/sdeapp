@@ -32,14 +32,20 @@ let ServiceStationsService = class ServiceStationsService {
         });
     }
     async create(outletId, data) {
-        if (data.tableTypeId) {
+        const isParcel = !!data.isParcelStation;
+        if (!isParcel && data.tableTypeId) {
             const tt = await this.prisma.tableType.findUnique({ where: { id: data.tableTypeId } });
             if (!tt || tt.outletId !== outletId) {
                 throw new common_1.BadRequestException('Table type does not belong to this outlet');
             }
         }
         return this.prisma.serviceStation.create({
-            data: { name: data.name.trim(), outletId, tableTypeId: data.tableTypeId ?? null },
+            data: {
+                name: data.name.trim(),
+                outletId,
+                tableTypeId: isParcel ? null : (data.tableTypeId ?? null),
+                isParcelStation: isParcel,
+            },
             include: {
                 tableType: { select: { id: true, name: true, color: true } },
                 workers: { include: { user: { select: { id: true, name: true, phone: true } } } },
@@ -51,18 +57,25 @@ let ServiceStationsService = class ServiceStationsService {
         const station = await this.prisma.serviceStation.findUnique({ where: { id } });
         if (!station)
             throw new common_1.NotFoundException('Service station not found');
-        if (data.tableTypeId !== undefined && data.tableTypeId !== null) {
+        const becomingParcel = data.isParcelStation === true;
+        if (!becomingParcel && data.tableTypeId !== undefined && data.tableTypeId !== null) {
             const tt = await this.prisma.tableType.findUnique({ where: { id: data.tableTypeId } });
             if (!tt || tt.outletId !== station.outletId) {
                 throw new common_1.BadRequestException('Table type does not belong to this outlet');
             }
             await this.prisma.serviceStationTable.deleteMany({ where: { stationId: id } });
         }
+        if (becomingParcel) {
+            await this.prisma.serviceStationTable.deleteMany({ where: { stationId: id } });
+        }
         return this.prisma.serviceStation.update({
             where: { id },
             data: {
                 ...(data.name !== undefined ? { name: data.name.trim() } : {}),
-                ...(data.tableTypeId !== undefined ? { tableTypeId: data.tableTypeId } : {}),
+                ...(data.isParcelStation !== undefined ? { isParcelStation: data.isParcelStation } : {}),
+                ...(becomingParcel
+                    ? { tableTypeId: null }
+                    : data.tableTypeId !== undefined ? { tableTypeId: data.tableTypeId } : {}),
             },
             include: {
                 tableType: { select: { id: true, name: true, color: true } },
@@ -155,6 +168,17 @@ let ServiceStationsService = class ServiceStationsService {
                 tables: { include: { table: { select: { id: true, number: true } } } },
             },
         });
+    }
+    async hasActiveParcelStation(outletId) {
+        const count = await this.prisma.serviceStation.count({
+            where: {
+                outletId,
+                isActive: true,
+                isParcelStation: true,
+                workers: { some: {} },
+            },
+        });
+        return count > 0;
     }
 };
 exports.ServiceStationsService = ServiceStationsService;

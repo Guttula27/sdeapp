@@ -32,9 +32,9 @@ export declare class OrdersBrowseController {
                     id: string;
                     createdAt: Date;
                     updatedAt: Date;
+                    thumbnailUrl: string | null;
                     shortDescription: string | null;
                     longDescription: string | null;
-                    thumbnailUrl: string | null;
                     imageUrl: string | null;
                     basePrice: import("@prisma/client/runtime/library").Decimal;
                     gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -52,6 +52,8 @@ export declare class OrdersBrowseController {
                     displayOrder: number;
                     subcategoryId: string;
                     kitchenStationId: string | null;
+                    isBundle: boolean;
+                    maxBundleSelections: number | null;
                 };
                 variant: {
                     name: string;
@@ -77,6 +79,9 @@ export declare class OrdersBrowseController {
                 totalPrice: import("@prisma/client/runtime/library").Decimal;
                 gstAmount: import("@prisma/client/runtime/library").Decimal;
                 variantId: string | null;
+                menuId: string | null;
+                bundleId: string | null;
+                sequenceNumber: number | null;
             })[];
             customer: {
                 name: string;
@@ -135,6 +140,9 @@ export declare class OrdersBrowseController {
             tableId: string | null;
             customerId: string | null;
             staffId: string | null;
+            clusterOrderId: string | null;
+            activeSequence: number;
+            sequenceLabels: import("@prisma/client/runtime/library").JsonValue | null;
         })[];
         total: number;
         page: number;
@@ -146,10 +154,10 @@ export declare class OrdersBrowseController {
             phone: string | null;
             id: string;
             address: string | null;
-            outletType: import(".prisma/client").$Enums.OutletType;
             gstNumber: string | null;
             upiId: string | null;
             logoUrl: string | null;
+            outletType: import(".prisma/client").$Enums.OutletType;
         };
         section: {
             name: string;
@@ -171,15 +179,19 @@ export declare class OrdersBrowseController {
             tableTypeId: string | null;
         } | null;
         items: ({
+            menu: {
+                name: string;
+                id: string;
+            } | null;
             item: {
                 name: string;
                 description: string | null;
                 id: string;
                 createdAt: Date;
                 updatedAt: Date;
+                thumbnailUrl: string | null;
                 shortDescription: string | null;
                 longDescription: string | null;
-                thumbnailUrl: string | null;
                 imageUrl: string | null;
                 basePrice: import("@prisma/client/runtime/library").Decimal;
                 gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -197,6 +209,8 @@ export declare class OrdersBrowseController {
                 displayOrder: number;
                 subcategoryId: string;
                 kitchenStationId: string | null;
+                isBundle: boolean;
+                maxBundleSelections: number | null;
             };
             variant: {
                 name: string;
@@ -249,6 +263,9 @@ export declare class OrdersBrowseController {
             totalPrice: import("@prisma/client/runtime/library").Decimal;
             gstAmount: import("@prisma/client/runtime/library").Decimal;
             variantId: string | null;
+            menuId: string | null;
+            bundleId: string | null;
+            sequenceNumber: number | null;
         })[];
         customer: {
             name: string;
@@ -326,5 +343,8 @@ export declare class OrdersBrowseController {
         tableId: string | null;
         customerId: string | null;
         staffId: string | null;
+        clusterOrderId: string | null;
+        activeSequence: number;
+        sequenceLabels: import("@prisma/client/runtime/library").JsonValue | null;
     }>;
 }

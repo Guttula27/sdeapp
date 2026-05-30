@@ -42,7 +42,10 @@ let AuthService = class AuthService {
     async login(dto) {
         const user = await this.prisma.user.findUnique({
             where: { phone: dto.phone },
-            include: { role: { include: { responsibilities: { include: { responsibility: true } } } } },
+            include: {
+                role: { include: { responsibilities: { include: { responsibility: true } } } },
+                business: { select: { id: true, name: true, isCluster: true } },
+            },
         });
         if (!user || !user.passwordHash)
             throw new common_1.UnauthorizedException('Invalid credentials');
@@ -132,6 +135,7 @@ let AuthService = class AuthService {
                 mustChangePassword: true,
                 businessId: true,
                 outletId: true,
+                business: { select: { id: true, name: true, isCluster: true } },
                 role: {
                     include: { responsibilities: { include: { responsibility: true } } },
                 },

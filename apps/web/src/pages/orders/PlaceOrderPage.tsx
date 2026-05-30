@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import {
   Plus, Minus, ShoppingBag, Trash2, Banknote, Smartphone,
   Phone, Package, X as XIcon, Search, Lock, Table2,
+  Maximize2, Minimize2,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import api from '../../services/api';
@@ -24,6 +25,13 @@ function FoodGradeDot({ grade }: { grade?: string }) {
   );
 }
 
+type CartTopping = {
+  toppingId: string;
+  optionId?: string;
+  label: string;      // human-readable for the cart sidebar e.g. "Sauce: Sriracha"
+  priceAdd: number;
+};
+
 type CartLine = {
   cartLineId: string;
   itemId: string;
@@ -33,6 +41,14 @@ type CartLine = {
   unitPrice: number;
   quantity: number;
   gstRate?: number;
+  // Toppings selected on the item detail modal. Cart line key composites
+  // these so "Burger w/ extra patty" stacks separately from "Burger".
+  toppings?: CartTopping[];
+  // Menu snapshot at add-time — used to group lines in the cart sidebar and
+  // print receipts. Server snapshots the same value on OrderItem.menuId via
+  // the item->subcategory->category chain.
+  menuId?: string;
+  menuName?: string;
 };
 
 export default function PlaceOrderPage() {
@@ -47,12 +63,50 @@ export default function PlaceOrderPage() {
   const [activeSub, setActiveSub] = useState('');
   const [search, setSearch] = useState('');
 
-  const [cart, setCart] = useState<CartLine[]>([]);
+  // Multiple-menus state. Populated from the outlet's menu list; we only
+  // show tab chrome when there's more than one enabled menu, otherwise the
+  // single-menu UI is unchanged.
+  const [enabledMenus, setEnabledMenus] = useState<Array<{ id: string; name: string }>>([]);
+  const [activeMenuId, setActiveMenuId] = useState<string>('');
+
+  // Cart survives a tab reload — keyed by outletId so two cashiers on
+  // different outlets can't clobber each other. Cleared on order
+  // placement success.
+  const cartKey = `placeorder-cart-${outletId}`;
+  const [cart, setCart] = useState<CartLine[]>(() => {
+    try { return JSON.parse(localStorage.getItem(cartKey) || '[]'); }
+    catch { return []; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(cartKey, JSON.stringify(cart)); }
+    catch { /* quota / disabled storage — best-effort */ }
+  }, [cart, cartKey]);
   const [variantPick, setVariantPick] = useState<any>(null);
 
   const [customerPhone, setCustomerPhone] = useState('');
   const [isParcel, setIsParcel] = useState(false);
   const [placing, setPlacing] = useState(false);
+
+  // Fullscreen toggle — uses the browser Fullscreen API on the page
+  // wrapper so a counter station or a tablet running in landscape can use
+  // every pixel. Tracked via the `fullscreenchange` event so the icon
+  // flips back if the user exits via Escape. iOS Safari doesn't implement
+  // requestFullscreen on arbitrary elements; the button silently no-ops.
+  const pageRef = useRef<HTMLDivElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const toggleFullscreen = async () => {
+    const el = pageRef.current;
+    if (!el) return;
+    try {
+      if (!document.fullscreenElement) await el.requestFullscreen();
+      else await document.exitFullscreen();
+    } catch { /* unavailable — silently ignore */ }
+  };
+  useEffect(() => {
+    const handler = () => setFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
 
   // Booking mode + table-service state. Only meaningful on Hybrid/Dine-in
   // outlets — for self-service we hide the "Table" tab entirely.
@@ -65,20 +119,51 @@ export default function PlaceOrderPage() {
   const fetchMenu = useCallback(async () => {
     setLoading(true);
     try {
-      const [menuRes, statusRes] = await Promise.all([
+      const [menuRes, statusRes, menusRes] = await Promise.all([
         api.get(`/outlets/${outletId}/menu`),
         api.get(`/outlets/${outletId}/open-status`).catch(() => null),
+        api.get(`/outlets/${outletId}/menus`).catch(() => null),
       ]);
-      setMenu(menuRes.data.data || []);
-      if (menuRes.data.data?.length) {
-        setActiveCat(menuRes.data.data[0].id);
-        setActiveSub(menuRes.data.data[0].subcategories?.[0]?.id || '');
-      }
+      const cats = menuRes.data.data || [];
+      setMenu(cats);
       if (statusRes) setOpenStatus(statusRes.data.data);
+
+      // Filter menus to those enabled at this outlet AND with at least one
+      // category in the loaded payload (otherwise a stale tab would render
+      // with no items behind it).
+      const categoryMenuIds = new Set<string>(cats.map((c: any) => c.menuId).filter(Boolean));
+      const list: Array<{ id: string; name: string; isEnabled: boolean }> = (menusRes?.data?.data || []).map((m: any) => ({
+        id: m.id, name: m.name, isEnabled: m.outletMenu?.isEnabled !== false,
+      }));
+      const usable = list.filter((m) => m.isEnabled && categoryMenuIds.has(m.id));
+      setEnabledMenus(usable);
+
+      const initialMenuId = usable[0]?.id || '';
+      setActiveMenuId(initialMenuId);
+      const firstCat = cats.find((c: any) => !initialMenuId || c.menuId === initialMenuId) || cats[0];
+      if (firstCat) {
+        setActiveCat(firstCat.id);
+        setActiveSub(firstCat.subcategories?.[0]?.id || '');
+      }
     } finally {
       setLoading(false);
     }
   }, [outletId]);
+
+  // When the active menu changes, snap to its first category so the items
+  // panel doesn't go blank because the prior category belongs to another menu.
+  useEffect(() => {
+    if (!activeMenuId) return;
+    const cats = menu.filter((c: any) => c.menuId === activeMenuId);
+    if (!cats.find((c: any) => c.id === activeCat)) {
+      const first = cats[0];
+      if (first) {
+        setActiveCat(first.id);
+        setActiveSub(first.subcategories?.[0]?.id || '');
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMenuId]);
 
   useEffect(() => { fetchMenu(); }, [fetchMenu]);
 
@@ -157,15 +242,39 @@ export default function PlaceOrderPage() {
   }, [activeCat, menu]);
 
   // ── Cart ops ─────────────────────────────────────────────
-  const lineKey = (itemId: string, variantId?: string) => `${itemId}-${variantId || ''}`;
-  const addToCart = (item: any, variant?: any) => {
-    const unitPrice = variant
+  // Composite cart-line key — same (item, variant, topping signature)
+  // combinations stack into one line; different ones stay separate.
+  const lineKey = (itemId: string, variantId?: string, toppings?: CartTopping[]) => {
+    const sig = (toppings || [])
+      .map((t) => `${t.toppingId}:${t.optionId || ''}`)
+      .sort()
+      .join('|');
+    return `${itemId}-${variantId || ''}-${sig}`;
+  };
+  // Look up an item's menu via its category. Falls back gracefully when we
+  // can't resolve (single-menu mode just stamps nothing).
+  const resolveMenuForItem = (itemId: string): { id?: string; name?: string } => {
+    for (const cat of menu) {
+      for (const sub of cat.subcategories || []) {
+        if ((sub.items || []).some((it: any) => it.id === itemId)) {
+          const menuRow = enabledMenus.find((m) => m.id === cat.menuId);
+          return { id: cat.menuId || undefined, name: menuRow?.name };
+        }
+      }
+    }
+    return {};
+  };
+  const addToCart = (item: any, variant: any | undefined, toppings: CartTopping[], qty: number) => {
+    const base = variant
       ? Number(variant.effectivePrice ?? variant.price)
       : Number(item.effectivePrice ?? item.basePrice);
+    const toppingsAdd = toppings.reduce((s, t) => s + t.priceAdd, 0);
+    const unitPrice = base + toppingsAdd;
+    const m = resolveMenuForItem(item.id);
     setCart(prev => {
-      const id = lineKey(item.id, variant?.id);
+      const id = lineKey(item.id, variant?.id, toppings);
       const hit = prev.find(c => c.cartLineId === id);
-      if (hit) return prev.map(c => c.cartLineId === id ? { ...c, quantity: c.quantity + 1 } : c);
+      if (hit) return prev.map(c => c.cartLineId === id ? { ...c, quantity: c.quantity + qty } : c);
       return [...prev, {
         cartLineId: id,
         itemId: item.id,
@@ -173,11 +282,17 @@ export default function PlaceOrderPage() {
         name: item.name,
         variantName: variant?.name,
         unitPrice,
-        quantity: 1,
+        quantity: qty,
         gstRate: item.gstRate != null ? Number(item.gstRate) : 0,
+        toppings: toppings.length ? toppings : undefined,
+        menuId: m.id,
+        menuName: m.name,
       }];
     });
   };
+  // Click on an item — opens the detail modal which lets the cashier pick
+  // variants, toggle toppings, choose quantity. Everything routes through
+  // the modal now so toppings are never silently skipped.
   const tryAdd = (item: any) => {
     if (openStatus && !openStatus.isOpen) {
       toast.error(`Outlet is currently closed${openStatus.reason ? ` · ${openStatus.reason}` : ''}`);
@@ -187,8 +302,7 @@ export default function PlaceOrderPage() {
       toast.error(`${item.name} is currently not available`);
       return;
     }
-    if (item.variants?.length > 1) setVariantPick(item);
-    else addToCart(item, item.variants?.[0]);
+    setVariantPick(item);
   };
   const updateQty = (id: string, delta: number) =>
     setCart(prev =>
@@ -227,6 +341,11 @@ export default function PlaceOrderPage() {
           itemId: c.itemId,
           variantId: c.variantId,
           quantity: c.quantity,
+          // Toppings forwarded in the canonical { toppingId, optionId? }
+          // shape OrdersService.resolveOrderItems expects.
+          toppings: c.toppings?.length
+            ? c.toppings.map((t) => ({ toppingId: t.toppingId, optionId: t.optionId }))
+            : undefined,
         })),
         customerPhone: customerPhone.trim() || undefined,
         paymentMode: mode,
@@ -254,7 +373,14 @@ export default function PlaceOrderPage() {
     }
     setPlacing(true);
     try {
-      const itemsPayload = cart.map(c => ({ itemId: c.itemId, variantId: c.variantId, quantity: c.quantity }));
+      const itemsPayload = cart.map(c => ({
+        itemId: c.itemId,
+        variantId: c.variantId,
+        quantity: c.quantity,
+        toppings: c.toppings?.length
+          ? c.toppings.map((t) => ({ toppingId: t.toppingId, optionId: t.optionId }))
+          : undefined,
+      }));
       if (openOrder) {
         // Append to the open order — no new order number, no payment.
         await api.post(`/outlets/${outletId}/orders/${openOrder.id}/items`, { items: itemsPayload });
@@ -331,7 +457,14 @@ export default function PlaceOrderPage() {
   const outletClosed = !!openStatus && !openStatus.isOpen;
 
   return (
-    <div className="h-[calc(100dvh-64px)] -m-6">
+    // In fullscreen we layer our own background + use the whole viewport
+    // since the global Layout chrome is bypassed by the Fullscreen API.
+    <div
+      ref={pageRef}
+      className={clsx(
+        fullscreen ? 'h-screen bg-slate-50' : 'h-[calc(100dvh-64px)] -m-6',
+      )}
+    >
       {outletClosed && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2 text-amber-800">
           <Lock size={14} className="shrink-0" />
@@ -342,11 +475,38 @@ export default function PlaceOrderPage() {
       )}
       <div className="flex h-full">
         {/* ── Left 70%: menu ─────────────────────────────────── */}
-        <div className="flex-1 flex flex-col min-w-0 bg-slate-50" style={{ flexBasis: '70%' }}>
-          {/* Categories */}
+        <div className="flex-1 flex flex-col min-w-0 bg-slate-50" style={{ flexBasis: '60%' }}>
+          {/* Menu tabs — primary navigation band. Distinct dark background
+              so staff clearly read "menu" as the top-level layer and
+              "categories" below as sub-nav. Hidden in single-menu outlets. */}
+          {enabledMenus.length > 1 && (
+            <div className="bg-gradient-to-r from-slate-900 to-slate-800 px-4 py-2.5 flex items-center gap-3 border-b border-slate-700">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">Menu</p>
+              <div className="flex-1 flex gap-2 overflow-x-auto scrollbar-hide">
+                {enabledMenus.map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => setActiveMenuId(m.id)}
+                    className={clsx(
+                      'px-4 py-1.5 rounded-xl text-sm font-bold whitespace-nowrap shrink-0 transition-all',
+                      activeMenuId === m.id
+                        ? 'bg-gradient-to-r from-brand-500 to-orange-400 text-white shadow-lg ring-1 ring-brand-300/50'
+                        : 'bg-white/10 text-slate-200 hover:bg-white/20',
+                    )}
+                  >
+                    {m.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Categories — nested sub-nav under the active menu. */}
           <div className="bg-white border-b border-slate-100 px-4 py-2.5 flex items-center gap-3">
             <div className="flex-1 flex gap-2 overflow-x-auto scrollbar-hide">
-              {menu.map(c => (
+              {menu
+                .filter((c) => !activeMenuId || c.menuId === activeMenuId)
+                .map(c => (
                 <button
                   key={c.id}
                   onClick={() => setActiveCat(c.id)}
@@ -368,6 +528,14 @@ export default function PlaceOrderPage() {
                 className="input pl-8 py-1.5 text-sm w-48"
               />
             </div>
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="btn-ghost p-2 text-slate-500 hover:text-slate-800 shrink-0"
+              title={fullscreen ? 'Exit full screen' : 'Full screen — counter / landscape tablet'}
+            >
+              {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
           </div>
 
           {/* Sub + items */}
@@ -429,9 +597,14 @@ export default function PlaceOrderPage() {
                   return (
                     <div
                       key={item.id}
+                      onClick={() => !disabled && tryAdd(item)}
+                      role={disabled ? undefined : 'button'}
+                      tabIndex={disabled ? -1 : 0}
                       className={clsx(
-                        'bg-white rounded-2xl border p-3 flex items-center gap-3',
-                        disabled ? 'border-slate-100 opacity-60' : 'border-slate-100',
+                        'bg-white rounded-2xl border p-3 flex items-center gap-3 transition-colors',
+                        disabled
+                          ? 'border-slate-100 opacity-60 cursor-not-allowed'
+                          : 'border-slate-100 cursor-pointer hover:border-brand-200',
                       )}
                     >
                       {item.thumbnailUrl || item.imageUrl ? (
@@ -458,7 +631,7 @@ export default function PlaceOrderPage() {
                         </p>
                       </div>
                       <button
-                        onClick={() => tryAdd(item)}
+                        onClick={(e) => { e.stopPropagation(); tryAdd(item); }}
                         disabled={disabled}
                         className={clsx(
                           'shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold',
@@ -478,7 +651,7 @@ export default function PlaceOrderPage() {
         </div>
 
         {/* ── Right 30%: cart ────────────────────────────────── */}
-        <aside className="w-[30%] min-w-[300px] max-w-[420px] bg-white border-l border-slate-100 flex flex-col">
+        <aside className="w-[40%] min-w-[340px] max-w-[520px] bg-white border-l border-slate-100 flex flex-col">
           <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <ShoppingBag size={15} className="text-brand-500" />
@@ -524,25 +697,51 @@ export default function PlaceOrderPage() {
                 {openOrder ? 'No new items yet — pick from the menu' : 'No items yet — pick from the menu'}
               </div>
             ) : (
-              <div className="space-y-2">
-                {cart.map(c => (
-                  <div key={c.cartLineId} className="bg-slate-50 rounded-xl px-3 py-2 flex items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-slate-800 truncate">{c.name}</p>
-                      {c.variantName && <p className="text-[10px] text-slate-400">{c.variantName}</p>}
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        <span className="font-semibold">₹{c.unitPrice.toFixed(2)}</span> × {c.quantity} = <span className="font-bold text-slate-700">₹{(c.unitPrice * c.quantity).toFixed(2)}</span>
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button onClick={() => updateQty(c.cartLineId, -1)} className="w-6 h-6 bg-white border border-slate-200 rounded-md flex items-center justify-center"><Minus size={11} /></button>
-                      <span className="w-5 text-center text-xs font-bold">{c.quantity}</span>
-                      <button onClick={() => updateQty(c.cartLineId, 1)} className="w-6 h-6 bg-brand-500 text-white rounded-md flex items-center justify-center"><Plus size={11} /></button>
-                      <button onClick={() => removeLine(c.cartLineId)} className="w-6 h-6 text-slate-400 hover:text-red-500 ml-1"><XIcon size={12} /></button>
-                    </div>
+              (() => {
+                // Group lines by menu so a cross-menu order shows clear
+                // section headers (Breakfast / Lunch / …). Single-menu orders
+                // skip the header to keep the sidebar tight.
+                const groups = new Map<string, { name: string; lines: CartLine[] }>();
+                for (const c of cart) {
+                  const key = c.menuId || '__none__';
+                  if (!groups.has(key)) groups.set(key, { name: c.menuName || '', lines: [] });
+                  groups.get(key)!.lines.push(c);
+                }
+                const showHeaders = groups.size > 1;
+                return (
+                  <div className="space-y-3">
+                    {Array.from(groups.values()).map((g, gi) => (
+                      <div key={g.name || `g-${gi}`} className="space-y-2">
+                        {showHeaders && g.name && (
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-brand-600 px-1">{g.name}</p>
+                        )}
+                        {g.lines.map((c) => (
+                          <div key={c.cartLineId} className="bg-slate-50 rounded-xl px-3 py-2 flex items-center gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-semibold text-slate-800 truncate">{c.name}</p>
+                              {c.variantName && <p className="text-[10px] text-slate-400">{c.variantName}</p>}
+                              {c.toppings && c.toppings.length > 0 && (
+                                <p className="text-[10px] text-indigo-600 truncate">
+                                  {c.toppings.map((t) => t.label).join(' · ')}
+                                </p>
+                              )}
+                              <p className="text-[11px] text-slate-500 mt-0.5">
+                                <span className="font-semibold">₹{c.unitPrice.toFixed(2)}</span> × {c.quantity} = <span className="font-bold text-slate-700">₹{(c.unitPrice * c.quantity).toFixed(2)}</span>
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button onClick={() => updateQty(c.cartLineId, -1)} className="w-6 h-6 bg-white border border-slate-200 rounded-md flex items-center justify-center"><Minus size={11} /></button>
+                              <span className="w-5 text-center text-xs font-bold">{c.quantity}</span>
+                              <button onClick={() => updateQty(c.cartLineId, 1)} className="w-6 h-6 bg-brand-500 text-white rounded-md flex items-center justify-center"><Plus size={11} /></button>
+                              <button onClick={() => removeLine(c.cartLineId)} className="w-6 h-6 text-slate-400 hover:text-red-500 ml-1"><XIcon size={12} /></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                );
+              })()
             )}
           </div>
 
@@ -587,22 +786,42 @@ export default function PlaceOrderPage() {
                 <span className="text-xs font-semibold text-slate-700">Parcel / takeaway</span>
               </label>
             ) : (
-              <div className="space-y-2 bg-slate-50 rounded-xl px-3 py-2.5">
+              <div className="space-y-2.5 bg-slate-50 rounded-xl px-3 py-2.5">
+                {/* Section pills — sections are typically just a handful
+                    (Indoor, AC, Outdoor, ...) so a button row reads faster
+                    than a dropdown. Active = outlined brand pill. */}
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Table type</label>
-                  <select
-                    value={tableTypeId}
-                    onChange={(e) => { setTableTypeId(e.target.value); setTableId(''); }}
-                    className="input text-xs"
-                  >
-                    <option value="">Select table type…</option>
-                    {visibleTableTypes.map((tt) => (
-                      <option key={tt.id} value={tt.id}>{tt.name}</option>
-                    ))}
-                  </select>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Section</label>
+                  {visibleTableTypes.length === 0 ? (
+                    <p className="text-[11px] text-slate-400 italic">No sections configured</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {visibleTableTypes.map((tt) => {
+                        const active = tt.id === tableTypeId;
+                        return (
+                          <button
+                            key={tt.id}
+                            type="button"
+                            onClick={() => { setTableTypeId(tt.id); setTableId(''); }}
+                            className={clsx(
+                              'px-3 py-1.5 rounded-full text-xs font-bold transition-all border-[1.5px]',
+                              active
+                                ? 'border-brand-500 bg-brand-50 text-brand-700'
+                                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
+                            )}
+                          >
+                            {tt.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
+                {/* Tables — kept as a dropdown because a section can hold
+                    many tables (15–30 in a typical restaurant); a button
+                    grid would crowd the cart sidebar. */}
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Table</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Table</label>
                   <select
                     value={tableId}
                     onChange={(e) => setTableId(e.target.value)}
@@ -610,7 +829,7 @@ export default function PlaceOrderPage() {
                     className="input text-xs"
                   >
                     <option value="">
-                      {!tableTypeId ? 'Pick a table type first' : tablesForType.length ? 'Select a table…' : 'No tables in this type yet'}
+                      {!tableTypeId ? 'Pick a section first' : tablesForType.length ? 'Select a table…' : 'No tables in this section yet'}
                     </option>
                     {tablesForType.map((t: any) => (
                       <option key={t.id} value={t.id}>Table {t.number} · {t.capacity} pax</option>
@@ -697,36 +916,217 @@ export default function PlaceOrderPage() {
         </aside>
       </div>
 
-      {/* Variant pick popup */}
+      {/* Item detail modal — variants + toppings + quantity. Replaces the
+          plain variant picker so the cashier can compose the same line a
+          customer would on the PWA's detail page. */}
       {variantPick && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-          onClick={() => setVariantPick(null)}>
-          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full mx-4" onClick={e => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <p className="text-sm font-bold text-slate-900">{variantPick.name}</p>
-                <p className="text-xs text-slate-400">Pick a size</p>
-              </div>
-              <button onClick={() => setVariantPick(null)} className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center"><XIcon size={14} /></button>
-            </div>
-            <div className="p-4 space-y-2">
-              {variantPick.variants.map((v: any) => (
-                <button
-                  key={v.id}
-                  onClick={() => { addToCart(variantPick, v); setVariantPick(null); }}
-                  className="w-full flex items-center justify-between px-3 py-3 rounded-xl border border-slate-100 hover:border-brand-300 hover:bg-brand-50/40"
-                >
-                  <span>
-                    <span className="text-sm font-semibold text-slate-800">{v.name}</span>
-                    {v.shortDescription && <span className="block text-[10px] text-slate-400">{v.shortDescription}</span>}
-                  </span>
-                  <span className="text-sm font-bold text-slate-900">₹{Number(v.effectivePrice ?? v.price).toFixed(0)}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <ItemDetailDialog
+          item={variantPick}
+          onClose={() => setVariantPick(null)}
+          onAdd={(variant, toppings, qty) => {
+            addToCart(variantPick, variant, toppings, qty);
+            setVariantPick(null);
+          }}
+        />
       )}
+    </div>
+  );
+}
+
+// ── Item detail dialog ───────────────────────────────────────────
+function ItemDetailDialog({
+  item, onClose, onAdd,
+}: {
+  item: any;
+  onClose: () => void;
+  onAdd: (variant: any | undefined, toppings: CartTopping[], qty: number) => void;
+}) {
+  const [variantId, setVariantId] = useState<string>(item.variants?.[0]?.id ?? '');
+  const [qty, setQty] = useState(1);
+  // Topping selection — { selected, optionId? } per link.
+  const [topSel, setTopSel] = useState<Record<string, { selected: boolean; optionId?: string }>>(() => {
+    const init: Record<string, { selected: boolean; optionId?: string }> = {};
+    (item.itemToppings || []).forEach((l: any) => {
+      if (l.topping.options?.length) {
+        init[l.toppingId] = {
+          selected: !!l.isRequired,
+          optionId: l.isRequired ? l.topping.options[0].id : undefined,
+        };
+      } else {
+        init[l.toppingId] = { selected: !!l.isRequired };
+      }
+    });
+    return init;
+  });
+
+  const variant = item.variants?.find((v: any) => v.id === variantId);
+  const basePrice = variant
+    ? Number(variant.effectivePrice ?? variant.price)
+    : Number(item.effectivePrice ?? item.basePrice);
+
+  // Derive the live toppings list for the price calc + the Add payload.
+  const toppings: CartTopping[] = [];
+  for (const link of (item.itemToppings || [])) {
+    const sel = topSel[link.toppingId];
+    if (!sel?.selected && !link.isRequired) continue;
+    const linkAdd = link.priceAdd != null ? Number(link.priceAdd) : Number(link.topping.basePriceAdd);
+    if (link.topping.options?.length) {
+      const optId = sel?.optionId || link.topping.options[0].id;
+      const opt = link.topping.options.find((o: any) => o.id === optId);
+      if (!opt) continue;
+      toppings.push({
+        toppingId: link.toppingId, optionId: opt.id,
+        label: `${link.topping.name}: ${opt.name}`,
+        priceAdd: linkAdd + Number(opt.priceAdd),
+      });
+    } else {
+      toppings.push({ toppingId: link.toppingId, label: link.topping.name, priceAdd: linkAdd });
+    }
+  }
+  const lineUnit = basePrice + toppings.reduce((s, t) => s + t.priceAdd, 0);
+  const lineTotal = lineUnit * qty;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[88vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Hero */}
+        <div className="relative">
+          {item.imageUrl || item.thumbnailUrl ? (
+            <img src={item.imageUrl || item.thumbnailUrl} alt="" className="w-full aspect-[4/3] object-cover rounded-t-2xl" />
+          ) : (
+            <div className="w-full aspect-[4/3] rounded-t-2xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-5xl">🍽️</div>
+          )}
+          <button
+            onClick={onClose}
+            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/95 flex items-center justify-center shadow"
+          >
+            <XIcon size={14} />
+          </button>
+        </div>
+
+        {/* Body — scrolls when variants + toppings get long */}
+        <div className="px-5 pt-4 pb-3 space-y-4 overflow-y-auto">
+          <div>
+            <div className="flex items-center gap-2">
+              <FoodGradeDot grade={item.foodGrade} />
+              <h2 className="text-base font-black text-slate-900">{item.name}</h2>
+            </div>
+            {item.shortDescription && <p className="text-xs text-slate-500 mt-1">{item.shortDescription}</p>}
+            {item.longDescription && item.longDescription !== item.shortDescription && (
+              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">{item.longDescription}</p>
+            )}
+            <p className="text-sm font-black text-slate-900 mt-2">₹{basePrice.toFixed(0)}</p>
+          </div>
+
+          {/* Variants */}
+          {item.variants?.length > 0 && (
+            <section>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Variant</p>
+              <div className="space-y-1.5">
+                {item.variants.map((v: any) => {
+                  const active = v.id === variantId;
+                  return (
+                    <button
+                      key={v.id}
+                      onClick={() => setVariantId(v.id)}
+                      className={clsx(
+                        'w-full flex items-center gap-3 px-3 py-2 rounded-lg border transition-all text-left',
+                        active ? 'border-brand-500 bg-brand-50/60' : 'border-slate-200 hover:border-slate-300',
+                      )}
+                    >
+                      <span className={clsx('w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center', active ? 'border-brand-500' : 'border-slate-300')}>
+                        {active && <span className="w-1.5 h-1.5 rounded-full bg-brand-500" />}
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-sm font-semibold text-slate-800 truncate">{v.name}</span>
+                        {v.shortDescription && <span className="block text-[10px] text-slate-400">{v.shortDescription}</span>}
+                      </span>
+                      <span className="text-sm font-bold text-slate-900">₹{Number(v.effectivePrice ?? v.price).toFixed(0)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* Toppings */}
+          {item.itemToppings?.length > 0 && (
+            <section>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Add-ons</p>
+              <div className="space-y-2">
+                {item.itemToppings.map((link: any) => {
+                  const sel = topSel[link.toppingId] || { selected: link.isRequired };
+                  const linkAdd = link.priceAdd != null ? Number(link.priceAdd) : Number(link.topping.basePriceAdd);
+                  const hasOptions = (link.topping.options?.length || 0) > 0;
+                  return (
+                    <div key={link.toppingId} className="bg-slate-50 rounded-lg p-2.5">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!!sel.selected}
+                          disabled={link.isRequired}
+                          onChange={(e) => setTopSel((p) => ({
+                            ...p,
+                            [link.toppingId]: { selected: e.target.checked, optionId: p[link.toppingId]?.optionId },
+                          }))}
+                          className="w-4 h-4 accent-brand-500"
+                        />
+                        <span className="text-xs font-semibold text-slate-800 flex-1">
+                          {link.topping.name}
+                          {link.isRequired && <span className="ml-1 text-[10px] text-red-500">required</span>}
+                        </span>
+                        {!hasOptions && <span className="text-xs font-bold text-slate-700">+₹{linkAdd.toFixed(0)}</span>}
+                      </label>
+                      {hasOptions && sel.selected && (
+                        <div className="mt-2 ml-6 space-y-1">
+                          {link.topping.options.map((opt: any) => (
+                            <label key={opt.id} className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="radio"
+                                name={`top-${link.toppingId}`}
+                                checked={sel.optionId === opt.id}
+                                onChange={() => setTopSel((p) => ({ ...p, [link.toppingId]: { selected: true, optionId: opt.id } }))}
+                                className="accent-brand-500"
+                              />
+                              <span className="text-[11px] text-slate-700 flex-1">{opt.name}</span>
+                              <span className="text-[11px] font-semibold text-slate-700">+₹{(linkAdd + Number(opt.priceAdd)).toFixed(0)}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+        </div>
+
+        {/* Sticky footer: qty + Add */}
+        <div className="border-t border-slate-100 px-5 py-3 flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => setQty((q) => Math.max(1, q - 1))} className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center">
+              <Minus size={13} />
+            </button>
+            <span className="text-sm font-bold w-8 text-center">{qty}</span>
+            <button onClick={() => setQty((q) => q + 1)} className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center">
+              <Plus size={13} />
+            </button>
+          </div>
+          <button
+            onClick={() => onAdd(variant, toppings, qty)}
+            className="flex-1 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-bold py-2.5 rounded-xl text-sm"
+          >
+            Add {qty} for ₹{lineTotal.toFixed(0)}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,12 +1,12 @@
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Home, LayoutDashboard, History, User, QrCode } from 'lucide-react';
+import { Home, LayoutDashboard, Gift, User, QrCode } from 'lucide-react';
 import clsx from 'clsx';
 
 const SIDE_TABS = [
   { to: '/home',      icon: Home,            label: 'Home' },
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   // — floating scan in the middle —
-  { to: '/history',   icon: History,         label: 'History' },
+  { to: '/offers',    icon: Gift,            label: 'Offers' },
   { to: '/profile',   icon: User,            label: 'Profile' },
 ];
 

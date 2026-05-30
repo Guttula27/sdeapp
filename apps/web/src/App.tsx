@@ -7,6 +7,7 @@ import LandingPage from './pages/landing/LandingPage';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/dashboard/DashboardPage';
 import PlatformPage from './pages/platform/PlatformPage';
+import ClusterDetailPage from './pages/clusters/ClusterDetailPage';
 import OrdersPage from './pages/orders/OrdersPage';
 import PlaceOrderPage from './pages/orders/PlaceOrderPage';
 import MenuPage from './pages/menu/MenuPage';
@@ -30,7 +31,12 @@ import IntegrationsPage from './pages/integrations/IntegrationsPage';
 import TemplateApprovalsPage from './pages/integrations/TemplateApprovalsPage';
 import MessagingPage from './pages/messaging/MessagingPage';
 import FeedbackPage from './pages/feedback/FeedbackPage';
+import CouponsPage from './pages/promotions/CouponsPage';
+import DiscountsPage from './pages/promotions/DiscountsPage';
+import OffersPage from './pages/promotions/OffersPage';
+import RewardsPage from './pages/promotions/RewardsPage';
 import ForcePasswordResetPage from './pages/ForcePasswordResetPage';
+import OfflineBanner from './components/common/OfflineBanner';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const token = useSelector((s: RootState) => s.auth.token);
@@ -49,6 +55,7 @@ function HomeRoute() {
 export default function App() {
   return (
     <BrowserRouter>
+      <OfflineBanner />
       <Routes>
         {/* Public */}
         <Route path="/"      element={<HomeRoute />} />
@@ -68,6 +75,7 @@ export default function App() {
           <Route path="platform"           element={<PlatformPage />} />
           <Route path="subscriptions-mgmt" element={<PlatformPage />} />
           <Route path="businesses"         element={<PlatformPage />} />
+          <Route path="platform/clusters/:id" element={<ClusterDetailPage />} />
 
           {/* Shared across tiers */}
           <Route path="dashboard"  element={<DashboardPage />} />
@@ -97,6 +105,13 @@ export default function App() {
           <Route path="template-approvals" element={<TemplateApprovalsPage />} />
           <Route path="messaging"  element={<MessagingPage />} />
           <Route path="feedback"   element={<FeedbackPage />} />
+
+          {/* Promotions */}
+          <Route path="promotions/coupons"   element={<CouponsPage />} />
+          <Route path="promotions/discounts" element={<DiscountsPage />} />
+          <Route path="promotions/bundles"   element={<Navigate to="/menu" replace />} />
+          <Route path="promotions/offers"    element={<OffersPage />} />
+          <Route path="promotions/rewards"   element={<RewardsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

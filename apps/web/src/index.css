@@ -290,6 +290,32 @@
     border-color: #e2e8f0;
   }
   .filter-pill-inactive:hover { border-color: #cbd5e1; color: #1e293b; background: #f8fafc; }
+
+  /* ── Orders page: responsive card grid ───────────────────
+     Phones (<640px): a single full-width column scrolls vertically —
+     no dead space on the right, no clipped cards off the bottom.
+     ≥640px: the existing 220px newspaper columns, filling each
+     column top-to-bottom and spilling horizontally. */
+  .orders-cards-wrapper {
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .orders-cards-columns {
+    column-count: 1;
+    column-gap: 14px;
+  }
+  @media (min-width: 640px) {
+    .orders-cards-wrapper {
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+    .orders-cards-columns {
+      height: 100%;
+      column-count: auto;
+      column-width: 220px;
+      column-fill: auto;
+    }
+  }
 }
 
 /* ─── Utilities ─────────────────────────────────────────── */
@@ -329,6 +355,26 @@
   /* Kitchen blink */
   .blink-fast { animation: blinkFast .7s step-start infinite; }
   @keyframes blinkFast { 50% { opacity: .3; } }
+
+  /* Attention pulse — softer than blink-fast. Used on cards that need
+     staff action (kitchen item PENDING, service-ready orders) so they
+     visually knock on the screen without being headache-inducing. */
+  .attn-blink {
+    animation: attnPulse 1.1s ease-in-out infinite;
+  }
+  @keyframes attnPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgb(249 115 22 / .55); }
+    50%      { box-shadow: 0 0 0 8px rgb(249 115 22 / 0); }
+  }
+  /* Variant in teal for the service-station "needs delivery" cue, so
+     it's visually distinct from the kitchen's orange. */
+  .attn-blink-teal {
+    animation: attnPulseTeal 1.1s ease-in-out infinite;
+  }
+  @keyframes attnPulseTeal {
+    0%, 100% { box-shadow: 0 0 0 0 rgb(20 184 166 / .6); }
+    50%      { box-shadow: 0 0 0 8px rgb(20 184 166 / 0); }
+  }
 
   /* Divider */
   .divider { height: 1px; background: #e8eaf0; }

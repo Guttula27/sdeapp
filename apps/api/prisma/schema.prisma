@@ -38,6 +38,10 @@ enum OrderStatus {
   QUEUED
   PREPARING
   READY
+  // Parcel-path service step: kitchen finished, parcel station is packaging
+  // / staging it. Customer gets a "ready for pickup" alert on entry. Maps
+  // to the same point in the lifecycle as OUT_FOR_SERVICE for table service.
+  READY_FOR_PICKUP
   OUT_FOR_SERVICE
   SERVED
   CANCELLED
@@ -145,6 +149,7 @@ model User {
 
   customerOrders Order[]  @relation("CustomerOrders")
   staffOrders    Order[]  @relation("StaffOrders")
+  customerClusterOrders ClusterOrder[] @relation("CustomerClusterOrders")
   customerAlerts CustomerAlert[]
   sessions       Session[]
   auditLogs      AuditLog[]
@@ -156,6 +161,10 @@ model User {
   responsibilities UserResponsibility[]
   orderItemReviews OrderItemReview[] @relation("ReviewByCustomer")
   reviewReplies    OrderItemReview[] @relation("ReviewReplyBy")
+  couponTargets    CouponCustomer[] @relation("CouponTargets")
+  couponUsages     CouponUsage[]    @relation("CouponUsages")
+  rewardAccount    CustomerRewardAccount? @relation("RewardAccount")
+  rewardTransactions RewardTransaction[] @relation("RewardTransactions")
   preferredUpiApp String?
   profileImageUrl String? @db.Text
   alertRingtone   String? @default("chime")
@@ -334,8 +343,27 @@ model Business {
   upiId        String?
   businessType BusinessType
   logoUrl      String?  @db.Text
+  thumbnailUrl String?  @db.Text
   primaryImageUrl String? @db.Text
   status       UserStatus   @default(ACTIVE)
+
+  // Short, public-shareable identifier (e.g. "BIZ-A4F23C81"). Required for
+  // Cluster businesses since they need a QR-resolvable code; backfilled for
+  // every business at migration time so the column is uniformly populated.
+  publicCode   String?  @unique @db.VarChar(20)
+
+  // CLUSTER: a Business of category "Cluster" is a logical roof (food court,
+  // theatre) that aggregates outlets from other businesses. It owns no outlets
+  // of its own — its `outlets` collection stays empty — and instead pulls
+  // member outlets in via the ClusterMember join. Customers see all members
+  // under one shell with a unified cart and a single payment that the backend
+  // splits per outlet (Razorpay Route).
+  isCluster    Boolean  @default(false)
+
+  // When true the business uses multiple menus (e.g. Breakfast / Lunch / Dinner).
+  // When false a single hidden "Main Menu" is used and the UI hides menu tabs.
+  // Every business has at least one Menu row regardless of the flag.
+  multipleMenusEnabled Boolean @default(false)
 
   subscriptionId String?       @unique
   subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
@@ -348,8 +376,20 @@ model Business {
   materials  Material[]
   images     BusinessImage[]
   categories Category[]
+  menus      Menu[]
+
+  // Cluster relations — only populated when isCluster = true.
+  clusterMembers ClusterMember[] @relation("ClusterMembership")
+  clusterOrders  ClusterOrder[]  @relation("ClusterOrders")
 
   messageTemplates MessageTemplate[]
+
+  // Promotions (coupons / discounts / bundles / offers) authored at the
+  // business level. Outlet-scope rows live in the corresponding tables too,
+  // selected by outletId.
+  coupons   Coupon[]
+  discounts Discount[]
+  offers    Offer[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -372,6 +412,11 @@ model BusinessImage {
 
 model Outlet {
   id              String     @id @default(cuid())
+  // Short, cryptic, human-shareable identifier (e.g. "OL-A4F23C81"). Used
+  // wherever the long CUID would be unwieldy: invoices, support tickets,
+  // staff/customer reference. Generated at create time; one per outlet for
+  // life. The migration backfills existing rows deterministically from id.
+  publicCode      String?    @unique @db.VarChar(20)
   name            String
   outletType      OutletType
   address         String?
@@ -390,9 +435,11 @@ model Outlet {
   primaryImageUrl String?    @db.Text
   isActive        Boolean    @default(true)
 
-  // Outlet-level operations defaults
+  // Outlet-level operations defaults. Parcel is available everywhere by
+  // default — the obsolete SELF_SERVICE_PARCEL outlet type has been retired
+  // and counter / hybrid outlets all offer parcel out of the box.
   defaultPrepTime       Int?
-  parcelChargeEnabled   Boolean @default(false)
+  parcelChargeEnabled   Boolean @default(true)
   defaultParcelCharge   Decimal @db.Decimal(10, 2) @default(0)
 
   // Persistent order sequence (continuous across days). orderNumber on each
@@ -403,10 +450,24 @@ model Outlet {
   tokenStartNumber  Int @default(1)
   nextTokenNumber   Int @default(1)
 
+  // Per-outlet master switch for the multi-menu UI. The business flag
+  // (Business.multipleMenusEnabled) controls whether menus can be authored;
+  // this flag controls whether customers, staff and outlet admins at this
+  // outlet see them. When false, only the default menu's categories are
+  // returned by /outlets/:id/menu, regardless of other menus' enable state.
+  multipleMenusEnabled Boolean @default(false)
+
   // GST / tax config
   gstApplicable    Boolean @default(false)
   gstPercent       Decimal @db.Decimal(5, 2) @default(0)
   priceIncludesGst Boolean @default(false)
+
+  // Razorpay Route — the outlet's Razorpay Linked Account (LA) ID. When the
+  // outlet is a member of a Cluster, the cluster's payment is split via
+  // Razorpay's `transfers` array so funds settle directly to this LA.
+  // In stubbed test mode (RAZORPAY_STUB_TRANSFERS=true) the split is computed
+  // and persisted on ClusterOrder.routeTransfers, but no real transfer fires.
+  razorpayLinkedAccountId String?
   businessId String
   business   Business   @relation(fields: [businessId], references: [id])
   facilityId String?
@@ -428,7 +489,33 @@ model Outlet {
   tableTypes TableType[]
   customerLinks OutletCustomer[] @relation("OutletCustomerLinks")
   roles         Role[]
+  menus         OutletMenu[]
   messageTemplates MessageTemplate[]
+
+  // 1:1 with ClusterMember (the join row makes outletId unique, so an
+  // outlet is in at most one cluster at a time — "cluster-exclusive while
+  // linked" semantics).
+  clusterMembership ClusterMember? @relation("OutletClusterMembership")
+
+  // Whether this outlet accepts reward-point redemptions at checkout. The
+  // earn side is always on (customers earn points everywhere they spend);
+  // burn side is a per-outlet business decision.
+  acceptRewardRedemption Boolean @default(true)
+
+  // Kitchen-station receipt printing. When `kitchenAutoPrint` is on, each
+  // station auto-prints its slice of every confirmed order to the printer
+  // assigned to it. When `kitchenAllowManualPrint` is on, station staff can
+  // tap a Print button on a ticket to print on demand. Both default off so
+  // outlets opt-in explicitly.
+  kitchenAutoPrint         Boolean @default(false)
+  kitchenAllowManualPrint  Boolean @default(false)
+
+  // Per-outlet promotion rows. Business-wide promotions live with
+  // outletId = null and apply to every outlet under the business.
+  coupons   Coupon[]
+  discounts Discount[]
+  offers    Offer[]
+  printers  Printer[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -510,13 +597,23 @@ model Category {
   businessId String?
   business   Business? @relation(fields: [businessId], references: [id])
 
+  // Parent menu. Nullable for legacy categories; the data migration backfills
+  // every existing category to its business's default "Main Menu". New
+  // categories should always set this. When the business's
+  // multipleMenusEnabled flag is OFF the UI hides the menu picker and assigns
+  // the default menu transparently.
+  menuId String?
+  menu   Menu?   @relation(fields: [menuId], references: [id])
+
   subcategories Subcategory[]
+  discounts     Discount[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([outletId])
   @@index([businessId])
+  @@index([menuId])
   @@map("paynpik_categories")
 }
 
@@ -529,12 +626,96 @@ model Subcategory {
   categoryId   String
   category     Category @relation(fields: [categoryId], references: [id])
 
-  items Item[]
+  items     Item[]
+  discounts Discount[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("paynpik_subcategories")
+}
+
+// ─── Menus ─────────────────────────────────────────────────────
+// A Menu groups a set of Categories under a Business (e.g. Breakfast, Lunch).
+// Every business has at least one "Main Menu" (auto-seeded). When the
+// business's multipleMenusEnabled flag is OFF, the UI hides tabs and treats
+// the single menu as implicit. Outlets opt in to specific menus via OutletMenu.
+
+model Menu {
+  id           String  @id @default(cuid())
+  businessId   String
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name         String
+  description  String? @db.VarChar(250)
+  isActive     Boolean @default(true)
+  displayOrder Int     @default(0)
+  // Marks the auto-seeded default menu so we can prevent deletion. There's
+  // always exactly one isDefault=true per business.
+  isDefault    Boolean @default(false)
+
+  timingSlots    MenuTimingSlot[]
+  categories     Category[]
+  outletLinks    OutletMenu[]
+  orderItems     OrderItem[]
+  tableTypeLinks TableTypeMenu[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId, displayOrder])
+  @@map("paynpik_menus")
+}
+
+// Per-day-of-week availability slot. Multiple slots per day are allowed to
+// model split shifts (e.g. Tue 07:00-10:00 + 18:00-22:00). dayOfWeek follows
+// ISO: 1=Mon .. 7=Sun. Times are stored as minutes-since-midnight (0..1440)
+// so the API can do clean comparisons without timezone parsing.
+model MenuTimingSlot {
+  id         String @id @default(cuid())
+  menuId     String
+  menu       Menu   @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  dayOfWeek  Int
+  startMinute Int
+  endMinute   Int
+
+  @@index([menuId, dayOfWeek])
+  @@map("paynpik_menu_timing_slots")
+}
+
+// Join row: this outlet imports/exposes this menu. Carries the outlet's
+// enable toggle and optional timing override (when overrideTimings=true, the
+// slots in OutletMenuTimingSlot take precedence; otherwise the business
+// Menu.timingSlots apply).
+model OutletMenu {
+  id              String  @id @default(cuid())
+  outletId        String
+  outlet          Outlet  @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  menuId          String
+  menu            Menu    @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  isEnabled       Boolean @default(true)
+  overrideTimings Boolean @default(false)
+  displayOrder    Int     @default(0)
+
+  timingSlots OutletMenuTimingSlot[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([outletId, menuId])
+  @@index([outletId, displayOrder])
+  @@map("paynpik_outlet_menus")
+}
+
+model OutletMenuTimingSlot {
+  id            String @id @default(cuid())
+  outletMenuId  String
+  outletMenu    OutletMenu @relation(fields: [outletMenuId], references: [id], onDelete: Cascade)
+  dayOfWeek     Int
+  startMinute   Int
+  endMinute     Int
+
+  @@index([outletMenuId, dayOfWeek])
+  @@map("paynpik_outlet_menu_timing_slots")
 }
 
 enum FoodGrade {
@@ -578,9 +759,22 @@ model Item {
   kitchenStationId String?
   kitchenStation   KitchenStation? @relation(fields: [kitchenStationId], references: [id])
 
+  // When true, this Item is a Bundle — at order time the server expands it
+  // into its child rows (see ItemBundleChild). Bundles still live under a
+  // subcategory and inherit every Item feature (variants, customer-tag /
+  // table-type price overrides, visibility, limited stock, QR, etc.). The
+  // only difference is the expansion at order time.
+  isBundle Boolean @default(false)
+  // Customer-choice bundles: when set (>0), the customer must pick exactly
+  // this many child rows out of the bundleChildren list at order time. Null
+  // or 0 = legacy behavior (all children auto-included). Must be ≤ number
+  // of configured children; admin form enforces this.
+  maxBundleSelections Int?
+
   variants   Variant[]
   options    Option[]
   orderItems OrderItem[]
+  orderItemsAsBundle OrderItem[] @relation("BundleParent")
   reviews    OrderItemReview[]
   tags       ItemTag[]
   customerTagPrices CustomerTagPrice[]
@@ -588,6 +782,11 @@ model Item {
   images       ItemImage[]
   itemToppings ItemTopping[]
   favorites    Favorite[]
+  discounts    Discount[]
+  bundleChildren ItemBundleChild[] @relation("BundleParentItem")
+  bundleParentLinks ItemBundleChild[] @relation("BundleChildItem")
+  offerBuyFor  Offer[]      @relation("OfferBuyItem")
+  offerGetFor  Offer[]      @relation("OfferGetItem")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -620,6 +819,7 @@ model Variant {
   orderItems OrderItem[]
   customerTagPrices CustomerTagPrice[]
   tableTypePrices   TableTypePrice[]
+  bundleChildLinks  ItemBundleChild[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -659,6 +859,13 @@ model KitchenStation {
   currentWorkerId String?
   currentWorker   User?   @relation("StationWorker", fields: [currentWorkerId], references: [id], onDelete: SetNull)
 
+  // Optional bluetooth printer this station prints its kitchen tickets to.
+  // Multiple stations can point at the same printer (one shared printer in
+  // the kitchen is the common case). Null = no printer assigned, so any
+  // print action for this station no-ops with a friendly toast.
+  printerId String?
+  printer   Printer? @relation(fields: [printerId], references: [id], onDelete: SetNull)
+
   items Item[]
 
   createdAt DateTime @default(now())
@@ -667,23 +874,81 @@ model KitchenStation {
   @@map("paynpik_kitchen_stations")
 }
 
-model Offer {
-  id           String    @id @default(cuid())
-  name         String
-  description  String?
-  type         String    // PERCENTAGE, FLAT, COMBO, HAPPY_HOUR
-  value        Decimal   @db.Decimal(10, 2)
-  couponCode   String?   @unique
-  minOrderValue Decimal? @db.Decimal(10, 2)
-  maxDiscount  Decimal?  @db.Decimal(10, 2)
-  validFrom    DateTime
-  validUntil   DateTime
-  isActive     Boolean   @default(true)
-  outletId     String?
+// Outlet-level catalog of printers (bluetooth-connected receipt printers in
+// the kitchen). Stations bind to a printer via KitchenStation.printerId; one
+// printer can serve many stations. Actual printing happens client-side via
+// the Web Bluetooth API — the address/identifier is stored so the kitchen
+// PWA knows which device to connect to.
+model Printer {
+  id          String  @id @default(cuid())
+  outletId    String
+  outlet      Outlet  @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  name        String
+  // Connection type. Today only 'BLUETOOTH'; kept as a string column so we
+  // can add wifi/USB later without an enum migration.
+  connection  String  @db.VarChar(20) @default("BLUETOOTH")
+  // Device identifier — bluetooth MAC or Web-Bluetooth `deviceId`. Free-form
+  // because the value is platform-dependent (Web Bluetooth returns an opaque
+  // id, native bridges expose a MAC).
+  address     String? @db.VarChar(128)
+  // Optional printer model/notes for the admin's reference.
+  model       String?
+  isActive    Boolean @default(true)
+
+  stations    KitchenStation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([outletId])
+  @@map("paynpik_printers")
+}
+
+// Conditional freebies: "spend ₹500 get a complementary sweet" or
+// "buy 3 beers get 1 free at happy-hour". Distinct from Coupon (customer-
+// selected at checkout) and Discount (price reduction on items/categories).
+// Offers auto-trigger when a cart meets the rule and add a ₹0-priced line.
+model Offer {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  outletId   String?
+  outlet     Outlet?  @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  // MIN_BILL: free item when cart subtotal >= minBillAmount
+  // BUY_X_GET_Y: free `getQuantity` of `getItem` when cart has
+  //   `buyQuantity` of `buyItem`
+  triggerType   String   @db.VarChar(20)
+  minBillAmount Decimal? @db.Decimal(10, 2)
+
+  buyItemId    String?
+  buyItem      Item?    @relation("OfferBuyItem", fields: [buyItemId], references: [id])
+  buyVariantId String?
+  buyQuantity  Int?
+
+  getItemId    String?
+  getItem      Item?    @relation("OfferGetItem", fields: [getItemId], references: [id])
+  getVariantId String?
+  getQuantity  Int?
+
+  // Schedule
+  validFrom    DateTime?
+  validUntil   DateTime?
+  daysOfWeek   String?  @db.VarChar(20)  // CSV, ISO 1=Mon..7=Sun ("1,2,3,4,5")
+  startMinute  Int?     // minutes-since-midnight
+  endMinute    Int?
+
+  isActive     Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId])
+  @@index([outletId])
+  @@index([isActive])
   @@map("paynpik_offers")
 }
 
@@ -723,16 +988,97 @@ model Order {
   staffId    String?
   staff      User?    @relation("StaffOrders", fields: [staffId], references: [id])
 
+  // When non-null, this Order is a child of a ClusterOrder — created as part
+  // of a cluster checkout where the customer placed one cart with items from
+  // multiple outlets. The parent ClusterOrder holds the unified payment;
+  // each child Order is what the outlet's kitchen sees and serves.
+  clusterOrderId String?
+  clusterOrder   ClusterOrder? @relation("ClusterChildren", fields: [clusterOrderId], references: [id])
+
+  // Course sequencing (optional). Customer/staff can group items into
+  // sequential courses ("Starter", "Main", "Dessert"). `activeSequence`
+  // tracks which course is currently released to the kitchen. Items with
+  // a higher sequenceNumber are held until prior courses are SERVED, at
+  // which point activeSequence auto-advances. `sequenceLabels` stores the
+  // display name per course as JSON, e.g. {"1":"Starter","2":"Main"}.
+  // Items with sequenceNumber=null are always active (default behaviour).
+  activeSequence  Int   @default(1)
+  sequenceLabels  Json?
+
   items         OrderItem[]
   payments      Payment[]
   statusHistory OrderStatusHistory[]
   disputes      Dispute[]
   customerAlerts CustomerAlert[]
+  couponUsages  CouponUsage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("paynpik_orders")
+}
+
+// ─── Cluster (food court / theatre roof) ─────────────────
+
+// Join row linking a member outlet to the cluster (host) business. The
+// outletId is UNIQUE so an outlet can be in at most one cluster at any time
+// — the "cluster-exclusive while linked" rule. Removing this row releases
+// the outlet back to standalone operation.
+model ClusterMember {
+  id                String   @id @default(cuid())
+  clusterBusinessId String
+  clusterBusiness   Business @relation("ClusterMembership", fields: [clusterBusinessId], references: [id], onDelete: Cascade)
+  outletId          String   @unique
+  outlet            Outlet   @relation("OutletClusterMembership", fields: [outletId], references: [id])
+  displayOrder      Int      @default(0)
+  joinedAt          DateTime @default(now())
+
+  @@index([clusterBusinessId, displayOrder])
+  @@map("paynpik_cluster_members")
+}
+
+// Parent record for a single customer checkout that spans multiple outlets in
+// a cluster. The customer's payment lands here; child Orders (one per outlet)
+// inherit clusterOrderId and surface independently to each outlet's kitchen.
+// routeTransfers is a JSON array — one entry per child order with the
+// computed split { outletId, orderId, amount, razorpayLinkedAccountId,
+// transferId?, status }. In stubbed test mode the transfer is recorded but
+// not actually executed against Razorpay.
+model ClusterOrder {
+  id                  String   @id @default(cuid())
+  clusterOrderNumber  String   @unique
+  clusterBusinessId   String
+  clusterBusiness     Business @relation("ClusterOrders", fields: [clusterBusinessId], references: [id])
+  customerId          String?
+  customer            User?    @relation("CustomerClusterOrders", fields: [customerId], references: [id])
+  // The cluster's shared seating table, if the customer scanned a table QR.
+  // Stored as plain string rather than FK because cluster tables may belong
+  // to any member outlet — the child Order keeps the canonical FK.
+  tableId             String?
+
+  subtotal            Decimal       @db.Decimal(10, 2)
+  taxAmount           Decimal       @db.Decimal(10, 2) @default(0)
+  parcelAmount        Decimal       @db.Decimal(10, 2) @default(0)
+  totalAmount         Decimal       @db.Decimal(10, 2)
+
+  // 'RAZORPAY' (real gateway) or 'BYPASS' (testing). Kept as a free-form
+  // string rather than extending the hot PaymentMode enum used by the
+  // single-outlet Payment model.
+  paymentMethod       String?       @db.VarChar(20)
+  paymentStatus       PaymentStatus @default(PENDING)
+  razorpayOrderId     String?
+  razorpayPaymentId   String?
+  razorpaySignature   String?       @db.Text
+  routeTransfers      Json          @default("[]")
+
+  childOrders         Order[]       @relation("ClusterChildren")
+
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  @@index([clusterBusinessId])
+  @@index([customerId])
+  @@map("paynpik_cluster_orders")
 }
 
 model OrderItem {
@@ -752,11 +1098,31 @@ model OrderItem {
   variantId  String?
   variant    Variant?        @relation(fields: [variantId], references: [id])
 
+  // Menu snapshot — resolved at order-time via item->subcategory->category.menuId.
+  // Frozen even if the category later moves to a different menu, so historical
+  // receipts keep their original grouping. Nullable for legacy rows.
+  menuId String?
+  menu   Menu?   @relation(fields: [menuId], references: [id])
+
+  // When the customer ordered a Bundle (an Item flagged isBundle=true), the
+  // row was created by expanding the bundle into its child items — all
+  // child rows share the same bundleId (= the parent Item.id) so the
+  // kitchen ticket + receipt can group them under the bundle's name. Only
+  // the first child carries the bundle's price; siblings have totalPrice=0.
+  bundleId String?
+  bundleParent Item? @relation("BundleParent", fields: [bundleId], references: [id])
+
+  // Course position (1-based). Null = no sequencing applied — the item is
+  // always live. See Order.activeSequence for the gating rule.
+  sequenceNumber Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
   review OrderItemReview?
 
+  @@index([menuId])
+  @@index([bundleId])
   @@map("paynpik_order_items")
 }
 
@@ -1197,12 +1563,35 @@ model TableType {
   tables Table[]
   prices TableTypePrice[]
   serviceStations ServiceStation[]
+  menus  TableTypeMenu[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([outletId, name])
   @@map("paynpik_table_types")
+}
+
+// Per-section menu visibility. One row per (TableType × Menu) pair where
+// isEnabled toggles whether the menu is offered to customers seated in that
+// section. The default Menu is always considered enabled regardless of this
+// row — the API layer rejects disabling it. Rows for non-default menus
+// default isEnabled=true, so existing behavior is preserved when the feature
+// goes live.
+model TableTypeMenu {
+  id          String    @id @default(cuid())
+  tableTypeId String
+  tableType   TableType @relation(fields: [tableTypeId], references: [id], onDelete: Cascade)
+  menuId      String
+  menu        Menu      @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  isEnabled   Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tableTypeId, menuId])
+  @@index([menuId])
+  @@map("paynpik_table_type_menus")
 }
 
 model TableTypePrice {
@@ -1237,6 +1626,13 @@ model ServiceStation {
   outlet      Outlet     @relation(fields: [outletId], references: [id], onDelete: Cascade)
   tableTypeId String?
   tableType   TableType? @relation(fields: [tableTypeId], references: [id], onDelete: SetNull)
+
+  // When true this station handles parcel orders (isParcel=true) instead of
+  // table-bound service. Parcel stations don't bind to a tableType/tables
+  // because the work is "package it and hand it to the customer at the
+  // counter." If no parcel station has an active worker, parcel orders fall
+  // back to whichever regular service station covers the order.
+  isParcelStation Boolean @default(false)
 
   workers ServiceStationWorker[]
   tables  ServiceStationTable[]
@@ -1362,4 +1758,267 @@ model MessageTemplate {
   @@index([businessId])
   @@index([outletId])
   @@map("paynpik_message_templates")
+}
+
+
+// ─── Idempotency (Layer 2 outbox / write deduplication) ────
+// Short-lived cache of write responses keyed by client-supplied
+// Idempotency-Key header. The IdempotencyInterceptor consults this
+// table on every incoming write; a hit replays the cached body so
+// retries from the client outbox can never duplicate a side-effect
+// (e.g. a customer placing the same order twice on a flaky network).
+model IdempotencyKey {
+  id         String   @id @default(cuid())
+  key        String   @unique
+  scope      String   @db.VarChar(191)  // e.g. POST /outlets/:id/orders
+  statusCode Int
+  body       Json
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+
+  @@index([expiresAt])
+  @@map("paynpik_idempotency_keys")
+}
+
+// ─── Promotions ──────────────────────────────────────────────────
+// Pricing waterfall at checkout (customer-side phase will wire this):
+//   1. Item / category / subcategory discounts (auto)
+//   2. Bill-level discount (auto, if conditions match)
+//   3. Bundle prices (a Bundle is a sellable composite item)
+//   4. Offers — conditional freebies (auto, add a ₹0 line)
+//   5. Coupon — one per bill, customer-selected
+//   6. Reward redemption — customer chooses how many points to burn
+
+// Coupons: customer-selected promotions. Business or outlet scope; can be
+// targeted at a specific list of customers or open to all. Carry usage
+// caps (per-customer and total).
+model Coupon {
+  id            String   @id @default(cuid())
+  code          String   @db.VarChar(50)
+  name          String
+  description   String?
+
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  outletId   String?
+  outlet     Outlet?  @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  discountType      String   @db.VarChar(10)  // PERCENT | FIXED
+  discountValue     Decimal  @db.Decimal(10, 2)
+  minBillAmount     Decimal? @db.Decimal(10, 2)
+  maxDiscountAmount Decimal? @db.Decimal(10, 2)
+
+  validFrom          DateTime
+  validUntil         DateTime
+  maxUsesPerCustomer Int      @default(1)
+  maxTotalUses       Int?
+  usesCount          Int      @default(0)
+
+  // ALL: any customer ordering at the outlet may pick it.
+  // SPECIFIC: only customers listed in targetCustomers may pick it.
+  targetType String  @db.VarChar(10) @default("ALL")
+  isActive   Boolean @default(true)
+
+  targetCustomers CouponCustomer[]
+  usages          CouponUsage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId])
+  @@index([outletId])
+  @@index([code])
+  @@index([isActive, validFrom, validUntil])
+  @@map("paynpik_coupons")
+}
+
+model CouponCustomer {
+  id       String @id @default(cuid())
+  couponId String
+  coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User   @relation("CouponTargets", fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([couponId, userId])
+  @@index([userId])
+  @@map("paynpik_coupon_customers")
+}
+
+model CouponUsage {
+  id             String   @id @default(cuid())
+  couponId       String
+  coupon         Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User     @relation("CouponUsages", fields: [userId], references: [id])
+  orderId        String?
+  order          Order?   @relation(fields: [orderId], references: [id])
+  clusterOrderId String?
+  discountAmount Decimal  @db.Decimal(10, 2)
+  appliedAt      DateTime @default(now())
+
+  @@index([couponId])
+  @@index([userId])
+  @@index([orderId])
+  @@map("paynpik_coupon_usages")
+}
+
+// Discounts: scheduled price reductions on a category / subcategory /
+// item / whole-bill. Auto-apply when their day-of-week + time window
+// matches at order time. isManualOnly = preconfigured counter discount
+// that the cashier picks from a list at checkout.
+model Discount {
+  id   String @id @default(cuid())
+  name String
+
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  outletId   String?
+  outlet     Outlet?  @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  // Target — exactly one of categoryId / subcategoryId / itemId is set for
+  // CATEGORY / SUBCATEGORY / ITEM. All three null for BILL. Validated in
+  // service layer.
+  targetType    String   @db.VarChar(20)  // CATEGORY | SUBCATEGORY | ITEM | BILL
+  categoryId    String?
+  category      Category?    @relation(fields: [categoryId], references: [id])
+  subcategoryId String?
+  subcategory   Subcategory? @relation(fields: [subcategoryId], references: [id])
+  itemId        String?
+  item          Item?        @relation(fields: [itemId], references: [id])
+
+  discountType      String   @db.VarChar(10)  // PERCENT | FIXED
+  discountValue     Decimal  @db.Decimal(10, 2)
+  minBillAmount     Decimal? @db.Decimal(10, 2)  // only meaningful for BILL
+  maxDiscountAmount Decimal? @db.Decimal(10, 2)
+
+  validFrom   DateTime?
+  validUntil  DateTime?
+  daysOfWeek  String?  @db.VarChar(20)  // CSV, ISO 1=Mon..7=Sun
+  startMinute Int?
+  endMinute   Int?
+
+  // Counter / management discount — picked from a preconfigured list by the
+  // cashier instead of auto-applying. Pair with the manager-PIN-gated
+  // free-form override (UI-side; no schema row needed for the free-form path).
+  isManualOnly Boolean @default(false)
+  isActive     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId])
+  @@index([outletId])
+  @@index([targetType])
+  @@index([categoryId])
+  @@index([subcategoryId])
+  @@index([itemId])
+  @@index([isActive, validFrom, validUntil])
+  @@map("paynpik_discounts")
+}
+
+// Bundles: a fixed-price composite "item" composed of one or more child
+// items (with optional variants). Surfaces in the menu alongside regular
+// items. When ordered, child items still need to route to their kitchen
+// stations — the customer-side phase will wire that.
+// Bundle composition. The parent Item (with isBundle=true) acts as the
+// sellable line on the menu — it carries the price, food grade, images,
+// short/long description, customer-tag prices, table-type prices, limited
+// stock and QR. The children listed here are what the kitchen actually
+// prepares when a customer orders the bundle.
+//
+// Quantities multiply: ordering 2 of a bundle whose child entry says
+// quantity=3 expands to 6 prep tickets for that child.
+model ItemBundleChild {
+  id           String  @id @default(cuid())
+  parentItemId String
+  parentItem   Item    @relation("BundleParentItem", fields: [parentItemId], references: [id], onDelete: Cascade)
+  childItemId  String
+  childItem    Item    @relation("BundleChildItem", fields: [childItemId], references: [id])
+  // Optional variant pin — if the bundle includes "Coffee — Large", store
+  // the variant id here. Null = the child item's default (variant-less).
+  variantId    String?
+  variant      Variant? @relation(fields: [variantId], references: [id])
+  quantity     Int     @default(1)
+  displayOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([parentItemId])
+  @@index([childItemId])
+  @@map("paynpik_item_bundle_children")
+}
+
+// Rewards — platform-wide singleton config + per-customer running balance
+// + ledger of every earn/redeem/expire/adjust transaction.
+//
+// Balance is global per customer (credit-card style): points earned at any
+// outlet/business apply to a single balance. Earn rate + redeem rate are
+// platform-wide; an outlet can opt out of accepting redemptions via
+// Outlet.acceptRewardRedemption.
+model RewardConfig {
+  id String @id @default("default")
+  // Points earned per ₹1 of order subtotal. e.g., 0.10 → 1 point per ₹10.
+  earnRate Decimal @db.Decimal(8, 4) @default(0.1)
+  // ₹ value per 1 point. e.g., 1.0 → 1 point = ₹1.
+  redeemRate Decimal @db.Decimal(8, 4) @default(1)
+  // Minimum points needed to redeem at all.
+  minRedemptionPoints Int @default(50)
+  // Cap on what % of a bill can be paid via points (0–100).
+  maxRedemptionPercent Decimal @db.Decimal(5, 2) @default(50)
+  // Days after which earned points expire. Null = never.
+  expiryDays Int?
+  isActive   Boolean @default(true)
+
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_reward_config")
+}
+
+model CustomerRewardAccount {
+  id               String  @id @default(cuid())
+  userId           String  @unique
+  user             User    @relation("RewardAccount", fields: [userId], references: [id], onDelete: Cascade)
+  balance          Int     @default(0)
+  lifetimeEarned   Int     @default(0)
+  lifetimeRedeemed Int     @default(0)
+
+  transactions RewardTransaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("paynpik_reward_accounts")
+}
+
+model RewardTransaction {
+  id        String @id @default(cuid())
+  accountId String
+  account   CustomerRewardAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User   @relation("RewardTransactions", fields: [userId], references: [id])
+
+  // EARN | REDEEM | EXPIRE | ADJUST
+  type   String @db.VarChar(10)
+  // Positive for earn / ADJUST+, negative for redeem / expire / ADJUST−.
+  points Int
+  // ₹ value of the redemption when type=REDEEM (null otherwise).
+  amountValue  Decimal? @db.Decimal(10, 2)
+  balanceAfter Int
+
+  orderId        String?
+  clusterOrderId String?
+  outletId       String?
+
+  notes     String?
+  expiresAt DateTime?  // only set for EARN
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([accountId])
+  @@index([orderId])
+  @@index([expiresAt])
+  @@map("paynpik_reward_transactions")
 }

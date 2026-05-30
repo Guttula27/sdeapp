@@ -44,6 +44,11 @@ export declare class AuthController {
                 isSystem: boolean;
                 isTemplate: boolean;
             }) | null;
+            business: {
+                name: string;
+                id: string;
+                isCluster: boolean;
+            } | null;
             name: string;
             phone: string;
             email: string | null;

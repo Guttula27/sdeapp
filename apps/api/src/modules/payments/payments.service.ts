@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { OrdersGateway } from '../orders/orders.gateway';
+import { OrdersService } from '../orders/orders.service';
 import { PaymentMode } from '@prisma/client';
 import { LifecycleDispatcherService } from '../customer-alerts/lifecycle-dispatcher.service';
 import { RazorpayService } from './razorpay.service';
@@ -12,6 +13,7 @@ export class PaymentsService {
     private ordersGateway: OrdersGateway,
     private dispatcher: LifecycleDispatcherService,
     private razorpay: RazorpayService,
+    private orders: OrdersService,
   ) {}
 
   async initiatePayment(orderId: string, mode: PaymentMode, amount: number) {
@@ -66,6 +68,17 @@ export class PaymentsService {
         orderNumber: payment.order.orderNumber,
         amount: payment.amount.toString(),
       }).catch(() => {});
+
+      // Reward earning — fired here for the deferred-payment path (online
+      // gateways). Idempotent: tryEarnRewards short-circuits if an EARN
+      // transaction for this order already exists, so duplicate webhooks
+      // and retries are safe.
+      this.orders.tryEarnRewards(
+        payment.order.id,
+        payment.order.customerId,
+        payment.order.outletId,
+        Number(payment.order.subtotal),
+      ).catch(() => {});
     }
     return updated;
   }

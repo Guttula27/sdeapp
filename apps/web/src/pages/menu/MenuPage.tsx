@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
@@ -6,6 +6,7 @@ import {
   Plus, Eye, EyeOff, ChevronRight, ChevronDown,
   UtensilsCrossed, Star, Edit2, Trash2, Tag, ImagePlus, X as XIcon,
   Store, Download, IndianRupee, QrCode, PackagePlus,
+  Clock, Layers, CheckCircle2, XCircle,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import api from '../../services/api';
@@ -123,6 +124,27 @@ export default function MenuPage() {
   const [expanded, setExpanded]     = useState<Set<string>>(new Set());
   const [loading, setLoading]       = useState(true);
 
+  // ── Multiple-menus feature ─────────────────────────────
+  // `menus` is the business's menu list (always at least 1 — the default
+  // "Main Menu" auto-seeded at business creation). `multipleMenusEnabled`
+  // gates the tab strip; when false we keep the single menu implicit and
+  // never show menu chrome. Menu modals (create / timings) are gated below.
+  type TimingSlot = { id?: string; dayOfWeek: number; startMinute: number; endMinute: number };
+  type MenuRow = {
+    id: string; name: string; isDefault: boolean; isActive: boolean;
+    timingSlots: TimingSlot[];
+    // Outlet-side state — only present when fetched via /outlets/:id/menus.
+    // overrideTimings=true means the slots in outletMenu.timingSlots take
+    // precedence over the business-level timingSlots above.
+    outletMenu?: { id: string | null; isEnabled: boolean; overrideTimings: boolean; timingSlots: TimingSlot[] };
+  };
+  const [menus, setMenus] = useState<MenuRow[]>([]);
+  const [multipleMenusEnabled, setMultipleMenusEnabled] = useState(false);
+  const [activeMenuId, setActiveMenuId] = useState<string>('');
+  const [menuModal, setMenuModal] = useState<{ open: boolean; editing?: MenuRow }>({ open: false });
+  const [timingsModal, setTimingsModal] = useState<{ open: boolean; menu?: MenuRow }>({ open: false });
+  const [menuBusy, setMenuBusy] = useState(false);
+
   // modal state
   const [catModal, setCatModal]     = useState<{ open: boolean; editing?: any }>({ open: false });
   const [subModal, setSubModal]     = useState<{ open: boolean; categoryId?: string; editing?: any }>({ open: false });
@@ -159,6 +181,15 @@ export default function MenuPage() {
   const [outletToppings, setOutletToppings] = useState<any[]>([]);
   const [itemToppingDraft, setItemToppingDraft] = useState<Record<string, { selected: boolean; priceAdd: string; isRequired: boolean }>>({});
 
+  // Bundle draft state — only meaningful when the item is flagged isBundle.
+  // Each row is one child item with optional variant + quantity.
+  type BundleChildDraft = { childItemId: string; variantId: string | null; quantity: number };
+  const [isBundleDraft, setIsBundleDraft] = useState(false);
+  const [bundleChildrenDraft, setBundleChildrenDraft] = useState<BundleChildDraft[]>([]);
+  // Customer-choice cap. 0 = legacy "everything included"; >0 = customer
+  // must pick exactly N child rows at order time.
+  const [maxBundleSelectionsDraft, setMaxBundleSelectionsDraft] = useState<number>(0);
+
   // Tag-price draft now keyed by `${tagId}:${variantId|''}`
   const tagPriceKey = (tagId: string, variantId: string) => `${tagId}:${variantId}`;
 
@@ -188,9 +219,19 @@ export default function MenuPage() {
       if (!businessId) { setLoading(false); return; }
       setLoading(true);
       try {
-        const menuRes = await api.get(`/businesses/${businessId}/menu`);
+        const [menuRes, bizRes, menusRes] = await Promise.all([
+          api.get(`/businesses/${businessId}/menu`),
+          api.get(`/businesses/${businessId}`).catch(() => null),
+          api.get(`/businesses/${businessId}/menus`).catch(() => null),
+        ]);
         setCategories(menuRes.data.data);
         setCustomerTags([]); setOutletToppings([]); setTableTypesList([]);
+        if (bizRes) setMultipleMenusEnabled(!!bizRes.data.data?.multipleMenusEnabled);
+        const list: MenuRow[] = menusRes?.data?.data || [];
+        setMenus(list);
+        // Land on the previously-selected menu if it's still present,
+        // otherwise pick the first.
+        setActiveMenuId((prev) => (list.find((m) => m.id === prev) ? prev : list[0]?.id || ''));
       } finally {
         setLoading(false);
       }
@@ -199,22 +240,49 @@ export default function MenuPage() {
     if (!outletId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [menuRes, tagsRes, topsRes, ttRes] = await Promise.all([
-        api.get(`/outlets/${outletId}/menu`),
+      const [menuRes, tagsRes, topsRes, ttRes, outletMenusRes] = await Promise.all([
+        api.get(`/outlets/${outletId}/menu`, { params: { includeHidden: 'true' } }),
         api.get(`/outlets/${outletId}/customer-tags`),
         api.get(`/outlets/${outletId}/toppings`),
         api.get(`/outlets/${outletId}/table-types`).catch(() => ({ data: { data: [] } })),
+        api.get(`/outlets/${outletId}/menus`).catch(() => null),
       ]);
       setCategories(menuRes.data.data);
       setCustomerTags(tagsRes.data.data || []);
       setOutletToppings(topsRes.data.data || []);
       setTableTypesList(ttRes.data.data || []);
+      // Outlet admin needs to see ALL menus (including disabled ones) so they
+      // can re-enable them — only the customer-facing menu list filters by
+      // isEnabled. Disabled tabs render dimmed in the strip.
+      const list: MenuRow[] = (outletMenusRes?.data?.data || []) as MenuRow[];
+      setMenus(list);
+      setActiveMenuId((prev) => (list.find((m) => m.id === prev) ? prev : list[0]?.id || ''));
+      // Read the outlet-level multi-menu flag. This is independent of the
+      // business flag — outlet admins flip their own switch.
+      try {
+        const { data } = await api.get(`/outlets/${outletId}`);
+        setMultipleMenusEnabled(!!data.data?.multipleMenusEnabled);
+      } catch {
+        setMultipleMenusEnabled(false);
+      }
     } finally {
       setLoading(false);
     }
   }, [outletId, businessId, isTemplate]);
 
   useEffect(() => { fetchMenu(); }, [fetchMenu]);
+
+  // Map item.id → menuId so the price-override modal can hide sections that
+  // have this item's menu disabled (no point pricing items a section won't show).
+  const itemMenuById = useMemo(() => {
+    const m = new Map<string, string | undefined>();
+    for (const cat of categories) {
+      for (const sub of cat.subcategories || []) {
+        for (const it of sub.items || []) m.set(it.id, cat.menuId);
+      }
+    }
+    return m;
+  }, [categories]);
 
   // ── Price overrides: customer tags + table types ────────
   // Draft keys: `tag:<tagId>:<variantId>` or `tt:<typeId>:<variantId>` (variantId='' for item-level)
@@ -360,6 +428,16 @@ export default function MenuPage() {
         };
       });
       setItemToppingDraft(existing);
+
+      setIsBundleDraft(!!itemModal.editing?.isBundle);
+      setBundleChildrenDraft(
+        (itemModal.editing?.bundleChildren || []).map((c: any) => ({
+          childItemId: c.childItemId,
+          variantId: c.variantId || null,
+          quantity: Number(c.quantity ?? 1),
+        })),
+      );
+      setMaxBundleSelectionsDraft(Number(itemModal.editing?.maxBundleSelections ?? 0));
     }
   }, [itemModal.open, itemModal.editing]);
 
@@ -411,7 +489,11 @@ export default function MenuPage() {
   const saveCategory = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
-    const body = { name: form.get('name') as string };
+    // Stamp the new category with the active menu so it lands inside the
+    // selected tab. Edit doesn't move categories between menus — that's a
+    // separate operation if we add it later.
+    const body: any = { name: form.get('name') as string };
+    if (!catModal.editing && activeMenuId) body.menuId = activeMenuId;
     setSaving(true);
     try {
       if (catModal.editing) {
@@ -425,6 +507,103 @@ export default function MenuPage() {
       fetchMenu();
     } catch (e: any) { toast.error(e.response?.data?.message || 'Failed'); }
     finally { setSaving(false); }
+  };
+
+  // ── Menu CRUD + timings ─────────────────────────────────
+  // Business tier creates the menu directly on the business; outlet tier
+  // routes through /outlets/:id/menus which also auto-enables the new menu
+  // at the calling outlet (so the new tab is usable immediately).
+  const saveMenu = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = new FormData(e.currentTarget);
+    const body = {
+      name: (form.get('name') as string || '').trim(),
+      description: (form.get('description') as string || '').trim() || undefined,
+      isActive: form.get('isActive') === 'on',
+    };
+    if (!body.name) { toast.error('Menu name is required'); return; }
+    setMenuBusy(true);
+    try {
+      if (menuModal.editing) {
+        await api.patch(`/menus/${menuModal.editing.id}`, body);
+        toast.success('Menu updated');
+      } else {
+        const url = isTemplate
+          ? `/businesses/${businessId}/menus`
+          : `/outlets/${outletId}/menus`;
+        if (isTemplate && !businessId) return;
+        if (!isTemplate && !outletId) return;
+        const { data } = await api.post(url, body);
+        setActiveMenuId(data.data.id);
+        toast.success('Menu created');
+      }
+      setMenuModal({ open: false });
+      fetchMenu();
+    } catch (e: any) { toast.error(e.response?.data?.message || 'Failed'); }
+    finally { setMenuBusy(false); }
+  };
+
+  const deleteMenu = async (menu: MenuRow) => {
+    if (menu.isDefault) { toast.error('Default menu cannot be deleted'); return; }
+    if (!confirm(`Delete menu "${menu.name}"? Categories must be moved or removed first.`)) return;
+    try {
+      await api.delete(`/menus/${menu.id}`);
+      toast.success('Menu deleted');
+      if (activeMenuId === menu.id) setActiveMenuId('');
+      fetchMenu();
+    } catch (e: any) { toast.error(e.response?.data?.message || 'Failed to delete menu'); }
+  };
+
+  // Persist the flag and refetch so tab visibility flips. Business tier
+  // writes Business.multipleMenusEnabled (gates the management UI); outlet
+  // tier writes Outlet.multipleMenusEnabled (gates the customer-facing
+  // surface and outlet-side admin UI).
+  const toggleMultipleMenus = async (next: boolean) => {
+    setMultipleMenusEnabled(next); // optimistic
+    try {
+      if (isTemplate) {
+        if (!businessId) return;
+        await api.patch(`/businesses/${businessId}`, { multipleMenusEnabled: next });
+      } else {
+        if (!outletId) return;
+        await api.patch(`/outlets/${outletId}`, { multipleMenusEnabled: next });
+      }
+      // Refetch so the menu list collapses/expands accordingly.
+      fetchMenu();
+    } catch (e: any) {
+      setMultipleMenusEnabled(!next);
+      toast.error(e.response?.data?.message || 'Failed to update setting');
+    }
+  };
+
+  // ── Outlet-tier menu actions (enable/disable, import) ────
+  const toggleOutletMenu = async (menu: MenuRow, next: boolean) => {
+    if (!outletId) return;
+    // Optimistic flip of isEnabled — refetch settles any drift.
+    setMenus((all) => all.map((m) => (m.id === menu.id
+      ? { ...m, outletMenu: { ...(m.outletMenu || { id: null, overrideTimings: false, timingSlots: [] }), isEnabled: next } }
+      : m)));
+    try {
+      await api.patch(`/outlets/${outletId}/menus/${menu.id}`, { isEnabled: next });
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to update');
+      fetchMenu();
+    }
+  };
+
+  const importMenuItems = async (menu: MenuRow) => {
+    if (!outletId) return;
+    if (!confirm(`Import all categories from "${menu.name}" into this outlet?`)) return;
+    setMenuBusy(true);
+    try {
+      const { data } = await api.post(`/outlets/${outletId}/menus/${menu.id}/import`);
+      toast.success(`Imported ${data.data?.categoriesCreated ?? 0} categories, ${data.data?.itemsCreated ?? 0} items`);
+      fetchMenu();
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Import failed');
+    } finally {
+      setMenuBusy(false);
+    }
   };
 
   // ── Subcategory CRUD ─────────────────────────────────────
@@ -467,6 +646,9 @@ export default function MenuPage() {
       preparationTime: form.get('preparationTime') ? Number(form.get('preparationTime')) : undefined,
       isPopular: form.get('isPopular') === 'on',
       isSpecial: form.get('isSpecial') === 'on',
+      // Visibility on the customer menu. Off = item exists, can be sold
+      // inside a bundle, but doesn't show in the public category listing.
+      isDisplayed: form.get('isDisplayed') === 'on',
       // Limited-stock toggle: when enabled, availableQuantity drives auto-disable
       // once stock hits zero. Initial quantity is captured on create; subsequent
       // top-ups go through the dedicated "Add stock" PATCH (see addStock below).
@@ -476,7 +658,32 @@ export default function MenuPage() {
         : 0,
       imageUrl: itemImage,
       thumbnailUrl: thumbnail,
+      // Bundle composition. When the item is flagged isBundle the server
+      // expands the children into individual prep tickets at order time.
+      // An empty children array clears any prior composition.
+      isBundle: isBundleDraft,
+      bundleChildren: isBundleDraft
+        ? bundleChildrenDraft
+            .filter((c) => c.childItemId)
+            .map((c) => ({
+              childItemId: c.childItemId,
+              variantId: c.variantId || null,
+              quantity: Math.max(1, Number(c.quantity) || 1),
+            }))
+        : [],
+      // Customer-choice cap. Saved only when the bundle is on AND a positive
+      // value is set; otherwise sent as null to clear any prior config.
+      maxBundleSelections: isBundleDraft && maxBundleSelectionsDraft > 0
+        ? maxBundleSelectionsDraft
+        : null,
     };
+    if (isBundleDraft && maxBundleSelectionsDraft > 0) {
+      const componentCount = bundleChildrenDraft.filter((c) => c.childItemId).length;
+      if (maxBundleSelectionsDraft > componentCount) {
+        toast.error(`"Customer picks N" can't exceed the ${componentCount} component${componentCount === 1 ? '' : 's'} you've added`);
+        return;
+      }
+    }
     setSaving(true);
     try {
       let itemId: string;
@@ -574,6 +781,16 @@ export default function MenuPage() {
     await api.patch(`${menuBase}/items/${itemId}/availability`);
     fetchMenu();
     toast.success('Availability updated');
+  };
+
+  // ── Toggle visibility on customer menu ───────────────────
+  // Hidden items can still be ordered as part of a bundle (e.g. a mini-dosa
+  // that's only sold inside a combo) — they just don't appear in the
+  // customer-facing category listing.
+  const toggleVisibility = async (itemId: string) => {
+    await api.patch(`${menuBase}/items/${itemId}/visibility`);
+    fetchMenu();
+    toast.success('Visibility updated');
   };
 
   // ── Add stock (limited-stock items only) ─────────────────
@@ -802,6 +1019,146 @@ export default function MenuPage() {
         </div>
       </div>
 
+      {/* Multiple-menus flag toggle. Business tier writes Business flag
+          (gates the menu-management chrome at the business level); outlet
+          tier writes Outlet flag (gates customer + staff visibility for
+          this specific outlet). When OFF, only the default menu's
+          categories render at this surface. */}
+      {!isReadOnly && (
+        <div className="card p-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Layers size={16} className="text-brand-500" />
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Multiple Menus</p>
+              <p className="text-xs text-slate-500">
+                {isTemplate
+                  ? 'Run separate menus (e.g. Breakfast / Lunch) with their own categories and timings.'
+                  : 'Show multiple menus to customers and staff at this outlet. When off, only the default menu is visible.'}
+              </p>
+            </div>
+          </div>
+          <label className="inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={multipleMenusEnabled}
+              onChange={(e) => toggleMultipleMenus(e.target.checked)}
+              className="sr-only peer"
+            />
+            <span className="w-9 h-5 bg-slate-200 rounded-full peer-checked:bg-brand-500 relative transition-colors">
+              <span className={clsx(
+                'absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform',
+                multipleMenusEnabled && 'translate-x-4',
+              )} />
+            </span>
+          </label>
+        </div>
+      )}
+
+      {/* Menu tab strip — only when the flag is on and we have menus loaded.
+          Each tab represents one menu; clicking switches the active context so
+          category list, add-category, and edit operations all scope to it. */}
+      {multipleMenusEnabled && menus.length > 0 && (
+        <div className="card p-2 flex items-center gap-1 overflow-x-auto">
+          {menus.map((m) => {
+            const isActive = m.id === activeMenuId;
+            return (
+              <div key={m.id} className="flex items-center shrink-0">
+                <button
+                  onClick={() => setActiveMenuId(m.id)}
+                  className={clsx(
+                    'px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap inline-flex items-center gap-1.5',
+                    isActive
+                      ? 'bg-brand-500 text-white'
+                      : 'text-slate-600 hover:bg-slate-100',
+                    !m.isActive && 'opacity-60',
+                  )}
+                >
+                  {m.name}
+                  {m.isDefault && <span className="text-[9px] uppercase tracking-wide opacity-70">default</span>}
+                  {!m.isActive && <EyeOff size={11} />}
+                </button>
+                {isActive && isTemplate && !isReadOnly && (
+                  <>
+                    <button
+                      onClick={() => setTimingsModal({ open: true, menu: m })}
+                      className="btn-ghost p-1.5 ml-0.5"
+                      title="Edit timings"
+                    >
+                      <Clock size={13} />
+                    </button>
+                    <button
+                      onClick={() => setMenuModal({ open: true, editing: m })}
+                      className="btn-ghost p-1.5"
+                      title="Edit menu"
+                    >
+                      <Edit2 size={13} />
+                    </button>
+                    {!m.isDefault && (
+                      <button
+                        onClick={() => deleteMenu(m)}
+                        className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"
+                        title="Delete menu"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
+                  </>
+                )}
+                {isActive && !isTemplate && !isReadOnly && (
+                  <>
+                    {/* The default menu is the always-on fallback so we hide
+                        its enable/disable button entirely — both the backend
+                        and the TableTypeMenu UI refuse to disable it. */}
+                    {!m.isDefault && (
+                      <button
+                        onClick={() => toggleOutletMenu(m, !(m.outletMenu?.isEnabled !== false))}
+                        className={clsx(
+                          'btn-ghost p-1.5 ml-0.5',
+                          m.outletMenu?.isEnabled !== false ? 'text-emerald-600' : 'text-slate-400',
+                        )}
+                        title={m.outletMenu?.isEnabled !== false ? 'Disable this menu at this outlet' : 'Enable this menu at this outlet'}
+                      >
+                        {m.outletMenu?.isEnabled !== false ? <Eye size={13} /> : <EyeOff size={13} />}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setMenuModal({ open: true, editing: m })}
+                      className="btn-ghost p-1.5"
+                      title="Rename menu"
+                    >
+                      <Edit2 size={13} />
+                    </button>
+                    <button
+                      onClick={() => setTimingsModal({ open: true, menu: m })}
+                      className="btn-ghost p-1.5"
+                      title="Outlet-level timing override"
+                    >
+                      <Clock size={13} />
+                    </button>
+                    <button
+                      onClick={() => importMenuItems(m)}
+                      className="btn-ghost p-1.5"
+                      disabled={menuBusy}
+                      title="Import all categories from this menu's business template"
+                    >
+                      <Download size={13} />
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+          {!isReadOnly && (
+            <button
+              onClick={() => setMenuModal({ open: true })}
+              className="ml-1 px-3 py-1.5 rounded-lg text-xs font-bold text-brand-600 hover:bg-brand-50 inline-flex items-center gap-1 shrink-0"
+            >
+              <Plus size={13} /> New menu
+            </button>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="card h-16 animate-pulse" />)}</div>
       ) : categories.length === 0 ? (
@@ -822,7 +1179,9 @@ export default function MenuPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {categories.map(cat => {
+          {categories
+            .filter((cat) => !multipleMenusEnabled || !activeMenuId || cat.menuId === activeMenuId)
+            .map(cat => {
             const catItems = cat.subcategories?.reduce((s: number, sc: any) => s + (sc.items?.length || 0), 0) || 0;
             const isOpen = expanded.has(cat.id);
             return (
@@ -908,6 +1267,8 @@ export default function MenuPage() {
                                   <p className="text-sm font-semibold text-slate-800">{item.name}</p>
                                   {item.isPopular && <span className="badge badge-orange text-[10px]"><Star size={8} fill="currentColor" /> Popular</span>}
                                   {!item.isAvailable && <span className="badge badge-red text-[10px]">Unavailable</span>}
+                                  {!item.isDisplayed && <span className="badge badge-slate text-[10px] flex items-center gap-0.5"><EyeOff size={9} /> Hidden</span>}
+                                  {item.isBundle && <span className="badge text-[10px] bg-orange-50 text-orange-700 border border-orange-200">Bundle · {item.maxBundleSelections ? `pick ${item.maxBundleSelections}/${(item.bundleChildren || []).length}` : (item.bundleChildren || []).length}</span>}
                                   {item.hasLimitedStock && (
                                     <span className={clsx(
                                       'badge text-[10px] flex items-center gap-1',
@@ -990,8 +1351,21 @@ export default function MenuPage() {
                                       <PackagePlus size={14} />
                                     </button>
                                   )}
-                                  <button onClick={() => toggleAvailability(item.id)} className={clsx('p-2 rounded-lg transition-colors', item.isAvailable ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-red-400 bg-red-50 hover:bg-red-100')}>
-                                    {item.isAvailable ? <Eye size={14} /> : <EyeOff size={14} />}
+                                  <button
+                                    onClick={() => toggleAvailability(item.id)}
+                                    title={item.isAvailable ? 'Available — tap to mark unavailable' : 'Unavailable — tap to mark available'}
+                                    className={clsx('p-2 rounded-lg transition-colors', item.isAvailable ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-red-400 bg-red-50 hover:bg-red-100')}
+                                  >
+                                    {item.isAvailable ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                                  </button>
+                                  <button
+                                    onClick={() => toggleVisibility(item.id)}
+                                    title={item.isDisplayed
+                                      ? 'Visible on customer menu — tap to hide (item still usable inside bundles)'
+                                      : 'Hidden from customer menu — tap to show'}
+                                    className={clsx('p-2 rounded-lg transition-colors', item.isDisplayed ? 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100' : 'text-slate-400 bg-slate-100 hover:bg-slate-200')}
+                                  >
+                                    {item.isDisplayed ? <Eye size={14} /> : <EyeOff size={14} />}
                                   </button>
                                   <button onClick={() => setItemModal({ open: true, subcategoryId: sub.id, editing: item })} className="btn-ghost p-1.5"><Edit2 size={13} /></button>
                                   <button onClick={() => downloadMenuQr('item', item.id, item.name)} className="btn-ghost p-1.5 text-indigo-500 hover:bg-indigo-50" title="Download QR for this item"><QrCode size={13} /></button>
@@ -1296,7 +1670,7 @@ export default function MenuPage() {
               placeholder="0"
             />
             <p className="text-[11px] text-slate-400 mt-1">
-              Applied to this item by default. Customer tag / table type can override below. SGST and CGST are auto-split 50/50 on the bill.
+              Applied to this item by default. Customer tag / dine-in section can override below. SGST and CGST are auto-split 50/50 on the bill.
             </p>
           </Field>
 
@@ -1458,10 +1832,32 @@ export default function MenuPage() {
               <span className="text-sm font-medium text-slate-700">Mark as <span className="font-bold text-amber-600">Special</span></span>
               <span className="text-[10px] text-slate-400">(shown under "Special" tab)</span>
             </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                name="isDisplayed"
+                defaultChecked={itemModal.editing ? itemModal.editing.isDisplayed !== false : true}
+                className="w-4 h-4 accent-indigo-500 rounded"
+              />
+              <span className="text-sm font-medium text-slate-700">Visible on customer menu</span>
+              <span className="text-[10px] text-slate-400">(uncheck for bundle-only items, e.g. mini dosa)</span>
+            </label>
           </div>
 
           {/* ── Limited stock ─────────────────────────────────── */}
           <LimitedStockField editing={itemModal.editing} key={itemModal.editing?.id ?? 'new-stock'} />
+
+          {/* ── Bundle composition ────────────────────────────── */}
+          <BundleSection
+            isBundle={isBundleDraft}
+            setIsBundle={setIsBundleDraft}
+            rows={bundleChildrenDraft}
+            setRows={setBundleChildrenDraft}
+            allItems={categories}
+            editingId={itemModal.editing?.id}
+            maxPicks={maxBundleSelectionsDraft}
+            setMaxPicks={setMaxBundleSelectionsDraft}
+          />
         </form>
       </Modal>
 
@@ -1514,7 +1910,7 @@ export default function MenuPage() {
         }
       >
         {customerTags.length === 0 && tableTypesList.length === 0 ? (
-          <p className="text-sm text-slate-500 py-6 text-center">No customer tags or table types defined for this outlet yet.</p>
+          <p className="text-sm text-slate-500 py-6 text-center">No customer tags or dine-in sections defined for this outlet yet.</p>
         ) : (
           <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
             {(() => {
@@ -1571,7 +1967,16 @@ export default function MenuPage() {
                       </div>
                     );
                   })}
-                  {tableTypesList.map(tt => {
+                  {tableTypesList
+                    .filter((tt) => {
+                      // Hide sections that have this item's menu disabled —
+                      // their customers can't see the item, so pricing it
+                      // would just be dead state.
+                      const itemMenuId = itemMenuById.get(tagPriceModal.item?.id);
+                      const disabled: string[] = tt.disabledMenuIds || [];
+                      return !itemMenuId || !disabled.includes(itemMenuId);
+                    })
+                    .map(tt => {
                     const key = `tt:${tt.id}:${row.variantId}`;
                     const cell = tagPriceDraft[key] || { price: '', gstRate: '' };
                     const setCell = (patch: Partial<PriceCellDraft>) =>
@@ -1581,7 +1986,7 @@ export default function MenuPage() {
                         <span
                           className="inline-flex items-center gap-1 text-[11px] font-bold text-white px-2.5 py-1 rounded-full min-w-[110px] justify-center"
                           style={{ background: tt.color }}
-                          title="Table type"
+                          title="Dine-in section"
                         >
                           🪑 {tt.name}
                         </span>
@@ -1602,7 +2007,7 @@ export default function MenuPage() {
                             onChange={e => setCell({ gstRate: e.target.value })}
                             placeholder="GST %"
                             className="input pr-6 text-sm"
-                            title="Optional GST % for this table type — overrides item default"
+                            title="Optional GST % for this dine-in section — overrides item default"
                           />
                           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">%</span>
                         </div>
@@ -1826,7 +2231,218 @@ export default function MenuPage() {
           </div>
         </div>
       </Modal>
+
+      {/* ── Menu create/edit modal ─────────────────────────── */}
+      <Modal
+        open={menuModal.open}
+        onClose={() => setMenuModal({ open: false })}
+        title={menuModal.editing ? `Edit menu: ${menuModal.editing.name}` : 'New menu'}
+        footer={
+          <div className="flex justify-end gap-2 w-full">
+            <button className="btn-secondary" onClick={() => setMenuModal({ open: false })}>Cancel</button>
+            <button type="submit" form="menu-form" className="btn-primary" disabled={menuBusy}>
+              {menuBusy ? 'Saving…' : (menuModal.editing ? 'Save' : 'Create')}
+            </button>
+          </div>
+        }
+      >
+        <form id="menu-form" onSubmit={saveMenu} className="space-y-3">
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Name</label>
+            <input
+              name="name"
+              defaultValue={menuModal.editing?.name || ''}
+              autoFocus
+              className="input w-full"
+              placeholder="e.g. Breakfast"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Description (optional)</label>
+            <input
+              name="description"
+              defaultValue={(menuModal.editing as any)?.description || ''}
+              className="input w-full"
+              placeholder="Morning specials, 7–11 am"
+            />
+          </div>
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="isActive"
+              defaultChecked={menuModal.editing?.isActive !== false}
+            />
+            Active (off = hide from customers)
+          </label>
+        </form>
+      </Modal>
+
+      {/* ── Per-day timings editor (multi-slot) ──────────────── */}
+      <TimingsEditorModal
+        open={timingsModal.open}
+        menu={timingsModal.menu}
+        mode={isTemplate ? 'business' : 'outlet'}
+        outletId={outletId}
+        onClose={() => setTimingsModal({ open: false })}
+        onSaved={() => { setTimingsModal({ open: false }); fetchMenu(); }}
+      />
     </div>
+  );
+}
+
+// ── Timings editor (extracted) ─────────────────────────────
+// Lets the admin define 1+ availability slots per day-of-week. Times are
+// stored as minutes-since-midnight (matches the API contract). The form
+// renders one row per slot with day picker, start time, end time, and a
+// remove button; a footer button adds a new row.
+function TimingsEditorModal({
+  open, menu, mode = 'business', outletId, onClose, onSaved,
+}: {
+  open: boolean;
+  menu?: {
+    id: string;
+    name: string;
+    timingSlots: { dayOfWeek: number; startMinute: number; endMinute: number }[];
+    outletMenu?: { overrideTimings: boolean; timingSlots: { dayOfWeek: number; startMinute: number; endMinute: number }[] };
+  };
+  mode?: 'business' | 'outlet';
+  outletId?: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  type Slot = { dayOfWeek: number; startMinute: number; endMinute: number };
+  const [slots, setSlots] = useState<Slot[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!menu) return;
+    // Outlet mode pre-loads from the override slots if any; otherwise it
+    // seeds from the business slots so the admin can start from a sane copy.
+    const source = mode === 'outlet' && menu.outletMenu?.overrideTimings
+      ? menu.outletMenu.timingSlots
+      : menu.timingSlots;
+    setSlots(source.map((s) => ({
+      dayOfWeek: s.dayOfWeek, startMinute: s.startMinute, endMinute: s.endMinute,
+    })));
+  }, [menu, mode]);
+
+  const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  const toMinutes = (t: string) => {
+    const [h, m] = (t || '00:00').split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+  const toTimeString = (mins: number) => {
+    const h = Math.floor(mins / 60).toString().padStart(2, '0');
+    const m = (mins % 60).toString().padStart(2, '0');
+    return `${h}:${m}`;
+  };
+
+  const save = async () => {
+    if (!menu) return;
+    for (const s of slots) {
+      if (s.endMinute <= s.startMinute) {
+        toast.error('Each slot must end after it starts');
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      if (mode === 'outlet') {
+        if (!outletId) { toast.error('Missing outlet context'); return; }
+        // PUT creates the OutletMenu link if needed; flipping overrideTimings
+        // tells the API to use these slots in customer queries.
+        await api.put(`/outlets/${outletId}/menus/${menu.id}/timings`, { slots });
+        await api.patch(`/outlets/${outletId}/menus/${menu.id}`, { overrideTimings: slots.length > 0 });
+      } else {
+        await api.put(`/menus/${menu.id}/timings`, { slots });
+      }
+      toast.success('Timings saved');
+      onSaved();
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to save timings');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!menu) return null;
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Timings — ${menu.name}`}
+      footer={
+        <div className="flex items-center justify-between w-full">
+          <button
+            className="btn-ghost text-xs"
+            onClick={() => setSlots((s) => [...s, { dayOfWeek: 1, startMinute: 9 * 60, endMinute: 17 * 60 }])}
+          >
+            <Plus size={13} /> Add slot
+          </button>
+          <div className="flex gap-2">
+            <button className="btn-secondary" onClick={onClose}>Cancel</button>
+            <button className="btn-primary" onClick={save} disabled={busy}>
+              {busy ? 'Saving…' : 'Save timings'}
+            </button>
+          </div>
+        </div>
+      }
+    >
+      <div className="space-y-2 max-h-96 overflow-y-auto">
+        {mode === 'outlet' && (
+          <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 text-[11px] text-amber-800 mb-2">
+            Outlet override — these slots take precedence over the business-level timings while saved.
+            Clear all slots and save to fall back to the business defaults.
+          </div>
+        )}
+        {slots.length === 0 ? (
+          <p className="text-xs text-slate-400 italic text-center py-6">
+            No timing slots — this menu is always available. Click "Add slot" to restrict it.
+          </p>
+        ) : (
+          slots.map((slot, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <select
+                value={slot.dayOfWeek}
+                onChange={(e) =>
+                  setSlots((all) => all.map((s, idx) => idx === i ? { ...s, dayOfWeek: Number(e.target.value) } : s))
+                }
+                className="input py-1.5 text-sm"
+              >
+                {[1, 2, 3, 4, 5, 6, 7].map((d) => <option key={d} value={d}>{dayNames[d]}</option>)}
+              </select>
+              <input
+                type="time"
+                value={toTimeString(slot.startMinute)}
+                onChange={(e) =>
+                  setSlots((all) => all.map((s, idx) => idx === i ? { ...s, startMinute: toMinutes(e.target.value) } : s))
+                }
+                className="input py-1.5 text-sm"
+              />
+              <span className="text-slate-400 text-xs">to</span>
+              <input
+                type="time"
+                value={toTimeString(slot.endMinute)}
+                onChange={(e) =>
+                  setSlots((all) => all.map((s, idx) => idx === i ? { ...s, endMinute: toMinutes(e.target.value) } : s))
+                }
+                className="input py-1.5 text-sm"
+              />
+              <button
+                onClick={() => setSlots((all) => all.filter((_, idx) => idx !== i))}
+                className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"
+                title="Remove slot"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -1888,6 +2504,154 @@ function LimitedStockField({ editing }: { editing?: any }) {
               To <strong>add more stock</strong>, close this form and use the green "+ Stock" button on the item row.
             </p>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Bundle composition section ──────────────────────────────────
+   Inline editor for the parent item's child items. Empty children list
+   when isBundle is off — toggling the flag shows the editor without
+   destroying anything until the admin actually clears rows. */
+function BundleSection({
+  isBundle, setIsBundle, rows, setRows, allItems, editingId, maxPicks, setMaxPicks,
+}: {
+  isBundle: boolean;
+  setIsBundle: (v: boolean) => void;
+  rows: { childItemId: string; variantId: string | null; quantity: number }[];
+  setRows: React.Dispatch<React.SetStateAction<{ childItemId: string; variantId: string | null; quantity: number }[]>>;
+  allItems: any[];
+  editingId?: string;
+  maxPicks: number;
+  setMaxPicks: (v: number) => void;
+}) {
+  // Flatten the menu tree to a picker-friendly list. Exclude the item
+  // we're currently editing so a bundle can't include itself.
+  const flat = useMemo(() => {
+    const out: { id: string; name: string; subName: string; variants: { id: string; name: string }[]; isBundle?: boolean }[] = [];
+    for (const cat of allItems || []) {
+      for (const sub of cat.subcategories || []) {
+        for (const it of sub.items || []) {
+          if (editingId && it.id === editingId) continue;
+          out.push({
+            id: it.id,
+            name: it.name,
+            subName: `${cat.name} › ${sub.name}`,
+            variants: (it.variants || []).map((v: any) => ({ id: v.id, name: v.name })),
+            isBundle: !!it.isBundle,
+          });
+        }
+      }
+    }
+    return out;
+  }, [allItems, editingId]);
+
+  const itemById = useMemo(() => new Map(flat.map((i) => [i.id, i])), [flat]);
+
+  const addRow = () => setRows((p) => [...p, { childItemId: '', variantId: null, quantity: 1 }]);
+  const removeRow = (idx: number) => setRows((p) => p.filter((_, i) => i !== idx));
+  const patchRow = (idx: number, patch: Partial<{ childItemId: string; variantId: string | null; quantity: number }>) =>
+    setRows((p) => p.map((c, i) => i === idx ? { ...c, ...patch } : c));
+
+  return (
+    <div className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50/40">
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={isBundle}
+          onChange={(e) => setIsBundle(e.target.checked)}
+          className="w-4 h-4 accent-orange-500 rounded"
+        />
+        <span className="text-sm font-bold text-slate-700">This item is a bundle</span>
+        <span className="text-[10px] text-slate-400">
+          (combo / thali — at order time the kitchen sees each child as a separate prep ticket; the customer pays the bundle's price)
+        </span>
+      </label>
+
+      {isBundle && (
+        <div className="space-y-2">
+          <p className="text-[11px] text-slate-500">
+            Add the items that make up this bundle. Each row is one component (e.g. 2× idly, 1× sambar, 1× filter coffee). Quantities multiply with the bundle order quantity.
+          </p>
+
+          {/* Customer-choice cap. 0 = all components ship; >0 = customer
+              must pick exactly N of the rows below at order time. */}
+          <div className="flex items-center gap-2 flex-wrap rounded-md bg-white border border-slate-200 px-3 py-2">
+            <span className="text-xs font-semibold text-slate-700">Customer picks</span>
+            <input
+              type="number"
+              min={0}
+              max={Math.max(0, rows.filter((r) => r.childItemId).length)}
+              value={maxPicks || ''}
+              placeholder="0"
+              onChange={(e) => setMaxPicks(Math.max(0, Number(e.target.value) || 0))}
+              className="input text-xs w-16 text-center"
+            />
+            <span className="text-xs text-slate-600">
+              of {rows.filter((r) => r.childItemId).length} component{rows.filter((r) => r.childItemId).length === 1 ? '' : 's'} below
+            </span>
+            <span className="text-[10px] text-slate-400">
+              (leave 0 to include everything — set N to let customer choose any N of the rows)
+            </span>
+          </div>
+
+          {rows.length === 0 ? (
+            <p className="text-xs italic text-slate-400">No components yet. Add at least one.</p>
+          ) : (
+            rows.map((row, idx) => {
+              const selected = row.childItemId ? itemById.get(row.childItemId) : undefined;
+              return (
+                <div key={idx} className="flex items-center gap-2">
+                  <select
+                    value={row.childItemId}
+                    onChange={(e) => patchRow(idx, { childItemId: e.target.value, variantId: null })}
+                    className="input text-xs flex-1"
+                  >
+                    <option value="">Pick an item…</option>
+                    {flat.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {i.name}
+                        {i.isBundle ? ' [bundle]' : ''}
+                        {' · '}{i.subName}
+                      </option>
+                    ))}
+                  </select>
+                  {selected && selected.variants.length > 0 && (
+                    <select
+                      value={row.variantId || ''}
+                      onChange={(e) => patchRow(idx, { variantId: e.target.value || null })}
+                      className="input text-xs w-32"
+                    >
+                      <option value="">Default</option>
+                      {selected.variants.map((v) => (
+                        <option key={v.id} value={v.id}>{v.name}</option>
+                      ))}
+                    </select>
+                  )}
+                  <input
+                    type="number"
+                    min={1}
+                    value={row.quantity}
+                    onChange={(e) => patchRow(idx, { quantity: Number(e.target.value) || 1 })}
+                    className="input text-xs w-16 text-center"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeRow(idx)}
+                    className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"
+                    title="Remove component"
+                  >
+                    <XIcon size={13} />
+                  </button>
+                </div>
+              );
+            })
+          )}
+
+          <button type="button" onClick={addRow} className="text-xs font-semibold text-orange-600 hover:text-orange-700 inline-flex items-center gap-1">
+            <Plus size={12} /> Add component
+          </button>
         </div>
       )}
     </div>

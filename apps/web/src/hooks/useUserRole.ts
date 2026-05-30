@@ -128,5 +128,11 @@ export function useUserRole() {
     store:    '/inventory',
   };
 
-  return { tier, can, has, defaultPage: defaultPage[tier], user };
+  // Cluster owners land on their cluster admin page rather than a generic
+  // /dashboard, because almost everything they do is cluster-scoped
+  // (members, branding, QR, orders routed through children).
+  const isClusterOwner = tier === 'business' && !!user?.business?.isCluster;
+  const resolvedDefault = isClusterOwner ? `/platform/clusters/${user.businessId}` : defaultPage[tier];
+
+  return { tier, can, has, defaultPage: resolvedDefault, user, isClusterOwner };
 }

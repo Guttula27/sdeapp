@@ -1,7 +1,7 @@
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OrdersGateway } from '../orders/orders.gateway';
-export type LifecycleTrigger = 'ORDER_PLACED' | 'PAYMENT_RECEIVED' | 'ITEM_READY' | 'ORDER_READY' | 'ORDER_SERVED';
+export type LifecycleTrigger = 'ORDER_PLACED' | 'PAYMENT_RECEIVED' | 'ITEM_READY' | 'ORDER_READY' | 'PICKUP_READY' | 'ORDER_SERVED';
 type OrderLine = {
     name: string;
     quantity: number;

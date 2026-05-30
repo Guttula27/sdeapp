@@ -5,7 +5,9 @@ export declare class MenuService {
     private translations;
     constructor(prisma: PrismaService, translations: TranslationsService);
     private hydrateMenu;
-    getMenu(outletId: string, viewerUserId?: string, tableId?: string, lang?: string | null): Promise<{
+    getMenu(outletId: string, viewerUserId?: string, tableId?: string, lang?: string | null, opts?: {
+        includeHidden?: boolean;
+    }): Promise<{
         subcategories: {
             items: {
                 variants: any[];
@@ -101,14 +103,32 @@ export declare class MenuService {
                     priceAdd: import("@prisma/client/runtime/library").Decimal | null;
                     isRequired: boolean;
                 })[];
+                bundleChildren: ({
+                    variant: {
+                        name: string;
+                        id: string;
+                    } | null;
+                    childItem: {
+                        name: string;
+                        id: string;
+                    };
+                } & {
+                    id: string;
+                    createdAt: Date;
+                    displayOrder: number;
+                    quantity: number;
+                    variantId: string | null;
+                    parentItemId: string;
+                    childItemId: string;
+                })[];
                 name: string;
                 description: string | null;
                 id: string;
                 createdAt: Date;
                 updatedAt: Date;
+                thumbnailUrl: string | null;
                 shortDescription: string | null;
                 longDescription: string | null;
-                thumbnailUrl: string | null;
                 imageUrl: string | null;
                 basePrice: import("@prisma/client/runtime/library").Decimal;
                 gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -125,6 +145,8 @@ export declare class MenuService {
                 displayOrder: number;
                 subcategoryId: string;
                 kitchenStationId: string | null;
+                isBundle: boolean;
+                maxBundleSelections: number | null;
             }[];
             name: string;
             id: string;
@@ -144,10 +166,12 @@ export declare class MenuService {
         isActive: boolean;
         imageUrl: string | null;
         displayOrder: number;
+        menuId: string | null;
     }[]>;
     createCategory(outletId: string, data: {
         name: string;
         imageUrl?: string;
+        menuId?: string;
     }): Promise<{
         name: string;
         id: string;
@@ -158,6 +182,7 @@ export declare class MenuService {
         isActive: boolean;
         imageUrl: string | null;
         displayOrder: number;
+        menuId: string | null;
     }>;
     updateCategory(id: string, data: Partial<{
         name: string;
@@ -174,6 +199,7 @@ export declare class MenuService {
         isActive: boolean;
         imageUrl: string | null;
         displayOrder: number;
+        menuId: string | null;
     }>;
     deleteCategory(id: string): Promise<{
         name: string;
@@ -185,6 +211,7 @@ export declare class MenuService {
         isActive: boolean;
         imageUrl: string | null;
         displayOrder: number;
+        menuId: string | null;
     }>;
     createSubcategory(categoryId: string, data: {
         name: string;
@@ -239,9 +266,9 @@ export declare class MenuService {
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        thumbnailUrl: string | null;
         shortDescription: string | null;
         longDescription: string | null;
-        thumbnailUrl: string | null;
         imageUrl: string | null;
         basePrice: import("@prisma/client/runtime/library").Decimal;
         gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -259,6 +286,8 @@ export declare class MenuService {
         displayOrder: number;
         subcategoryId: string;
         kitchenStationId: string | null;
+        isBundle: boolean;
+        maxBundleSelections: number | null;
     }>;
     updateItem(id: string, data: any): Promise<{
         variants: {
@@ -285,9 +314,9 @@ export declare class MenuService {
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        thumbnailUrl: string | null;
         shortDescription: string | null;
         longDescription: string | null;
-        thumbnailUrl: string | null;
         imageUrl: string | null;
         basePrice: import("@prisma/client/runtime/library").Decimal;
         gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -305,16 +334,19 @@ export declare class MenuService {
         displayOrder: number;
         subcategoryId: string;
         kitchenStationId: string | null;
+        isBundle: boolean;
+        maxBundleSelections: number | null;
     }>;
+    private replaceBundleChildren;
     toggleItemAvailability(id: string): Promise<{
         name: string;
         description: string | null;
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        thumbnailUrl: string | null;
         shortDescription: string | null;
         longDescription: string | null;
-        thumbnailUrl: string | null;
         imageUrl: string | null;
         basePrice: import("@prisma/client/runtime/library").Decimal;
         gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -332,6 +364,37 @@ export declare class MenuService {
         displayOrder: number;
         subcategoryId: string;
         kitchenStationId: string | null;
+        isBundle: boolean;
+        maxBundleSelections: number | null;
+    }>;
+    toggleItemVisibility(id: string): Promise<{
+        name: string;
+        description: string | null;
+        id: string;
+        createdAt: Date;
+        updatedAt: Date;
+        thumbnailUrl: string | null;
+        shortDescription: string | null;
+        longDescription: string | null;
+        imageUrl: string | null;
+        basePrice: import("@prisma/client/runtime/library").Decimal;
+        gstRate: import("@prisma/client/runtime/library").Decimal | null;
+        parcelAvailable: boolean;
+        useCustomParcelCharge: boolean;
+        parcelCharge: import("@prisma/client/runtime/library").Decimal | null;
+        preparationTime: number | null;
+        foodGrade: import(".prisma/client").$Enums.FoodGrade;
+        isAvailable: boolean;
+        isDisplayed: boolean;
+        isPopular: boolean;
+        isSpecial: boolean;
+        hasLimitedStock: boolean;
+        availableQuantity: number;
+        displayOrder: number;
+        subcategoryId: string;
+        kitchenStationId: string | null;
+        isBundle: boolean;
+        maxBundleSelections: number | null;
     }>;
     adjustItemStock(id: string, body: {
         addQuantity?: number;
@@ -342,9 +405,9 @@ export declare class MenuService {
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        thumbnailUrl: string | null;
         shortDescription: string | null;
         longDescription: string | null;
-        thumbnailUrl: string | null;
         imageUrl: string | null;
         basePrice: import("@prisma/client/runtime/library").Decimal;
         gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -362,6 +425,8 @@ export declare class MenuService {
         displayOrder: number;
         subcategoryId: string;
         kitchenStationId: string | null;
+        isBundle: boolean;
+        maxBundleSelections: number | null;
     }>;
     deleteItem(id: string): Promise<{
         name: string;
@@ -369,9 +434,9 @@ export declare class MenuService {
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        thumbnailUrl: string | null;
         shortDescription: string | null;
         longDescription: string | null;
-        thumbnailUrl: string | null;
         imageUrl: string | null;
         basePrice: import("@prisma/client/runtime/library").Decimal;
         gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -389,6 +454,8 @@ export declare class MenuService {
         displayOrder: number;
         subcategoryId: string;
         kitchenStationId: string | null;
+        isBundle: boolean;
+        maxBundleSelections: number | null;
     }>;
     createVariant(itemId: string, data: {
         name: string;
@@ -478,9 +545,9 @@ export declare class MenuService {
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        thumbnailUrl: string | null;
         shortDescription: string | null;
         longDescription: string | null;
-        thumbnailUrl: string | null;
         imageUrl: string | null;
         basePrice: import("@prisma/client/runtime/library").Decimal;
         gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -498,6 +565,8 @@ export declare class MenuService {
         displayOrder: number;
         subcategoryId: string;
         kitchenStationId: string | null;
+        isBundle: boolean;
+        maxBundleSelections: number | null;
     })[]>;
     importFromOutlet(targetOutletId: string, sourceOutletId: string): Promise<{
         categories: number;
@@ -509,6 +578,7 @@ export declare class MenuService {
         name: string;
         imageUrl?: string;
         displayOrder?: number;
+        menuId?: string;
     }): Promise<{
         name: string;
         id: string;
@@ -519,6 +589,7 @@ export declare class MenuService {
         isActive: boolean;
         imageUrl: string | null;
         displayOrder: number;
+        menuId: string | null;
     }>;
     updateBusinessCategory(id: string, dto: {
         name?: string;
@@ -535,6 +606,7 @@ export declare class MenuService {
         isActive: boolean;
         imageUrl: string | null;
         displayOrder: number;
+        menuId: string | null;
     }>;
     deleteBusinessCategory(id: string): Promise<{
         name: string;
@@ -546,6 +618,7 @@ export declare class MenuService {
         isActive: boolean;
         imageUrl: string | null;
         displayOrder: number;
+        menuId: string | null;
     }>;
     createBusinessSubcategory(categoryId: string, dto: {
         name: string;
@@ -566,9 +639,9 @@ export declare class MenuService {
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        thumbnailUrl: string | null;
         shortDescription: string | null;
         longDescription: string | null;
-        thumbnailUrl: string | null;
         imageUrl: string | null;
         basePrice: import("@prisma/client/runtime/library").Decimal;
         gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -586,6 +659,8 @@ export declare class MenuService {
         displayOrder: number;
         subcategoryId: string;
         kitchenStationId: string | null;
+        isBundle: boolean;
+        maxBundleSelections: number | null;
     }>;
     importFromBusiness(targetOutletId: string, sourceBusinessId: string, itemIds?: string[]): Promise<{
         categories: number;

@@ -3,7 +3,9 @@ export declare class TableTypesService {
     private prisma;
     constructor(prisma: PrismaService);
     private assertOutletAllowsSeating;
-    list(outletId: string): import(".prisma/client").Prisma.PrismaPromise<({
+    list(outletId: string): Promise<{
+        disabledMenuIds: string[];
+        menus: undefined;
         _count: {
             tables: number;
             prices: number;
@@ -31,14 +33,13 @@ export declare class TableTypesService {
             capacity: number;
             tableTypeId: string | null;
         })[];
-    } & {
         name: string;
         id: string;
         outletId: string;
         createdAt: Date;
         updatedAt: Date;
         color: string;
-    })[]>;
+    }[]>;
     addTable(outletId: string, tableTypeId: string, data: {
         number: string;
         capacity?: number;
@@ -118,5 +119,20 @@ export declare class TableTypesService {
     }>;
     clearItemPrice(tableTypeId: string, itemId: string, variantId?: string): Promise<{
         success: boolean;
+    }>;
+    listMenus(tableTypeId: string): Promise<{
+        id: string;
+        name: string;
+        isDefault: boolean;
+        isLocked: boolean;
+        isEnabled: boolean;
+    }[]>;
+    toggleMenu(tableTypeId: string, menuId: string, isEnabled: boolean): Promise<{
+        id: string;
+        createdAt: Date;
+        updatedAt: Date;
+        isEnabled: boolean;
+        menuId: string;
+        tableTypeId: string;
     }>;
 }

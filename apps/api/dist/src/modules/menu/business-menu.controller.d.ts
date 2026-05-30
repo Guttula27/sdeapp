@@ -13,6 +13,7 @@ export declare class BusinessMenuController {
         isActive: boolean;
         imageUrl: string | null;
         displayOrder: number;
+        menuId: string | null;
     }>;
     updateCategory(id: string, body: any): Promise<{
         name: string;
@@ -24,6 +25,7 @@ export declare class BusinessMenuController {
         isActive: boolean;
         imageUrl: string | null;
         displayOrder: number;
+        menuId: string | null;
     }>;
     deleteCategory(id: string): Promise<{
         name: string;
@@ -35,6 +37,7 @@ export declare class BusinessMenuController {
         isActive: boolean;
         imageUrl: string | null;
         displayOrder: number;
+        menuId: string | null;
     }>;
     createSubcategory(categoryId: string, body: any): Promise<{
         name: string;
@@ -62,9 +65,9 @@ export declare class BusinessMenuController {
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        thumbnailUrl: string | null;
         shortDescription: string | null;
         longDescription: string | null;
-        thumbnailUrl: string | null;
         imageUrl: string | null;
         basePrice: import("@prisma/client/runtime/library").Decimal;
         gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -82,6 +85,8 @@ export declare class BusinessMenuController {
         displayOrder: number;
         subcategoryId: string;
         kitchenStationId: string | null;
+        isBundle: boolean;
+        maxBundleSelections: number | null;
     }>;
     updateItem(id: string, body: any): Promise<{
         variants: {
@@ -108,9 +113,9 @@ export declare class BusinessMenuController {
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        thumbnailUrl: string | null;
         shortDescription: string | null;
         longDescription: string | null;
-        thumbnailUrl: string | null;
         imageUrl: string | null;
         basePrice: import("@prisma/client/runtime/library").Decimal;
         gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -128,6 +133,8 @@ export declare class BusinessMenuController {
         displayOrder: number;
         subcategoryId: string;
         kitchenStationId: string | null;
+        isBundle: boolean;
+        maxBundleSelections: number | null;
     }>;
     deleteItem(id: string): Promise<{
         name: string;
@@ -135,9 +142,9 @@ export declare class BusinessMenuController {
         id: string;
         createdAt: Date;
         updatedAt: Date;
+        thumbnailUrl: string | null;
         shortDescription: string | null;
         longDescription: string | null;
-        thumbnailUrl: string | null;
         imageUrl: string | null;
         basePrice: import("@prisma/client/runtime/library").Decimal;
         gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -155,6 +162,8 @@ export declare class BusinessMenuController {
         displayOrder: number;
         subcategoryId: string;
         kitchenStationId: string | null;
+        isBundle: boolean;
+        maxBundleSelections: number | null;
     }>;
     createVariant(itemId: string, body: any): Promise<{
         name: string;

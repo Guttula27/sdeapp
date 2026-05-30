@@ -30,6 +30,11 @@ export declare class JwtStrategy extends JwtStrategy_base {
             isSystem: boolean;
             isTemplate: boolean;
         } | null;
+        business: {
+            name: string;
+            id: string;
+            isCluster: boolean;
+        } | null;
         name: string;
         phone: string;
         email: string | null;

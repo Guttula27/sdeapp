@@ -23,6 +23,7 @@ const FALLBACK_BODIES = {
     PAYMENT_RECEIVED: 'Payment of ₹{{amount}} received for order {{order_number}}.',
     ITEM_READY: 'Your {{item}} is ready (order {{order_number}}).',
     ORDER_READY: 'Your order {{order_number}} is ready.',
+    PICKUP_READY: 'Your parcel order {{order_number}} is packed and ready for pickup at {{outlet_name}}.',
     ORDER_SERVED: 'Order {{order_number}} has been served. Enjoy!',
 };
 const TITLES = {
@@ -30,6 +31,7 @@ const TITLES = {
     PAYMENT_RECEIVED: 'Payment received',
     ITEM_READY: 'Item ready',
     ORDER_READY: 'Order ready',
+    PICKUP_READY: 'Ready for pickup',
     ORDER_SERVED: 'Order served',
 };
 function render(body, vars) {

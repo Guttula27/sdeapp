@@ -44,10 +44,12 @@ export declare class ServiceStationsService {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     })[]>;
     create(outletId: string, data: {
         name: string;
         tableTypeId?: string | null;
+        isParcelStation?: boolean;
     }): Promise<{
         tableType: {
             name: string;
@@ -92,10 +94,12 @@ export declare class ServiceStationsService {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     }>;
     update(id: string, data: {
         name?: string;
         tableTypeId?: string | null;
+        isParcelStation?: boolean;
     }): Promise<{
         tableType: {
             name: string;
@@ -140,6 +144,7 @@ export declare class ServiceStationsService {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     }>;
     remove(id: string): Promise<{
         name: string;
@@ -149,6 +154,7 @@ export declare class ServiceStationsService {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     }>;
     setWorkers(stationId: string, userIds: string[]): Promise<({
         tableType: {
@@ -192,6 +198,7 @@ export declare class ServiceStationsService {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     }) | undefined>;
     setTables(stationId: string, tableIds: string[]): Promise<({
         tableType: {
@@ -235,6 +242,7 @@ export declare class ServiceStationsService {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     }) | undefined>;
     listTablesForType(outletId: string, tableTypeId: string): import(".prisma/client").Prisma.PrismaPromise<({
         section: {
@@ -285,5 +293,7 @@ export declare class ServiceStationsService {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     })[]>;
+    hasActiveParcelStation(outletId: string): Promise<boolean>;
 }

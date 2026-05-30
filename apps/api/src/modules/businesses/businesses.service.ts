@@ -1,12 +1,19 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import * as crypto from 'crypto';
+import { IsBoolean, IsEnum, IsOptional, IsString } from 'class-validator';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { BusinessType } from '@prisma/client';
 import { TranslationsService } from '../translations/translations.service';
 
 // Testing-phase default — replace with an SMS-delivered random password before launch
 const DEFAULT_ADMIN_PASSWORD = 'abc@123';
+
+// 8 random hex chars (16^8 ≈ 4B combinations) prefixed with BIZ-. Matches the
+// outlet `OL-...` pattern; same retry-on-collision logic at create time.
+function generateBusinessCode(): string {
+  return 'BIZ-' + crypto.randomBytes(4).toString('hex').toUpperCase();
+}
 
 // All fields decorated so the global ValidationPipe(whitelist:true,
 // forbidNonWhitelisted:true) lets them through. Without decorators every
@@ -26,9 +33,15 @@ export class CreateBusinessDto {
   @IsString() @IsOptional() upiId?: string;
   @IsEnum(BusinessType) businessType!: BusinessType;
   @IsString() @IsOptional() logoUrl?: string;
+  @IsString() @IsOptional() thumbnailUrl?: string;
   @IsString() @IsOptional() primaryImageUrl?: string;
   @IsString() @IsOptional() adminPhone?: string;
   @IsString() @IsOptional() adminName?: string;
+  @IsOptional() multipleMenusEnabled?: boolean;
+  // Cluster businesses (food court / theatre roof) aggregate outlets from
+  // OTHER businesses via the ClusterMember join. They own no outlets, seed
+  // no menu, and the admin user is optional (platform-admin managed).
+  @IsBoolean() @IsOptional() isCluster?: boolean;
 }
 
 @Injectable()
@@ -49,14 +62,38 @@ export class BusinessesService {
   }
 
   async create(data: CreateBusinessDto) {
-    const { adminPhone, adminName, ...biz } = data;
+    const { adminPhone, adminName, isCluster, ...biz } = data;
+    // Every business — cluster or standard — needs an owner at create time.
+    // Clusters get the same Business Owner role + login as a regular business;
+    // the only thing they skip is the seeded "Main Menu" since the cluster
+    // doesn't own a menu of its own.
     if (!adminPhone) throw new BadRequestException('Business admin phone is required');
-
     const existing = await this.prisma.user.findUnique({ where: { phone: adminPhone } });
     if (existing) throw new BadRequestException(`Phone ${adminPhone} is already registered`);
 
-    const business = await this.prisma.business.create({ data: biz });
+    // Generate a unique publicCode with retry on the rare unique-violation.
+    let business: any = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        business = await this.prisma.business.create({
+          data: { ...biz, isCluster: !!isCluster, publicCode: generateBusinessCode() },
+        });
+        break;
+      } catch (e: any) {
+        if (e?.code !== 'P2002' || !`${e?.message ?? ''}`.includes('publicCode')) throw e;
+      }
+    }
+    if (!business) throw new BadRequestException('Could not allocate a unique business code, please retry');
+
     await this.translations.upsertAll('Business', business.id, this.translatableBusinessFields(business));
+
+    // Cluster businesses don't seed a Menu — their menu surface is the
+    // aggregated list of member outlets' menus, not their own.
+    if (!isCluster) {
+      await this.prisma.menu.create({
+        data: { businessId: business.id, name: 'Main Menu', isDefault: true },
+      });
+    }
 
     // Provision the Business Owner role for this business + the owner user.
     // Clone responsibilities from the platform-scoped template so the tenant
@@ -79,7 +116,7 @@ export class BusinessesService {
     const adminUser = await this.prisma.user.create({
       data: {
         name: adminName?.trim() || `${business.name} Owner`,
-        phone: adminPhone.trim(),
+        phone: adminPhone!.trim(),
         passwordHash,
         businessId: business.id,
         roleId: ownerRole.id,

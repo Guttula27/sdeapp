@@ -23,6 +23,7 @@ let KitchenStationsService = class KitchenStationsService {
             include: {
                 currentWorker: { select: { id: true, name: true, phone: true } },
                 items: { select: { id: true, name: true } },
+                printer: { select: { id: true, name: true, connection: true, address: true } },
             },
         });
     }
@@ -42,6 +43,7 @@ let KitchenStationsService = class KitchenStationsService {
             include: {
                 currentWorker: { select: { id: true, name: true, phone: true } },
                 items: { select: { id: true, name: true } },
+                printer: { select: { id: true, name: true, connection: true, address: true } },
             },
         });
     }

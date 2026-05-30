@@ -1,5 +1,6 @@
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { OrdersGateway } from '../orders/orders.gateway';
+import { OrdersService } from '../orders/orders.service';
 import { PaymentMode } from '@prisma/client';
 import { LifecycleDispatcherService } from '../customer-alerts/lifecycle-dispatcher.service';
 import { RazorpayService } from './razorpay.service';
@@ -8,7 +9,8 @@ export declare class PaymentsService {
     private ordersGateway;
     private dispatcher;
     private razorpay;
-    constructor(prisma: PrismaService, ordersGateway: OrdersGateway, dispatcher: LifecycleDispatcherService, razorpay: RazorpayService);
+    private orders;
+    constructor(prisma: PrismaService, ordersGateway: OrdersGateway, dispatcher: LifecycleDispatcherService, razorpay: RazorpayService, orders: OrdersService);
     initiatePayment(orderId: string, mode: PaymentMode, amount: number): Promise<{
         id: string;
         status: import(".prisma/client").$Enums.PaymentStatus;

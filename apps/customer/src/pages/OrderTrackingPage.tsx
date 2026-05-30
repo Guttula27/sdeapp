@@ -306,18 +306,75 @@ export default function OrderTrackingPage() {
             <p className="text-xs text-slate-400 mt-0.5">Live progress and feedback for each dish</p>
           </div>
           <div className="px-5 pb-5 space-y-3">
-            {order.items?.map((item: any) => (
-              <ItemProgressRow
-                key={item.id}
-                item={item}
-                onReviewSaved={(review) => {
-                  setOrder((prev: any) => prev ? ({
-                    ...prev,
-                    items: prev.items.map((oi: any) => oi.id === item.id ? { ...oi, review } : oi),
-                  }) : prev);
-                }}
-              />
-            ))}
+            {(() => {
+              // If the order has been sequenced into courses, group items
+              // under their course label so the customer sees "Starter →
+              // Main → Dessert" structure. Items with no course are
+              // bundled under "Anytime" (always available to the kitchen).
+              const items = order.items || [];
+              const hasSequencing = items.some((i: any) => i.sequenceNumber != null);
+              if (!hasSequencing) {
+                return items.map((item: any) => (
+                  <ItemProgressRow
+                    key={item.id}
+                    item={item}
+                    onReviewSaved={(review) => {
+                      setOrder((prev: any) => prev ? ({
+                        ...prev,
+                        items: prev.items.map((oi: any) => oi.id === item.id ? { ...oi, review } : oi),
+                      }) : prev);
+                    }}
+                  />
+                ));
+              }
+              const labels: Record<string, string> = order.sequenceLabels || {};
+              const groups = new Map<string, any[]>();
+              for (const it of items) {
+                const key = it.sequenceNumber == null ? '0' : String(it.sequenceNumber);
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key)!.push(it);
+              }
+              const sortedKeys = Array.from(groups.keys()).sort((a, b) => Number(a) - Number(b));
+              const active = order.activeSequence ?? 1;
+              return sortedKeys.map((key) => {
+                const courseNum = Number(key);
+                const isAnytime = courseNum === 0;
+                const courseLabel = isAnytime
+                  ? 'Anytime'
+                  : (labels[key] || `Course ${key}`);
+                const isActive = !isAnytime && courseNum === active;
+                const isHeld = !isAnytime && courseNum > active;
+                return (
+                  <div key={key} className="space-y-2">
+                    <div className="flex items-center gap-2 px-1">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-slate-600">{courseLabel}</p>
+                      {isActive && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                          Now serving
+                        </span>
+                      )}
+                      {isHeld && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">
+                          Up next
+                        </span>
+                      )}
+                    </div>
+                    {groups.get(key)!.map((item: any) => (
+                      <ItemProgressRow
+                        key={item.id}
+                        item={item}
+                        onReviewSaved={(review) => {
+                          setOrder((prev: any) => prev ? ({
+                            ...prev,
+                            items: prev.items.map((oi: any) => oi.id === item.id ? { ...oi, review } : oi),
+                          }) : prev);
+                        }}
+                      />
+                    ))}
+                  </div>
+                );
+              });
+            })()}
           </div>
         </div>
 

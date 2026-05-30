@@ -66,10 +66,10 @@ export declare class SubscriptionsController {
             id: string;
             status: string;
             createdAt: Date;
+            subscriptionId: string;
             totalAmount: import("@prisma/client/runtime/library").Decimal;
             amount: import("@prisma/client/runtime/library").Decimal;
             gstAmount: import("@prisma/client/runtime/library").Decimal;
-            subscriptionId: string;
             dueDate: Date;
             paidAt: Date | null;
         }[];
@@ -87,10 +87,10 @@ export declare class SubscriptionsController {
         id: string;
         status: string;
         createdAt: Date;
+        subscriptionId: string;
         totalAmount: import("@prisma/client/runtime/library").Decimal;
         amount: import("@prisma/client/runtime/library").Decimal;
         gstAmount: import("@prisma/client/runtime/library").Decimal;
-        subscriptionId: string;
         dueDate: Date;
         paidAt: Date | null;
     }[]>;

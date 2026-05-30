@@ -23,6 +23,7 @@ const jwt_auth_guard_1 = require("../../common/guards/jwt-auth.guard");
 const optional_jwt_guard_1 = require("../../common/guards/optional-jwt.guard");
 const current_user_decorator_1 = require("../../common/decorators/current-user.decorator");
 const preferred_language_1 = require("../../common/language/preferred-language");
+const idempotency_interceptor_1 = require("../../common/interceptors/idempotency.interceptor");
 const client_1 = require("@prisma/client");
 let OrdersController = class OrdersController {
     constructor(ordersService) {
@@ -43,6 +44,9 @@ let OrdersController = class OrdersController {
     requestBill(id, userId) {
         return this.ordersService.requestBill(id, userId);
     }
+    findByNumber(outletId, orderNumber, lang) {
+        return this.ordersService.findByOrderNumber(outletId, orderNumber, lang);
+    }
     findOne(id, lang) {
         return this.ordersService.findOne(id, lang);
     }
@@ -55,10 +59,14 @@ let OrdersController = class OrdersController {
     updateItemStatus(id, itemId, status, userId) {
         return this.ordersService.updateItemStatus(id, itemId, status, userId);
     }
+    setSequences(id, body) {
+        return this.ordersService.setSequences(id, body);
+    }
 };
 exports.OrdersController = OrdersController;
 __decorate([
     (0, common_1.UseGuards)(optional_jwt_guard_1.OptionalJwtAuthGuard),
+    (0, common_1.UseInterceptors)(idempotency_interceptor_1.IdempotencyInterceptor),
     (0, common_1.Post)(),
     openapi.ApiResponse({ status: 201, type: Object }),
     __param(0, (0, common_1.Param)('outletId')),
@@ -115,6 +123,17 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], OrdersController.prototype, "requestBill", null);
 __decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Get)('by-number/:orderNumber'),
+    openapi.ApiResponse({ status: 200, type: Object }),
+    __param(0, (0, common_1.Param)('outletId')),
+    __param(1, (0, common_1.Param)('orderNumber')),
+    __param(2, (0, preferred_language_1.PreferredLanguage)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, Object]),
+    __metadata("design:returntype", void 0)
+], OrdersController.prototype, "findByNumber", null);
+__decorate([
     (0, common_1.UseGuards)(optional_jwt_guard_1.OptionalJwtAuthGuard),
     (0, common_1.Get)(':id'),
     openapi.ApiResponse({ status: 200, type: Object }),
@@ -126,6 +145,7 @@ __decorate([
 ], OrdersController.prototype, "findOne", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.UseInterceptors)(idempotency_interceptor_1.IdempotencyInterceptor),
     (0, common_1.Patch)(':id/status'),
     openapi.ApiResponse({ status: 200, type: Object }),
     __param(0, (0, common_1.Param)('id')),
@@ -137,6 +157,7 @@ __decorate([
 ], OrdersController.prototype, "updateStatus", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.UseInterceptors)(idempotency_interceptor_1.IdempotencyInterceptor),
     (0, common_1.Patch)(':id/cancel'),
     openapi.ApiResponse({ status: 200, type: Object }),
     __param(0, (0, common_1.Param)('id')),
@@ -148,6 +169,7 @@ __decorate([
 ], OrdersController.prototype, "cancel", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.UseInterceptors)(idempotency_interceptor_1.IdempotencyInterceptor),
     (0, common_1.Patch)(':id/items/:itemId/status'),
     openapi.ApiResponse({ status: 200 }),
     __param(0, (0, common_1.Param)('id')),
@@ -158,6 +180,16 @@ __decorate([
     __metadata("design:paramtypes", [String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], OrdersController.prototype, "updateItemStatus", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Patch)(':id/sequences'),
+    openapi.ApiResponse({ status: 200, type: Object }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], OrdersController.prototype, "setSequences", null);
 exports.OrdersController = OrdersController = __decorate([
     (0, swagger_1.ApiTags)('Orders'),
     (0, swagger_1.ApiBearerAuth)(),

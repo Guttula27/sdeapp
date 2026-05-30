@@ -19,12 +19,18 @@ const orders_gateway_1 = require("./orders.gateway");
 const client_1 = require("@prisma/client");
 const translations_service_1 = require("../translations/translations.service");
 const lifecycle_dispatcher_service_1 = require("../customer-alerts/lifecycle-dispatcher.service");
+const pricing_service_1 = require("../pricing/pricing.service");
+const rewards_service_1 = require("../rewards/rewards.service");
+const service_stations_service_1 = require("../service-stations/service-stations.service");
 let OrdersService = class OrdersService {
-    constructor(prisma, ordersGateway, translations, dispatcher) {
+    constructor(prisma, ordersGateway, translations, dispatcher, pricing, rewards, serviceStations) {
         this.prisma = prisma;
         this.ordersGateway = ordersGateway;
         this.translations = translations;
         this.dispatcher = dispatcher;
+        this.pricing = pricing;
+        this.rewards = rewards;
+        this.serviceStations = serviceStations;
     }
     async hydrateOrders(orders, lang) {
         if (!lang || lang === 'en' || !orders?.length)
@@ -62,7 +68,80 @@ let OrdersService = class OrdersService {
             if (t?.outletId === outletId)
                 tableTypeId = t.tableTypeId;
         }
-        const items = await this.resolveOrderItems(dto.items, gstOn ? { viewerTagId, tableTypeId, outletDefaultPct } : null);
+        const expanded = [];
+        for (const li of dto.items) {
+            const parent = await this.prisma.item.findUnique({
+                where: { id: li.itemId },
+                include: {
+                    bundleChildren: { orderBy: { displayOrder: 'asc' } },
+                },
+            });
+            if (parent?.isBundle) {
+                if (!parent.bundleChildren.length) {
+                    throw new common_1.BadRequestException('Bundle has no items configured');
+                }
+                let childrenForOrder = parent.bundleChildren;
+                const maxPicks = parent.maxBundleSelections ?? 0;
+                if (maxPicks > 0) {
+                    const picks = li.bundleSelections;
+                    if (!Array.isArray(picks) || picks.length !== maxPicks) {
+                        throw new common_1.BadRequestException(`Bundle "${parent.name}" requires exactly ${maxPicks} selection${maxPicks === 1 ? '' : 's'}`);
+                    }
+                    if (new Set(picks).size !== picks.length) {
+                        throw new common_1.BadRequestException(`Bundle "${parent.name}" selections must be unique`);
+                    }
+                    const validIds = new Set(parent.bundleChildren.map((c) => c.id));
+                    for (const id of picks) {
+                        if (!validIds.has(id)) {
+                            throw new common_1.BadRequestException(`Bundle "${parent.name}" got an invalid selection`);
+                        }
+                    }
+                    const bySelectedId = new Set(picks);
+                    childrenForOrder = parent.bundleChildren.filter((c) => bySelectedId.has(c.id));
+                }
+                const bundlePrice = Number(parent.basePrice) * li.quantity;
+                const bundleGstRate = parent.gstRate != null ? Number(parent.gstRate) : undefined;
+                childrenForOrder.forEach((child, idx) => {
+                    expanded.push({
+                        dto: {
+                            itemId: child.childItemId,
+                            variantId: child.variantId || undefined,
+                            quantity: child.quantity * li.quantity,
+                        },
+                        bundleId: parent.id,
+                        bundleName: parent.name,
+                        bundlePrice: idx === 0 ? bundlePrice : 0,
+                        bundleGstRate,
+                        isPrimary: idx === 0,
+                    });
+                });
+            }
+            else {
+                expanded.push({ dto: li });
+            }
+        }
+        const items = await this.resolveOrderItems(expanded.map((e) => e.dto), gstOn ? { viewerTagId, tableTypeId, outletDefaultPct } : null);
+        for (let i = 0; i < items.length; i++) {
+            const meta = expanded[i];
+            if (!meta?.bundleId)
+                continue;
+            const line = items[i];
+            line.bundleId = meta.bundleId;
+            if (meta.isPrimary) {
+                line.unitPrice = (meta.bundlePrice ?? 0) / Math.max(1, line.quantity);
+                line.totalPrice = meta.bundlePrice ?? 0;
+                if (meta.bundleGstRate !== undefined)
+                    line.gstRate = meta.bundleGstRate;
+                line.gstAmount = line.totalPrice * (line.gstRate / 100);
+            }
+            else {
+                line.unitPrice = 0;
+                line.totalPrice = 0;
+                line.gstAmount = 0;
+            }
+            const bundleNote = `Bundle: ${meta.bundleName}`;
+            line.notes = line.notes ? `${bundleNote} | ${line.notes}` : bundleNote;
+        }
         const linesTotal = items.reduce((sum, i) => sum + i.totalPrice, 0);
         let subtotal;
         let taxAmount;
@@ -87,18 +166,12 @@ let OrdersService = class OrdersService {
         const sgstAmount = taxAmount / 2;
         const cgstAmount = taxAmount / 2;
         const parcelAmount = dto.isParcel ? await this.computeParcelCharge(outletId, items) : 0;
-        const totalAmount = subtotal + taxAmount + parcelAmount;
-        const counters = await this.prisma.outlet.update({
-            where: { id: outletId },
-            data: {
-                nextOrderSequence: { increment: 1 },
-                nextTokenNumber: { increment: 1 },
-            },
-            select: { nextOrderSequence: true, nextTokenNumber: true },
-        });
-        const orderSeq = counters.nextOrderSequence - 1;
-        const tokenNumber = counters.nextTokenNumber - 1;
-        const orderNumber = `ORD-${outletId.slice(0, 4).toUpperCase()}-${String(orderSeq).padStart(5, '0')}`;
+        let totalAmount = subtotal + taxAmount + parcelAmount;
+        let discountAmount = 0;
+        let appliedCouponId = null;
+        let appliedCouponDiscount = 0;
+        let appliedRewardPoints = 0;
+        let appliedRewardAmount = 0;
         let resolvedCustomerId = userId;
         let resolvedStaffId;
         if (dto.customerPhone) {
@@ -112,9 +185,48 @@ let OrdersService = class OrdersService {
                 resolvedStaffId = userId;
             }
         }
+        const promoLines = dto.items.map((li) => ({
+            itemId: li.itemId,
+            variantId: li.variantId,
+            quantity: li.quantity,
+        }));
+        try {
+            const quote = await this.pricing.quoteCart({
+                outletId,
+                lines: promoLines,
+                isParcel: !!dto.isParcel,
+                customerId: resolvedCustomerId,
+                couponId: dto.couponId,
+                rewardPoints: dto.rewardPoints,
+            });
+            const preDiscount = subtotal + taxAmount + parcelAmount;
+            totalAmount = quote.totalAmount;
+            discountAmount = Math.max(0, preDiscount - quote.totalAmount);
+            appliedCouponId = quote.coupon?.id ?? null;
+            appliedCouponDiscount = quote.coupon?.amount ?? 0;
+            appliedRewardPoints = quote.reward?.points ?? 0;
+            appliedRewardAmount = quote.reward?.amount ?? 0;
+        }
+        catch (e) {
+            if (dto.couponId || dto.rewardPoints)
+                throw e;
+        }
+        const counters = await this.prisma.outlet.update({
+            where: { id: outletId },
+            data: {
+                nextOrderSequence: { increment: 1 },
+                nextTokenNumber: { increment: 1 },
+            },
+            select: { nextOrderSequence: true, nextTokenNumber: true, publicCode: true },
+        });
+        const orderSeq = counters.nextOrderSequence - 1;
+        const tokenNumber = counters.nextTokenNumber - 1;
+        const prefix = counters.publicCode || `OL-${outletId.slice(0, 8).toUpperCase()}`;
+        const orderNumber = `ORD-${prefix}-${String(orderSeq).padStart(5, '0')}`;
         const stockDeltas = new Map();
         for (const line of items) {
-            stockDeltas.set(line.itemId, (stockDeltas.get(line.itemId) ?? 0) + line.quantity);
+            const itemId = line.itemId;
+            stockDeltas.set(itemId, (stockDeltas.get(itemId) ?? 0) + line.quantity);
         }
         const order = await this.prisma.$transaction(async (tx) => {
             for (const [itemId, qty] of stockDeltas) {
@@ -138,7 +250,7 @@ let OrdersService = class OrdersService {
                     data: { isAvailable: false },
                 });
             }
-            return tx.order.create({
+            const created = await tx.order.create({
                 data: {
                     orderNumber,
                     tokenNumber,
@@ -155,10 +267,13 @@ let OrdersService = class OrdersService {
                     sgstAmount,
                     cgstAmount,
                     parcelAmount,
-                    discountAmount: 0,
+                    discountAmount,
                     totalAmount,
                     items: {
-                        create: items,
+                        create: items.map((it) => ({
+                            ...it,
+                            ...(it.bundleId ? { bundleId: it.bundleId } : {}),
+                        })),
                     },
                     statusHistory: {
                         create: { status: client_1.OrderStatus.CREATED, changedBy: userId },
@@ -188,6 +303,50 @@ let OrdersService = class OrdersService {
                     },
                 },
             });
+            if (appliedCouponId && resolvedCustomerId) {
+                await tx.couponUsage.create({
+                    data: {
+                        couponId: appliedCouponId,
+                        userId: resolvedCustomerId,
+                        orderId: created.id,
+                        discountAmount: appliedCouponDiscount,
+                    },
+                });
+                await tx.coupon.update({
+                    where: { id: appliedCouponId },
+                    data: { usesCount: { increment: 1 } },
+                });
+            }
+            if (appliedRewardPoints > 0 && resolvedCustomerId) {
+                const account = await tx.customerRewardAccount.upsert({
+                    where: { userId: resolvedCustomerId },
+                    create: { userId: resolvedCustomerId },
+                    update: {},
+                });
+                if (account.balance < appliedRewardPoints) {
+                    throw new common_1.BadRequestException('Insufficient reward points');
+                }
+                const updated = await tx.customerRewardAccount.update({
+                    where: { id: account.id },
+                    data: {
+                        balance: { decrement: appliedRewardPoints },
+                        lifetimeRedeemed: { increment: appliedRewardPoints },
+                    },
+                });
+                await tx.rewardTransaction.create({
+                    data: {
+                        accountId: account.id,
+                        userId: resolvedCustomerId,
+                        type: 'REDEEM',
+                        points: -appliedRewardPoints,
+                        amountValue: appliedRewardAmount,
+                        balanceAfter: updated.balance,
+                        orderId: created.id,
+                        outletId,
+                    },
+                });
+            }
+            return created;
         });
         this.ordersGateway.emitOrderCreated(outletId, order);
         if (order.customerId) {
@@ -218,6 +377,7 @@ let OrdersService = class OrdersService {
             this.dispatcher.fire('ORDER_PLACED', ctx).catch(() => { });
             if ((order.payments || []).some((p) => p.status === 'SUCCESS')) {
                 this.dispatcher.fire('PAYMENT_RECEIVED', ctx).catch(() => { });
+                this.tryEarnRewards(order.id, order.customerId, outletId, Number(order.subtotal)).catch(() => { });
             }
         }
         return order;
@@ -234,11 +394,32 @@ let OrdersService = class OrdersService {
                     isActive: true,
                     workers: { some: { userId: filters.callerUserId } },
                 },
-                select: { tables: { select: { tableId: true } } },
+                select: { isParcelStation: true, tables: { select: { tableId: true } } },
             });
             if (stations.length > 0) {
-                const tableIds = stations.flatMap((s) => s.tables.map((t) => t.tableId));
-                where.tableId = { in: tableIds.length ? tableIds : ['__none__'] };
+                const tableIds = stations
+                    .filter((s) => !s.isParcelStation)
+                    .flatMap((s) => s.tables.map((t) => t.tableId));
+                const userIsOnParcelStation = stations.some((s) => s.isParcelStation);
+                const parcelActive = await this.serviceStations.hasActiveParcelStation(outletId);
+                const visibility = [];
+                if (tableIds.length)
+                    visibility.push({ tableId: { in: tableIds } });
+                if (userIsOnParcelStation) {
+                    visibility.push({ isParcel: true });
+                }
+                else if (!parcelActive) {
+                    visibility.push({ isParcel: true });
+                }
+                if (visibility.length === 0) {
+                    where.tableId = '__none__';
+                }
+                else if (visibility.length === 1) {
+                    Object.assign(where, visibility[0]);
+                }
+                else {
+                    where.OR = visibility;
+                }
             }
         }
         const [orders, total] = await Promise.all([
@@ -306,6 +487,7 @@ let OrdersService = class OrdersService {
                     include: {
                         item: true,
                         variant: true,
+                        menu: { select: { id: true, name: true } },
                         review: {
                             include: {
                                 paybackPayment: { select: { id: true, mode: true, amount: true, status: true, createdAt: true } },
@@ -333,16 +515,36 @@ let OrdersService = class OrdersService {
         await this.hydrateOrders([order], lang);
         return order;
     }
+    async findByOrderNumber(outletId, orderNumber, lang) {
+        const trimmed = orderNumber.trim();
+        if (!trimmed)
+            throw new common_1.NotFoundException('Bill number is required');
+        const order = await this.prisma.order.findFirst({
+            where: { orderNumber: trimmed, outletId },
+            include: {
+                items: { include: { item: true, variant: true } },
+                table: true,
+                outlet: { select: { id: true, name: true } },
+                customer: { select: { id: true, name: true, phone: true } },
+                payments: true,
+            },
+        });
+        if (!order)
+            throw new common_1.NotFoundException(`No order found with bill number ${trimmed} at this outlet`);
+        await this.hydrateOrders([order], lang);
+        return order;
+    }
     async updateStatus(id, dto, userId) {
         const order = await this.prisma.order.findUnique({
             where: { id },
-            include: { outlet: { select: { outletType: true } } },
+            include: { outlet: { select: { outletType: true, name: true, businessId: true } } },
         });
         if (!order)
             throw new common_1.NotFoundException('Order not found');
         this.validateStatusTransition(order.status, dto.status, {
             outletType: order.outlet?.outletType,
             tableId: order.tableId,
+            isParcel: order.isParcel,
         });
         const updated = await this.prisma.order.update({
             where: { id },
@@ -364,10 +566,118 @@ let OrdersService = class OrdersService {
             },
         });
         this.ordersGateway.emitOrderStatusUpdated(order.outletId, updated);
+        if (dto.status === client_1.OrderStatus.READY_FOR_PICKUP && updated.customerId) {
+            this.dispatcher.fire('PICKUP_READY', {
+                customerId: updated.customerId,
+                customerName: updated.customer?.name,
+                customerPhone: updated.customer?.phone,
+                businessId: order.outlet?.businessId ?? null,
+                outletId: order.outletId,
+                outletName: order.outlet?.name,
+                orderId: updated.id,
+                orderNumber: updated.orderNumber,
+            }).catch(() => { });
+        }
         return updated;
+    }
+    async tryEarnRewards(orderId, customerId, outletId, subtotal) {
+        try {
+            const existing = await this.prisma.rewardTransaction.findFirst({
+                where: { orderId, type: 'EARN' },
+                select: { id: true },
+            });
+            if (existing)
+                return;
+            await this.rewards.earnForOrder({
+                userId: customerId,
+                orderId,
+                outletId,
+                subtotal,
+            });
+        }
+        catch {
+        }
     }
     async cancel(id, userId, reason) {
         return this.updateStatus(id, { status: client_1.OrderStatus.CANCELLED, notes: reason }, userId);
+    }
+    async setSequences(orderId, payload) {
+        const order = await this.prisma.order.findUnique({
+            where: { id: orderId },
+            include: { items: true },
+        });
+        if (!order)
+            throw new common_1.NotFoundException('Order not found');
+        if (payload.items?.length) {
+            const byId = new Map(order.items.map((it) => [it.id, it]));
+            for (const { itemId, sequenceNumber } of payload.items) {
+                const item = byId.get(itemId);
+                if (!item)
+                    throw new common_1.BadRequestException(`Item ${itemId} is not part of this order`);
+                if (item.status !== client_1.OrderItemStatus.PENDING && item.sequenceNumber !== sequenceNumber) {
+                    throw new common_1.BadRequestException(`Item "${itemId}" is already ${item.status} — sequencing can only be edited on PENDING items`);
+                }
+                if (sequenceNumber != null && (!Number.isInteger(sequenceNumber) || sequenceNumber < 1)) {
+                    throw new common_1.BadRequestException('sequenceNumber must be a positive integer or null');
+                }
+            }
+            await this.prisma.$transaction(payload.items.map(({ itemId, sequenceNumber }) => this.prisma.orderItem.update({
+                where: { id: itemId },
+                data: { sequenceNumber },
+            })));
+        }
+        if (payload.labels !== undefined) {
+            await this.prisma.order.update({
+                where: { id: orderId },
+                data: { sequenceLabels: payload.labels === null ? null : payload.labels },
+            });
+        }
+        await this.advanceCourseIfReady(orderId);
+        const updated = await this.prisma.order.findUnique({
+            where: { id: orderId },
+            include: { items: { include: { item: true, variant: true } }, table: true },
+        });
+        if (updated)
+            this.ordersGateway.emitOrderStatusUpdated(updated.outletId, updated);
+        return updated;
+    }
+    async advanceCourseIfReady(orderId) {
+        const order = await this.prisma.order.findUnique({
+            where: { id: orderId },
+            select: { activeSequence: true, items: { select: { sequenceNumber: true, status: true } } },
+        });
+        if (!order)
+            return;
+        let active = order.activeSequence;
+        const live = order.items.filter((i) => i.status !== client_1.OrderItemStatus.CANCELLED);
+        const sequenceNumbers = Array.from(new Set(live.map((i) => i.sequenceNumber).filter((n) => n != null))).sort((a, b) => a - b);
+        if (sequenceNumbers.length === 0)
+            return;
+        while (true) {
+            const atCurrent = live.filter((i) => i.sequenceNumber === active);
+            if (atCurrent.length === 0) {
+                const next = sequenceNumbers.find((n) => n > active);
+                if (next == null)
+                    break;
+                active = next;
+                continue;
+            }
+            const allDone = atCurrent.every((i) => i.status === client_1.OrderItemStatus.SERVED);
+            if (!allDone)
+                break;
+            const next = sequenceNumbers.find((n) => n > active);
+            if (next == null) {
+                active = active + 1;
+                break;
+            }
+            active = next;
+        }
+        if (active !== order.activeSequence) {
+            await this.prisma.order.update({
+                where: { id: orderId },
+                data: { activeSequence: active },
+            });
+        }
     }
     async updateItemStatus(orderId, orderItemId, status, userId) {
         const item = await this.prisma.orderItem.findUnique({
@@ -390,6 +700,9 @@ let OrdersService = class OrdersService {
             where: { id: orderItemId },
             data: { status },
         });
+        if (status === client_1.OrderItemStatus.SERVED) {
+            await this.advanceCourseIfReady(orderId);
+        }
         const rolledUp = await this.rollupOrderStatus(orderId, userId);
         const updated = await this.prisma.order.findUnique({
             where: { id: orderId },
@@ -460,7 +773,8 @@ let OrdersService = class OrdersService {
         if (!order || order.items.length === 0)
             return null;
         const frozen = [
-            client_1.OrderStatus.OUT_FOR_SERVICE, client_1.OrderStatus.SERVED, client_1.OrderStatus.CANCELLED,
+            client_1.OrderStatus.READY_FOR_PICKUP, client_1.OrderStatus.OUT_FOR_SERVICE,
+            client_1.OrderStatus.SERVED, client_1.OrderStatus.CANCELLED,
             client_1.OrderStatus.DISPUTED, client_1.OrderStatus.RESOLVED,
             client_1.OrderStatus.FOR_REFUND, client_1.OrderStatus.REFUND_COMPLETE,
         ];
@@ -497,6 +811,7 @@ let OrdersService = class OrdersService {
             const item = await this.prisma.item.findUnique({
                 where: { id: i.itemId },
                 include: {
+                    subcategory: { select: { category: { select: { menuId: true } } } },
                     customerTagPrices: gstCtx?.viewerTagId
                         ? { where: { customerTagId: gstCtx.viewerTagId } }
                         : false,
@@ -574,6 +889,7 @@ let OrdersService = class OrdersService {
                 gstRate,
                 gstAmount,
                 notes: composedNotes,
+                menuId: item.subcategory?.category?.menuId ?? null,
             };
         }));
     }
@@ -627,15 +943,24 @@ let OrdersService = class OrdersService {
         }
     }
     validateStatusTransition(current, next, ctx = {}) {
-        const skipService = !this.needsOutForService(ctx.outletType, ctx.tableId);
-        const readyNext = skipService
-            ? [client_1.OrderStatus.SERVED, client_1.OrderStatus.CANCELLED]
-            : [client_1.OrderStatus.OUT_FOR_SERVICE, client_1.OrderStatus.CANCELLED];
+        const parcelPath = !!ctx.isParcel;
+        const skipService = !parcelPath && !this.needsOutForService(ctx.outletType, ctx.tableId);
+        let readyNext;
+        if (parcelPath) {
+            readyNext = [client_1.OrderStatus.READY_FOR_PICKUP, client_1.OrderStatus.SERVED, client_1.OrderStatus.CANCELLED];
+        }
+        else if (skipService) {
+            readyNext = [client_1.OrderStatus.SERVED, client_1.OrderStatus.CANCELLED];
+        }
+        else {
+            readyNext = [client_1.OrderStatus.OUT_FOR_SERVICE, client_1.OrderStatus.CANCELLED];
+        }
         const allowed = {
             CREATED: [client_1.OrderStatus.QUEUED, client_1.OrderStatus.CANCELLED],
             QUEUED: [client_1.OrderStatus.PREPARING, client_1.OrderStatus.CANCELLED],
             PREPARING: [client_1.OrderStatus.READY, client_1.OrderStatus.CANCELLED],
             READY: readyNext,
+            READY_FOR_PICKUP: [client_1.OrderStatus.SERVED, client_1.OrderStatus.CANCELLED],
             OUT_FOR_SERVICE: [client_1.OrderStatus.SERVED],
             SERVED: [client_1.OrderStatus.DISPUTED],
             CANCELLED: [],
@@ -792,6 +1117,9 @@ exports.OrdersService = OrdersService = __decorate([
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         orders_gateway_1.OrdersGateway,
         translations_service_1.TranslationsService,
-        lifecycle_dispatcher_service_1.LifecycleDispatcherService])
+        lifecycle_dispatcher_service_1.LifecycleDispatcherService,
+        pricing_service_1.PricingService,
+        rewards_service_1.RewardsService,
+        service_stations_service_1.ServiceStationsService])
 ], OrdersService);
 //# sourceMappingURL=orders.service.js.map

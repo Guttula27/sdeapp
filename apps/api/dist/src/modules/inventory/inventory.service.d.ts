@@ -100,11 +100,11 @@ export declare class InventoryService {
         createdAt: Date;
         updatedAt: Date;
         totalAmount: import("@prisma/client/runtime/library").Decimal;
+        paymentStatus: string;
         quantity: import("@prisma/client/runtime/library").Decimal;
         unitPrice: import("@prisma/client/runtime/library").Decimal;
         materialId: string;
         poNumber: string;
-        paymentStatus: string;
         vendorId: string;
     })[]>;
     createPurchaseOrder(data: {
@@ -143,11 +143,11 @@ export declare class InventoryService {
         createdAt: Date;
         updatedAt: Date;
         totalAmount: import("@prisma/client/runtime/library").Decimal;
+        paymentStatus: string;
         quantity: import("@prisma/client/runtime/library").Decimal;
         unitPrice: import("@prisma/client/runtime/library").Decimal;
         materialId: string;
         poNumber: string;
-        paymentStatus: string;
         vendorId: string;
     }>;
     receivePurchaseOrder(poId: string): Promise<{

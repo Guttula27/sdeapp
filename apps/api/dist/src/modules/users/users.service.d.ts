@@ -86,9 +86,13 @@ export declare class UsersService {
             mapsLocation: string | null;
             gstNumber: string | null;
             upiId: string | null;
-            logoUrl: string | null;
-            primaryImageUrl: string | null;
             businessType: import(".prisma/client").$Enums.BusinessType;
+            logoUrl: string | null;
+            thumbnailUrl: string | null;
+            primaryImageUrl: string | null;
+            publicCode: string | null;
+            isCluster: boolean;
+            multipleMenusEnabled: boolean;
             subscriptionId: string | null;
         } | null;
         outlet: {
@@ -100,7 +104,6 @@ export declare class UsersService {
             createdAt: Date;
             updatedAt: Date;
             address: string | null;
-            outletType: import(".prisma/client").$Enums.OutletType;
             addressLine1: string | null;
             addressLine2: string | null;
             city: string | null;
@@ -112,6 +115,9 @@ export declare class UsersService {
             upiId: string | null;
             logoUrl: string | null;
             primaryImageUrl: string | null;
+            publicCode: string | null;
+            multipleMenusEnabled: boolean;
+            outletType: import(".prisma/client").$Enums.OutletType;
             isActive: boolean;
             defaultPrepTime: number | null;
             parcelChargeEnabled: boolean;
@@ -122,7 +128,11 @@ export declare class UsersService {
             gstApplicable: boolean;
             gstPercent: import("@prisma/client/runtime/library").Decimal;
             priceIncludesGst: boolean;
+            razorpayLinkedAccountId: string | null;
             facilityId: string | null;
+            acceptRewardRedemption: boolean;
+            kitchenAutoPrint: boolean;
+            kitchenAllowManualPrint: boolean;
         } | null;
         name: string;
         phone: string;
@@ -164,6 +174,17 @@ export declare class UsersService {
                 id: string;
                 logoUrl: string | null;
             };
+            clusterOrder: {
+                id: string;
+                clusterOrderNumber: string;
+                paymentStatus: import(".prisma/client").$Enums.PaymentStatus;
+                clusterBusiness: {
+                    name: string;
+                    id: string;
+                    logoUrl: string | null;
+                    publicCode: string | null;
+                };
+            } | null;
             items: ({
                 item: {
                     name: string;
@@ -192,6 +213,9 @@ export declare class UsersService {
                 totalPrice: import("@prisma/client/runtime/library").Decimal;
                 gstAmount: import("@prisma/client/runtime/library").Decimal;
                 variantId: string | null;
+                menuId: string | null;
+                bundleId: string | null;
+                sequenceNumber: number | null;
             })[];
             payments: {
                 id: string;
@@ -222,6 +246,9 @@ export declare class UsersService {
             tableId: string | null;
             customerId: string | null;
             staffId: string | null;
+            clusterOrderId: string | null;
+            activeSequence: number;
+            sequenceLabels: import("@prisma/client/runtime/library").JsonValue | null;
         })[];
         total: number;
         page: number;
@@ -271,6 +298,105 @@ export declare class UsersService {
             totalAmount: import("@prisma/client/runtime/library").Decimal;
         }[];
     }>;
+    getCustomerPromotions(userId: string): Promise<{
+        outlets: {
+            outlet: {
+                id: string;
+                name: string;
+                logoUrl: string | null;
+                businessName: string;
+            };
+            coupons: {
+                name: string;
+                description: string | null;
+                id: string;
+                businessId: string;
+                outletId: string | null;
+                createdAt: Date;
+                updatedAt: Date;
+                code: string;
+                isActive: boolean;
+                discountType: string;
+                discountValue: import("@prisma/client/runtime/library").Decimal;
+                minBillAmount: import("@prisma/client/runtime/library").Decimal | null;
+                maxDiscountAmount: import("@prisma/client/runtime/library").Decimal | null;
+                validFrom: Date;
+                validUntil: Date;
+                maxUsesPerCustomer: number;
+                maxTotalUses: number | null;
+                usesCount: number;
+                targetType: string;
+            }[];
+            discounts: ({
+                category: {
+                    name: string;
+                    id: string;
+                } | null;
+                subcategory: {
+                    name: string;
+                    id: string;
+                } | null;
+                item: {
+                    name: string;
+                    id: string;
+                } | null;
+            } & {
+                name: string;
+                id: string;
+                businessId: string;
+                outletId: string | null;
+                createdAt: Date;
+                updatedAt: Date;
+                isActive: boolean;
+                subcategoryId: string | null;
+                itemId: string | null;
+                discountType: string;
+                discountValue: import("@prisma/client/runtime/library").Decimal;
+                minBillAmount: import("@prisma/client/runtime/library").Decimal | null;
+                maxDiscountAmount: import("@prisma/client/runtime/library").Decimal | null;
+                validFrom: Date | null;
+                validUntil: Date | null;
+                targetType: string;
+                categoryId: string | null;
+                daysOfWeek: string | null;
+                startMinute: number | null;
+                endMinute: number | null;
+                isManualOnly: boolean;
+            })[];
+            offers: ({
+                buyItem: {
+                    name: string;
+                    id: string;
+                } | null;
+                getItem: {
+                    name: string;
+                    id: string;
+                } | null;
+            } & {
+                name: string;
+                description: string | null;
+                id: string;
+                businessId: string;
+                outletId: string | null;
+                createdAt: Date;
+                updatedAt: Date;
+                isActive: boolean;
+                minBillAmount: import("@prisma/client/runtime/library").Decimal | null;
+                validFrom: Date | null;
+                validUntil: Date | null;
+                daysOfWeek: string | null;
+                startMinute: number | null;
+                endMinute: number | null;
+                triggerType: string;
+                buyItemId: string | null;
+                buyVariantId: string | null;
+                buyQuantity: number | null;
+                getItemId: string | null;
+                getVariantId: string | null;
+                getQuantity: number | null;
+            })[];
+        }[];
+    }>;
     addFavorite(userId: string, itemId: string): Promise<{
         id: string;
         createdAt: Date;
@@ -298,6 +424,7 @@ export declare class UsersService {
                     isActive: boolean;
                     imageUrl: string | null;
                     displayOrder: number;
+                    menuId: string | null;
                 };
             } & {
                 name: string;
@@ -325,9 +452,9 @@ export declare class UsersService {
             id: string;
             createdAt: Date;
             updatedAt: Date;
+            thumbnailUrl: string | null;
             shortDescription: string | null;
             longDescription: string | null;
-            thumbnailUrl: string | null;
             imageUrl: string | null;
             basePrice: import("@prisma/client/runtime/library").Decimal;
             gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -345,6 +472,8 @@ export declare class UsersService {
             displayOrder: number;
             subcategoryId: string;
             kitchenStationId: string | null;
+            isBundle: boolean;
+            maxBundleSelections: number | null;
         };
     } & {
         id: string;

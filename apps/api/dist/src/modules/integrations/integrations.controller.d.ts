@@ -19,10 +19,10 @@ export declare class IntegrationsController {
         createdAt: Date;
         updatedAt: Date;
         isActive: boolean;
+        isDefault: boolean;
         channel: import(".prisma/client").$Enums.IntegrationChannel;
         providerKey: string;
         providerName: string;
-        isDefault: boolean;
         config: import("@prisma/client/runtime/library").JsonValue;
     }[]>;
     upsert(dto: UpsertIntegrationDto): Promise<{
@@ -30,10 +30,10 @@ export declare class IntegrationsController {
         createdAt: Date;
         updatedAt: Date;
         isActive: boolean;
+        isDefault: boolean;
         channel: import(".prisma/client").$Enums.IntegrationChannel;
         providerKey: string;
         providerName: string;
-        isDefault: boolean;
         config: import("@prisma/client/runtime/library").JsonValue;
     }>;
     setDefault(id: string): Promise<{
@@ -41,10 +41,10 @@ export declare class IntegrationsController {
         createdAt: Date;
         updatedAt: Date;
         isActive: boolean;
+        isDefault: boolean;
         channel: import(".prisma/client").$Enums.IntegrationChannel;
         providerKey: string;
         providerName: string;
-        isDefault: boolean;
         config: import("@prisma/client/runtime/library").JsonValue;
     }>;
     remove(id: string): Promise<{
@@ -52,10 +52,10 @@ export declare class IntegrationsController {
         createdAt: Date;
         updatedAt: Date;
         isActive: boolean;
+        isDefault: boolean;
         channel: import(".prisma/client").$Enums.IntegrationChannel;
         providerKey: string;
         providerName: string;
-        isDefault: boolean;
         config: import("@prisma/client/runtime/library").JsonValue;
     }>;
 }

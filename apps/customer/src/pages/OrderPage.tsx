@@ -4,6 +4,8 @@ import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import { ShoppingCart, Plus, Minus, X, LogOut, Star, Clock, ChevronRight, User, Heart, Lock } from 'lucide-react';
 import api from '../services/api';
+import { cachedGet } from '../utils/cachedGet';
+import { useRefreshOnFocus } from '../hooks/useRefreshOnFocus';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 
 interface CartTopping {
@@ -18,7 +20,17 @@ interface CartItem {
   name: string;   variantName?: string;
   price: number;  quantity: number;
   toppings?: CartTopping[];
-  cartLineId: string; // unique per (item+variant+toppings) line
+  // Customer-choice bundle picks (ItemBundleChild ids) when the bundle has
+  // maxBundleSelections set. The server expands only these rows at order
+  // time. Stored on the cart line so we can replay the picker label and
+  // ship the same picks on each order POST.
+  bundleSelections?: string[];
+  bundleSelectionLabels?: string[];
+  // unique per (item+variant+toppings+bundleSelections) — bundles are
+  // just items where the server expands children at order time. Including
+  // selections in the key lets the same bundle appear multiple times with
+  // different picks (e.g. "Thali · idly+coffee" vs "Thali · dosa+tea").
+  cartLineId: string;
 }
 
 export default function OrderPage() {
@@ -29,6 +41,7 @@ export default function OrderPage() {
   const { user, isLoggedIn } = useCustomerAuth();
 
   const [menu, setMenu]           = useState<any[]>([]);
+  const [activeOffers, setActiveOffers] = useState<any[]>([]);
   const [openStatus, setOpenStatus] = useState<{ isOpen: boolean; reason: string | null } | null>(null);
   // Outlet meta drives whether we route to /pay (prepaid) or use the open-tab
   // postpaid flow inline. Loaded once on mount.
@@ -48,6 +61,16 @@ export default function OrderPage() {
   const [activeCategory, setActiveCategory] = useState('');
   const [activeSub, setActiveSub] = useState('');
   const [detailItem, setDetailItem] = useState<any>(null);
+
+  // Menu tabs (multi-menu feature). Populated only when the outlet's business
+  // has multipleMenusEnabled (otherwise the single Main Menu stays implicit and
+  // tabs are hidden). enabledMenus filters out menus the outlet has disabled.
+  const [enabledMenus, setEnabledMenus] = useState<Array<{ id: string; name: string }>>([]);
+  const [activeMenuId, setActiveMenuId] = useState<string>('');
+  // Stale-read indicator — true when the menu we're rendering came from
+  // the localStorage cache rather than a fresh network fetch.
+  const [menuFromCache, setMenuFromCache] = useState(false);
+  const [menuCachedAt, setMenuCachedAt] = useState<number | null>(null);
 
   // Optimistic favorite toggle on the menu list
   const toggleFavorite = async (item: any) => {
@@ -80,17 +103,47 @@ export default function OrderPage() {
     }
   };
 
+  // Cluster-aware redirect. When this outlet is currently a member of a
+  // cluster, every standalone QR for it must route into the cluster shell
+  // (outlets are cluster-exclusive while linked). We do this BEFORE the
+  // menu fetch so the user never sees a flash of the standalone menu.
   useEffect(() => {
+    let cancelled = false;
+    if (!outletId) return;
+    api.get(`/outlets/${outletId}/open-status`).then((r) => {
+      if (cancelled) return;
+      const cm = r.data?.data?.clusterMembership;
+      if (cm?.clusterPublicCode) {
+        const qs = new URLSearchParams({
+          outletId,
+          ...(tableId ? { tableId } : {}),
+        });
+        navigate(`/cluster/${cm.clusterPublicCode}?${qs.toString()}`, { replace: true });
+      }
+    }).catch(() => { /* silent — fall through to the main load below */ });
+    return () => { cancelled = true; };
+  }, [outletId, tableId]);
+
+  useEffect(() => {
+    // Menu fetch goes through cachedGet so a network blip can fall back
+    // to the last successful read. The other two fetches (open-status,
+    // menus list) are direct since they're cheap and degrade gracefully.
+    const menuKey = `outlet-menu:${outletId}:${tableId || ''}`;
     Promise.all([
-      api.get(`/outlets/${outletId}/menu`, { params: tableId ? { tableId } : {} }),
+      cachedGet<any[]>(menuKey, `/outlets/${outletId}/menu`, { params: tableId ? { tableId } : undefined }),
       api.get(`/outlets/${outletId}/open-status`).catch(() => null),
+      api.get(`/outlets/${outletId}/menus`, { params: tableId ? { tableId } : {} }).catch(() => null),
+      api.get(`/outlets/${outletId}/offers/active`).catch(() => null),
     ])
-      .then(([menuRes, statusRes]) => {
-        setMenu(menuRes.data.data);
-        if (menuRes.data.data.length) {
-          setActiveCategory(menuRes.data.data[0].id);
-          setActiveSub(menuRes.data.data[0].subcategories?.[0]?.id || '');
-        }
+      .then(([menuResult, statusRes, menusRes, offersRes]) => {
+        const menuData = menuResult.data;
+        setActiveOffers(offersRes?.data?.data || offersRes?.data || []);
+        // Bundles are now first-class Items (Item.isBundle=true) and appear
+        // naturally inside their own subcategory on the menu tree — no
+        // synthetic category injection needed.
+        setMenu(menuData);
+        setMenuFromCache(menuResult.fromCache);
+        setMenuCachedAt(menuResult.cachedAt);
         if (statusRes) {
           setOpenStatus(statusRes.data.data);
           // open-status now carries outletType so we don't need an authed
@@ -99,9 +152,69 @@ export default function OrderPage() {
             setOutletMeta({ outletType: statusRes.data.data.outletType });
           }
         }
+        // Build the menu-tab list. Filter to enabled menus that actually
+        // have visible categories in this outlet's menu payload so a stale
+        // menu with no items doesn't surface an empty tab.
+        const categoryMenuIds = new Set<string>(
+          (menuData || []).map((c: any) => c.menuId).filter(Boolean),
+        );
+        const menus: Array<{ id: string; name: string; isEnabled: boolean }> = (menusRes?.data?.data || []).map((m: any) => ({
+          id: m.id, name: m.name, isEnabled: m.outletMenu?.isEnabled !== false,
+        }));
+        const usable = menus.filter((m) => m.isEnabled && categoryMenuIds.has(m.id));
+        setEnabledMenus(usable);
+
+        // Seed the active menu + category. Prefer the first menu's first
+        // category so the UI lands in a coherent state.
+        const initialMenuId = usable[0]?.id || '';
+        setActiveMenuId(initialMenuId);
+        const firstCat = (menuData || []).find((c: any) => !initialMenuId || c.menuId === initialMenuId)
+                       || menuData?.[0];
+        if (firstCat) {
+          setActiveCategory(firstCat.id);
+          setActiveSub(firstCat.subcategories?.[0]?.id || '');
+        }
       })
       .finally(() => setLoading(false));
   }, [outletId]);
+
+  // When the active menu changes, snap to its first category so the user
+  // doesn't see an empty list (previous category may belong to a different menu).
+  useEffect(() => {
+    if (!activeMenuId) return;
+    const cats = menu.filter((c: any) => c.menuId === activeMenuId);
+    if (!cats.find((c: any) => c.id === activeCategory)) {
+      const first = cats[0];
+      if (first) {
+        setActiveCategory(first.id);
+        setActiveSub(first.subcategories?.[0]?.id || '');
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMenuId]);
+
+  // Refresh-on-focus — re-fetch the menu when the tab regains focus so
+  // admin updates (item availability, price changes, stock decrement)
+  // propagate to a long-open tab. Lightweight: only re-pulls the menu
+  // payload, not the heavier orchestration in the initial useEffect.
+  useRefreshOnFocus(async () => {
+    if (!outletId) return;
+    try {
+      const menuKey = `outlet-menu:${outletId}:${tableId || ''}`;
+      const result = await cachedGet<any[]>(menuKey, `/outlets/${outletId}/menu`, {
+        params: tableId ? { tableId } : undefined,
+      });
+      if (!result.fromCache) {
+        setMenu(result.data);
+        setMenuFromCache(false);
+        setMenuCachedAt(result.cachedAt);
+      } else if (!menuFromCache) {
+        // Network failed, cache fell back; reflect that in the banner.
+        setMenuFromCache(true);
+        setMenuCachedAt(result.cachedAt);
+      }
+    } catch { /* silent — banner remains in its current state */ }
+  });
 
   // Postpaid open-tab flow only applies when the customer scanned a table
   // QR on a Dine-in Postpaid outlet. Anything else (counter, parcel, dine-in
@@ -135,15 +248,27 @@ export default function OrderPage() {
   const [pickerSelections, setPickerSelections] = useState<Record<string, { optionId?: string; selected: boolean }>>({});
 
   const cartKey = (l: CartItem) => l.cartLineId;
-  const makeLineId = (itemId: string, variantId: string | undefined, toppings: CartTopping[]) =>
-    `${itemId}-${variantId || ''}-${toppings.map(t => `${t.toppingId}:${t.optionId || ''}`).sort().join('|')}`;
+  const makeLineId = (
+    itemId: string,
+    variantId: string | undefined,
+    toppings: CartTopping[],
+    bundleSelections?: string[],
+  ) =>
+    `${itemId}-${variantId || ''}` +
+    `-${toppings.map(t => `${t.toppingId}:${t.optionId || ''}`).sort().join('|')}` +
+    (bundleSelections?.length ? `-b:${[...bundleSelections].sort().join(',')}` : '');
 
-  const addToCart = (item: any, variant?: any, toppings: CartTopping[] = []) => {
+  const addToCart = (
+    item: any,
+    variant?: any,
+    toppings: CartTopping[] = [],
+    bundlePicks?: { selections: string[]; labels: string[] },
+  ) => {
     const basePrice = variant
       ? Number(variant.effectivePrice ?? variant.price)
       : Number(item.effectivePrice ?? item.basePrice);
     const toppingTotal = toppings.reduce((s, t) => s + t.priceAdd, 0);
-    const cartLineId = makeLineId(item.id, variant?.id, toppings);
+    const cartLineId = makeLineId(item.id, variant?.id, toppings, bundlePicks?.selections);
     setCart((prev) => {
       const hit = prev.find((c) => c.cartLineId === cartLineId);
       if (hit) return prev.map((c) => c.cartLineId === cartLineId ? { ...c, quantity: c.quantity + 1 } : c);
@@ -154,11 +279,20 @@ export default function OrderPage() {
         price: basePrice + toppingTotal,
         quantity: 1,
         toppings: toppings.length ? toppings : undefined,
+        bundleSelections: bundlePicks?.selections,
+        bundleSelectionLabels: bundlePicks?.labels,
       }];
     });
   };
 
   const tryAddToCart = (item: any, variant?: any) => {
+    // Customer-choice bundle: detail modal owns the picker (it already shows
+    // variants/qty), so route quick-add through there instead of building a
+    // parallel picker.
+    if (item.isBundle && item.maxBundleSelections && Number(item.maxBundleSelections) > 0) {
+      setDetailItem(item);
+      return;
+    }
     if (item.itemToppings?.length) {
       // Open picker; initialize each radio topping to its first option
       const init: Record<string, { optionId?: string; selected: boolean }> = {};
@@ -288,6 +422,7 @@ export default function OrderPage() {
         variantId: c.variantId,
         quantity: c.quantity,
         toppings: c.toppings?.map((t) => ({ toppingId: t.toppingId, optionId: t.optionId })) || undefined,
+        bundleSelections: c.bundleSelections,
       }));
       if (openOrder) {
         await api.post(`/outlets/${outletId}/orders/${openOrder.id}/items`, { items: itemsPayload });
@@ -337,6 +472,27 @@ export default function OrderPage() {
 
   return (
     <div className="min-h-dvh bg-slate-50 flex flex-col">
+      {/* Cached-menu indicator — only shown when the menu came from the
+          localStorage fallback (network unavailable or slow). Auto-
+          clears on the next successful refresh. */}
+      {menuFromCache && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-1.5 flex items-center gap-2 text-[11px] text-amber-800">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+          <span className="font-bold">Cached menu</span>
+          {menuCachedAt && (
+            <span className="opacity-70">
+              · last updated {Math.max(1, Math.round((Date.now() - menuCachedAt) / 60000))}m ago
+            </span>
+          )}
+          <button
+            onClick={() => window.location.reload()}
+            className="ml-auto text-amber-900 font-bold underline underline-offset-2"
+          >
+            Refresh
+          </button>
+        </div>
+      )}
+
       {/* ── Open tab banner (Dine-in Postpaid only) ─────────────── */}
       {isPostpaidTable && openOrder && (
         <div className="bg-emerald-50 border-b border-emerald-100 px-4 py-2.5 flex items-center gap-3 sticky top-0 z-30">
@@ -409,8 +565,39 @@ export default function OrderPage() {
           </div>
         </div>
 
-        {/* Category tabs */}
-        <div className="flex gap-2 px-4 pb-3 overflow-x-auto scrollbar-hide">
+        {/* Menu tabs — primary navigation layer. When the outlet runs more
+            than one menu we render a prominent pill bar so customers clearly
+            see they're switching between top-level menus (Breakfast vs
+            Desserts vs Drinks), with category tabs nested beneath. */}
+        {enabledMenus.length > 1 && (
+          <div className="bg-gradient-to-r from-slate-900 to-slate-800 px-4 py-2.5 border-b border-slate-700/50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Menu</p>
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+              {enabledMenus.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setActiveMenuId(m.id)}
+                  className={clsx(
+                    'px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap flex-shrink-0 transition-all',
+                    activeMenuId === m.id
+                      ? 'bg-gradient-to-r from-brand-500 to-orange-400 text-white shadow-lg ring-1 ring-brand-300/50'
+                      : 'bg-white/10 text-slate-200 hover:bg-white/20',
+                  )}
+                >
+                  {m.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Category tabs — nested beneath the active menu when multi-menu. */}
+        {enabledMenus.length > 1 && (
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-4 pt-2 -mb-1">
+            Categories
+          </p>
+        )}
+        <div className="flex gap-2 px-4 pb-3 pt-2 overflow-x-auto scrollbar-hide">
           <button
             onClick={() => setActiveCategory('__special__')}
             className={clsx(
@@ -422,7 +609,9 @@ export default function OrderPage() {
           >
             ⭐ Special
           </button>
-          {menu.map((cat) => (
+          {menu
+            .filter((cat) => !activeMenuId || cat.menuId === activeMenuId)
+            .map((cat) => (
             <button
               key={cat.id}
               onClick={() => setActiveCategory(cat.id)}
@@ -449,6 +638,19 @@ export default function OrderPage() {
         </div>
       )}
 
+      {/* ── Active offers banner ─────────────────────────────── */}
+      {activeOffers.length > 0 && (
+        <div className="bg-gradient-to-r from-orange-50 to-amber-50 border-y border-orange-200 px-4 py-2 flex items-center gap-3 overflow-x-auto">
+          {activeOffers.map((o: any) => (
+            <div key={o.id} className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold text-orange-800 bg-white/80 rounded-full px-2.5 py-1">
+              🎁 {o.triggerType === 'MIN_BILL'
+                ? `Spend ₹${o.minBillAmount} → get ${o.getItem?.name || 'free item'}`
+                : `Buy ${o.buyQuantity}× ${o.buyItem?.name || 'item'} → ${o.getQuantity}× ${o.getItem?.name || 'item'} free`}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* ── Menu content (3-pane) ────────────────────────────── */}
       <div className="flex-1 flex min-h-0 pb-24">
         {activeCategory === '__special__' ? (
@@ -471,11 +673,15 @@ export default function OrderPage() {
                   onOpen={() => navigate(`/order/item/${item.id}?outlet=${outletId}`, { state: { item, outletId } })}
                   onQuickAdd={(e) => {
                     e.stopPropagation();
-                    if (!item.variants?.length) {
+                    // Customer-choice bundles + variant items both need a
+                    // picker — route to the detail modal.
+                    const needsPicker = item.variants?.length
+                      || (item.isBundle && Number(item.maxBundleSelections) > 0);
+                    if (needsPicker) {
+                      setDetailItem(item);
+                    } else {
                       addToCart(item);
                       toast.success(`Added ${item.name}`);
-                    } else {
-                      setDetailItem(item);
                     }
                   }}
                   onToggleFavorite={(e) => { e.stopPropagation(); toggleFavorite(item); }}
@@ -554,11 +760,13 @@ export default function OrderPage() {
                 onOpen={() => navigate(`/order/item/${item.id}?outlet=${outletId}`, { state: { item, outletId } })}
                 onQuickAdd={(e) => {
                   e.stopPropagation();
-                  if (!item.variants?.length) {
+                  const needsPicker = item.variants?.length
+                    || (item.isBundle && Number(item.maxBundleSelections) > 0);
+                  if (needsPicker) {
+                    setDetailItem(item);
+                  } else {
                     addToCart(item);
                     toast.success(`Added ${item.name}`);
-                  } else {
-                    setDetailItem(item);
                   }
                 }}
                 onToggleFavorite={(e) => { e.stopPropagation(); toggleFavorite(item); }}
@@ -635,6 +843,9 @@ export default function OrderPage() {
                     {item.toppings?.length && (
                       <p className="text-[11px] text-indigo-600 mt-0.5">+ {item.toppings.map(t => t.label).join(', ')}</p>
                     )}
+                    {item.bundleSelectionLabels?.length && (
+                      <p className="text-[11px] text-orange-600 mt-0.5">Picks: {item.bundleSelectionLabels.join(', ')}</p>
+                    )}
                     <p className="text-sm font-bold text-brand-600 mt-0.5">₹{(item.price * item.quantity).toFixed(2)}</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -703,8 +914,8 @@ export default function OrderPage() {
         <ItemDetailModal
           item={detailItem}
           onClose={() => setDetailItem(null)}
-          onAdd={(variant, toppings, qty) => {
-            for (let i = 0; i < qty; i++) addToCart(detailItem, variant, toppings);
+          onAdd={(variant, toppings, qty, bundlePicks) => {
+            for (let i = 0; i < qty; i++) addToCart(detailItem, variant, toppings, bundlePicks);
             setDetailItem(null);
             setShowCart(true);
           }}
@@ -834,7 +1045,12 @@ function ItemDetailModal({
 }: {
   item: any;
   onClose: () => void;
-  onAdd: (variant: any | undefined, toppings: CartTopping[], qty: number) => void;
+  onAdd: (
+    variant: any | undefined,
+    toppings: CartTopping[],
+    qty: number,
+    bundlePicks?: { selections: string[]; labels: string[] },
+  ) => void;
 }) {
   const [variantId, setVariantId] = useState<string | ''>(item.variants?.[0]?.id || '');
   const [qty, setQty] = useState(1);
@@ -848,6 +1064,19 @@ function ItemDetailModal({
       }
     });
     return init;
+  });
+  // Customer-choice bundle picker state. Picked ItemBundleChild ids; the
+  // server expands only these at order time.
+  const maxBundlePicks = item.isBundle && item.maxBundleSelections
+    ? Number(item.maxBundleSelections) || 0
+    : 0;
+  const [bundleSel, setBundleSel] = useState<Set<string>>(new Set());
+  const toggleBundlePick = (id: string) => setBundleSel((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) { next.delete(id); return next; }
+    if (maxBundlePicks > 0 && next.size >= maxBundlePicks) return prev;
+    next.add(id);
+    return next;
   });
 
   const variant = item.variants?.find((v: any) => v.id === variantId);
@@ -994,6 +1223,57 @@ function ItemDetailModal({
             </div>
           )}
 
+          {/* Bundle picker — only when maxBundleSelections is set. */}
+          {maxBundlePicks > 0 && Array.isArray(item.bundleChildren) && item.bundleChildren.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                  Pick {maxBundlePicks} of {item.bundleChildren.length}
+                </p>
+                <span className={clsx(
+                  'text-[11px] font-bold px-2 py-0.5 rounded-full',
+                  bundleSel.size === maxBundlePicks
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'bg-amber-50 text-amber-700',
+                )}>
+                  {bundleSel.size}/{maxBundlePicks} selected
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {item.bundleChildren.map((child: any) => {
+                  const checked = bundleSel.has(child.id);
+                  const atCap = !checked && bundleSel.size >= maxBundlePicks;
+                  const childName = child.childItem?.name || 'Item';
+                  const variantName = child.variant?.name ? ` · ${child.variant.name}` : '';
+                  const qtyLabel = (Number(child.quantity) || 1) > 1 ? ` × ${child.quantity}` : '';
+                  return (
+                    <label
+                      key={child.id}
+                      className={clsx(
+                        'flex items-center justify-between px-3 py-2.5 rounded-xl border',
+                        checked ? 'border-brand-300 bg-brand-50/40' : 'border-slate-100 bg-white',
+                        atCap && 'opacity-50',
+                      )}
+                    >
+                      <span className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={atCap}
+                          onChange={() => toggleBundlePick(child.id)}
+                          className="w-4 h-4 accent-brand-500 rounded"
+                        />
+                        <span className="text-sm font-semibold text-slate-800">
+                          {childName}{variantName}{qtyLabel}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Quantity */}
           <div className="flex items-center justify-between bg-slate-50 rounded-xl p-3">
             <p className="text-sm font-semibold text-slate-700">Quantity</p>
@@ -1009,10 +1289,27 @@ function ItemDetailModal({
         <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-3">
           <span className="text-base font-bold text-slate-900">₹{lineTotal.toFixed(0)}</span>
           <button
-            onClick={() => onAdd(variant, toppings, qty)}
-            className="flex-1 bg-gradient-to-r from-orange-500 to-orange-600 text-white py-3 rounded-2xl text-sm font-bold shadow-md"
+            onClick={() => {
+              if (maxBundlePicks > 0) {
+                if (bundleSel.size !== maxBundlePicks) return;
+                const picks = Array.from(bundleSel);
+                const labels = picks.map((id) => {
+                  const child = item.bundleChildren?.find((c: any) => c.id === id);
+                  if (!child) return '';
+                  const v = child.variant?.name ? ` · ${child.variant.name}` : '';
+                  return `${child.childItem?.name || 'Item'}${v}`;
+                });
+                onAdd(variant, toppings, qty, { selections: picks, labels });
+              } else {
+                onAdd(variant, toppings, qty);
+              }
+            }}
+            disabled={maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks}
+            className="flex-1 bg-gradient-to-r from-orange-500 to-orange-600 text-white py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Add {qty} to cart · ₹{lineTotal.toFixed(0)}
+            {maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks
+              ? `Pick ${maxBundlePicks - bundleSel.size} more`
+              : `Add ${qty} to cart · ₹${lineTotal.toFixed(0)}`}
           </button>
         </div>
       </div>

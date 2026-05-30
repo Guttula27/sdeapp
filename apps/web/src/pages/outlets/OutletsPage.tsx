@@ -13,9 +13,11 @@ import { allowsSeating } from '../../utils/outletType';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
 
+// SELF_SERVICE_PARCEL is intentionally absent — parcel is now available at
+// every outlet by default, so the dedicated "Self Service + Parcel" option is
+// retired. Historical rows still resolve their label via outletType.ts.
 const OUTLET_TYPES = [
   { value: 'SELF_SERVICE', label: 'Self Service' },
-  { value: 'SELF_SERVICE_PARCEL', label: 'Self Service + Parcel' },
   { value: 'DINE_IN_PREPAID', label: 'Dine-in Prepaid' },
   { value: 'DINE_IN_POSTPAID', label: 'Dine-in Postpaid' },
   { value: 'HYBRID', label: 'Hybrid' },
@@ -175,9 +177,25 @@ export default function OutletsPage() {
                     <div className="icon-wrap bg-brand-50 text-brand-500 shrink-0"><Store size={18} /></div>
                     <div className="min-w-0">
                       <p className="font-bold text-slate-900 truncate">{outlet.name}</p>
-                      <span className="badge badge-blue mt-0.5">
-                        {OUTLET_TYPES.find(t => t.value === outlet.outletType)?.label || outlet.outletType}
-                      </span>
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                        <span className="badge badge-blue">
+                          {OUTLET_TYPES.find(t => t.value === outlet.outletType)?.label || outlet.outletType}
+                        </span>
+                        {outlet.publicCode && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard?.writeText(outlet.publicCode);
+                              toast.success(`Copied ${outlet.publicCode}`);
+                            }}
+                            className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded px-1.5 py-0.5"
+                            title="Outlet reference code — click to copy"
+                          >
+                            {outlet.publicCode}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <span className={clsx('badge shrink-0', outlet.isActive ? 'badge-green' : 'badge-slate')}>
@@ -267,6 +285,7 @@ export default function OutletsPage() {
                           className="w-4 h-4 accent-brand-500 rounded"
                         />
                         Charge a parcel fee on parcel orders
+                        <span className="text-[10px] text-slate-400">(parcel is always available; this toggles the fee line)</span>
                       </label>
                       <button type="submit" disabled={saving} className="btn-secondary col-span-2 text-xs py-1.5">
                         {saving ? 'Saving…' : 'Save operations'}
@@ -433,9 +452,9 @@ export default function OutletsPage() {
               <input name="capacity" type="number" min="1" max="20" required className="input" placeholder="4" defaultValue={4} />
             </Field>
           </div>
-          <Field label="Table type">
+          <Field label="Section">
             <select name="tableTypeId" className="input">
-              <option value="">— Standard (no type) —</option>
+              <option value="">— Standard (no section) —</option>
               {tableTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
             <p className="text-[11px] text-slate-400 mt-1">Special pricing tied to this type will apply when customers order from this table.</p>

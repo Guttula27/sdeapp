@@ -37,11 +37,11 @@ export declare class VendorsService {
             createdAt: Date;
             updatedAt: Date;
             totalAmount: import("@prisma/client/runtime/library").Decimal;
+            paymentStatus: string;
             quantity: import("@prisma/client/runtime/library").Decimal;
             unitPrice: import("@prisma/client/runtime/library").Decimal;
             materialId: string;
             poNumber: string;
-            paymentStatus: string;
             vendorId: string;
         })[];
     } & {

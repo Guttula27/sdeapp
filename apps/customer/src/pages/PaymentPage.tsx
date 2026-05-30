@@ -95,13 +95,58 @@ export default function PaymentPage() {
   const [tipCustom, setTipCustom] = useState<string>('');
   const isBillNow = !!state?.billOrderId;
 
+  // ─── Promotions ─────────────────────────────────────────────
+  // Coupon picker (one per bill) + reward redemption slider. Skipped on the
+  // Bill Now path since the open postpaid order's bill is already finalised
+  // server-side (separate flow would be needed to retro-apply promos there).
+  const [availableCoupons, setAvailableCoupons] = useState<any[]>([]);
+  const [rewardBalance, setRewardBalance] = useState<number>(0);
+  const [couponId, setCouponId] = useState<string>('');
+  const [rewardPoints, setRewardPoints] = useState<number>(0);
+  const [liveQuote, setLiveQuote] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (isBillNow || !state?.outletId || !user?.id) return;
+    api.get(`/outlets/${state.outletId}/coupons/available`, { params: { userId: user.id } })
+      .then(({ data }) => setAvailableCoupons(data.data || data || []))
+      .catch(() => {});
+    api.get(`/rewards/me/${user.id}`)
+      .then(({ data }) => setRewardBalance((data.data || data)?.balance || 0))
+      .catch(() => {});
+  }, [isBillNow, state?.outletId, user?.id]);
+
+  // Re-quote whenever the customer changes the coupon or points. Debounced
+  // implicitly by user interaction speed — re-firing every keystroke is OK
+  // for a single small endpoint hit.
+  useEffect(() => {
+    if (isBillNow || !state?.outletId || !state?.cart?.length || !user?.id) return;
+    const payload = {
+      lines: (state.cart || []).map((c: any) => ({
+        itemId: c.itemId,
+        variantId: c.variantId,
+        quantity: c.quantity,
+      })),
+      isParcel: !!state.isParcel,
+      customerId: user.id,
+      couponId: couponId || undefined,
+      rewardPoints: rewardPoints || undefined,
+    };
+    let cancelled = false;
+    api.post(`/outlets/${state.outletId}/cart/quote`, payload)
+      .then(({ data }) => { if (!cancelled) setLiveQuote(data.data || data); })
+      .catch(() => { /* keep stale quote; surface in UI separately if needed */ });
+    return () => { cancelled = true; };
+  }, [isBillNow, state?.outletId, JSON.stringify(state?.cart), state?.isParcel, user?.id, couponId, rewardPoints]);
+
   if (!state || (!isBillNow && !state.cart?.length)) {
     return <p className="p-6 text-sm text-slate-500">Nothing to pay for.</p>;
   }
 
   const upiId = outlet?.upiId;
   const outletName = outlet?.name || state.outletName || 'Outlet';
-  const subTotal = state.total;
+  // Promotions can lower the total — prefer the server-quoted figure when
+  // it's available, fall back to the cart's pre-promo total.
+  const subTotal = liveQuote?.totalAmount ?? state.total;
   const tipAmount = (() => {
     const custom = Number(tipCustom);
     if (Number.isFinite(custom) && custom > 0) return custom;
@@ -166,11 +211,14 @@ export default function PaymentPage() {
         isParcel: state.isParcel,
         notes: extra.notes,
         paymentMode: extra.paymentMode,
+        couponId: couponId || undefined,
+        rewardPoints: rewardPoints || undefined,
         items: (state.cart || []).map((c: any) => ({
           itemId: c.itemId,
           variantId: c.variantId,
           quantity: c.quantity,
           toppings: c.toppings?.map((t: any) => ({ toppingId: t.toppingId, optionId: t.optionId })) || undefined,
+          bundleSelections: c.bundleSelections,
         })),
       });
       try { sessionStorage.removeItem(`cart-${state.outletId}`); } catch {}
@@ -206,6 +254,8 @@ export default function PaymentPage() {
         const { data } = await api.post(`/outlets/${state.outletId}/orders`, {
           tableId: state.tableId || undefined,
           isParcel: state.isParcel,
+          couponId: couponId || undefined,
+          rewardPoints: rewardPoints || undefined,
           items: (state.cart || []).map((c: any) => ({
             itemId: c.itemId,
             variantId: c.variantId,
@@ -357,6 +407,78 @@ export default function PaymentPage() {
         <div className="flex-1 px-4 py-4 space-y-4">
           <PayeeCard amount={baseTotal} />
           {isBillNow && <TipPicker />}
+
+          {/* Promotions — coupon + reward redemption. Hidden on Bill Now. */}
+          {!isBillNow && (availableCoupons.length > 0 || rewardBalance > 0 || liveQuote) && (
+            <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Apply promotions</p>
+
+              {availableCoupons.length > 0 && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Coupon</label>
+                  <select
+                    value={couponId}
+                    onChange={(e) => setCouponId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white"
+                  >
+                    <option value="">No coupon</option>
+                    {availableCoupons.map((c: any) => (
+                      <option key={c.id} value={c.id}>
+                        {c.code} — {c.discountType === 'PERCENT' ? `${c.discountValue}% off` : `₹${c.discountValue} off`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {rewardBalance > 0 && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Redeem points (balance: {rewardBalance})
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={rewardBalance}
+                    value={rewardPoints || ''}
+                    placeholder="0"
+                    onChange={(e) => setRewardPoints(Math.max(0, Math.min(rewardBalance, Number(e.target.value) || 0)))}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
+                  />
+                </div>
+              )}
+
+              {liveQuote && (
+                <div className="border-t border-slate-100 pt-2.5 space-y-1 text-xs">
+                  {liveQuote.totalAutoDiscount > 0 && (
+                    <div className="flex justify-between text-emerald-700">
+                      <span>Auto discounts</span><span>− ₹{liveQuote.totalAutoDiscount.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {liveQuote.coupon && (
+                    <div className="flex justify-between text-emerald-700">
+                      <span>Coupon {liveQuote.coupon.code}</span><span>− ₹{liveQuote.coupon.amount.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {liveQuote.reward && (
+                    <div className="flex justify-between text-emerald-700">
+                      <span>Points redeemed ({liveQuote.reward.points})</span>
+                      <span>− ₹{liveQuote.reward.amount.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {(liveQuote.offerFreebies || []).length > 0 && (
+                    <div className="text-orange-700">
+                      <span className="font-semibold">🎁 Complimentary: </span>
+                      {liveQuote.offerFreebies.map((f: any) => `${f.quantity}× ${f.getItemName}`).join(', ')}
+                    </div>
+                  )}
+                  <div className="flex justify-between font-black text-slate-900 text-sm pt-1 border-t border-slate-100">
+                    <span>You pay</span><span>₹{liveQuote.totalAmount.toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* UPI — uses the user's preferred app from their profile */}
           <div className="space-y-1">

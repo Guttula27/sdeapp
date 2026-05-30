@@ -26,6 +26,10 @@ export declare class CreateOutletDto {
     gstApplicable?: boolean;
     gstPercent?: number;
     priceIncludesGst?: boolean;
+    multipleMenusEnabled?: boolean;
+    acceptRewardRedemption?: boolean;
+    kitchenAutoPrint?: boolean;
+    kitchenAllowManualPrint?: boolean;
     adminPhone?: string;
     adminName?: string;
 }
@@ -43,66 +47,7 @@ export declare class OutletsService {
     private translations;
     constructor(prisma: PrismaService, translations: TranslationsService);
     private translatableOutletFields;
-    create(data: CreateOutletDto): Promise<{
-        admin: {
-            name: string;
-            phone: string;
-            id: string;
-        };
-        business: {
-            name: string;
-            description: string | null;
-            id: string;
-            status: import(".prisma/client").$Enums.UserStatus;
-            createdAt: Date;
-            updatedAt: Date;
-            address: string | null;
-            addressLine1: string | null;
-            addressLine2: string | null;
-            city: string | null;
-            state: string | null;
-            pincode: string | null;
-            country: string | null;
-            mapsLocation: string | null;
-            gstNumber: string | null;
-            upiId: string | null;
-            logoUrl: string | null;
-            primaryImageUrl: string | null;
-            businessType: import(".prisma/client").$Enums.BusinessType;
-            subscriptionId: string | null;
-        };
-        name: string;
-        description: string | null;
-        phone: string | null;
-        id: string;
-        businessId: string;
-        createdAt: Date;
-        updatedAt: Date;
-        address: string | null;
-        outletType: import(".prisma/client").$Enums.OutletType;
-        addressLine1: string | null;
-        addressLine2: string | null;
-        city: string | null;
-        state: string | null;
-        pincode: string | null;
-        country: string | null;
-        mapsLocation: string | null;
-        gstNumber: string | null;
-        upiId: string | null;
-        logoUrl: string | null;
-        primaryImageUrl: string | null;
-        isActive: boolean;
-        defaultPrepTime: number | null;
-        parcelChargeEnabled: boolean;
-        defaultParcelCharge: import("@prisma/client/runtime/library").Decimal;
-        nextOrderSequence: number;
-        tokenStartNumber: number;
-        nextTokenNumber: number;
-        gstApplicable: boolean;
-        gstPercent: import("@prisma/client/runtime/library").Decimal;
-        priceIncludesGst: boolean;
-        facilityId: string | null;
-    }>;
+    create(data: CreateOutletDto): Promise<any>;
     findByBusiness(businessId: string, lang?: string | null): Promise<({
         _count: {
             orders: number;
@@ -117,7 +62,6 @@ export declare class OutletsService {
         createdAt: Date;
         updatedAt: Date;
         address: string | null;
-        outletType: import(".prisma/client").$Enums.OutletType;
         addressLine1: string | null;
         addressLine2: string | null;
         city: string | null;
@@ -129,6 +73,9 @@ export declare class OutletsService {
         upiId: string | null;
         logoUrl: string | null;
         primaryImageUrl: string | null;
+        publicCode: string | null;
+        multipleMenusEnabled: boolean;
+        outletType: import(".prisma/client").$Enums.OutletType;
         isActive: boolean;
         defaultPrepTime: number | null;
         parcelChargeEnabled: boolean;
@@ -139,13 +86,24 @@ export declare class OutletsService {
         gstApplicable: boolean;
         gstPercent: import("@prisma/client/runtime/library").Decimal;
         priceIncludesGst: boolean;
+        razorpayLinkedAccountId: string | null;
         facilityId: string | null;
+        acceptRewardRedemption: boolean;
+        kitchenAutoPrint: boolean;
+        kitchenAllowManualPrint: boolean;
     })[]>;
     findOne(id: string, lang?: string | null): Promise<{
         _count: {
             orders: number;
             tables: number;
         };
+        images: {
+            id: string;
+            outletId: string;
+            createdAt: Date;
+            displayOrder: number;
+            url: string;
+        }[];
         sections: ({
             tables: {
                 number: string;
@@ -166,13 +124,6 @@ export declare class OutletsService {
             updatedAt: Date;
             isActive: boolean;
         })[];
-        images: {
-            id: string;
-            outletId: string;
-            createdAt: Date;
-            displayOrder: number;
-            url: string;
-        }[];
         hours: {
             id: string;
             outletId: string;
@@ -191,7 +142,6 @@ export declare class OutletsService {
         createdAt: Date;
         updatedAt: Date;
         address: string | null;
-        outletType: import(".prisma/client").$Enums.OutletType;
         addressLine1: string | null;
         addressLine2: string | null;
         city: string | null;
@@ -203,6 +153,9 @@ export declare class OutletsService {
         upiId: string | null;
         logoUrl: string | null;
         primaryImageUrl: string | null;
+        publicCode: string | null;
+        multipleMenusEnabled: boolean;
+        outletType: import(".prisma/client").$Enums.OutletType;
         isActive: boolean;
         defaultPrepTime: number | null;
         parcelChargeEnabled: boolean;
@@ -213,7 +166,11 @@ export declare class OutletsService {
         gstApplicable: boolean;
         gstPercent: import("@prisma/client/runtime/library").Decimal;
         priceIncludesGst: boolean;
+        razorpayLinkedAccountId: string | null;
         facilityId: string | null;
+        acceptRewardRedemption: boolean;
+        kitchenAutoPrint: boolean;
+        kitchenAllowManualPrint: boolean;
     }>;
     update(id: string, data: Partial<CreateOutletDto>): Promise<{
         name: string;
@@ -224,7 +181,6 @@ export declare class OutletsService {
         createdAt: Date;
         updatedAt: Date;
         address: string | null;
-        outletType: import(".prisma/client").$Enums.OutletType;
         addressLine1: string | null;
         addressLine2: string | null;
         city: string | null;
@@ -236,6 +192,9 @@ export declare class OutletsService {
         upiId: string | null;
         logoUrl: string | null;
         primaryImageUrl: string | null;
+        publicCode: string | null;
+        multipleMenusEnabled: boolean;
+        outletType: import(".prisma/client").$Enums.OutletType;
         isActive: boolean;
         defaultPrepTime: number | null;
         parcelChargeEnabled: boolean;
@@ -246,7 +205,11 @@ export declare class OutletsService {
         gstApplicable: boolean;
         gstPercent: import("@prisma/client/runtime/library").Decimal;
         priceIncludesGst: boolean;
+        razorpayLinkedAccountId: string | null;
         facilityId: string | null;
+        acceptRewardRedemption: boolean;
+        kitchenAutoPrint: boolean;
+        kitchenAllowManualPrint: boolean;
     }>;
     private assertOutletAllowsSeating;
     findAdmin(outletId: string): Promise<{
@@ -285,11 +248,21 @@ export declare class OutletsService {
         isActive: boolean;
         reason: string;
         outletType: import(".prisma/client").$Enums.OutletType;
+        clusterMembership: {
+            clusterBusinessId: string;
+            clusterPublicCode: string | null;
+            clusterName: string;
+        } | null;
     } | {
         isOpen: boolean;
         isActive: boolean;
         reason: null;
         outletType: import(".prisma/client").$Enums.OutletType;
+        clusterMembership: {
+            clusterBusinessId: string;
+            clusterPublicCode: string | null;
+            clusterName: string;
+        } | null;
     }>;
     getTokenCounter(outletId: string): Promise<{
         nextOrderSequence: number;

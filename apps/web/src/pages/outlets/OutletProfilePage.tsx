@@ -3,12 +3,13 @@ import { useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
 import {
   Building2, Phone, Clock, ImagePlus, X as XIcon, Lock, Eye, EyeOff, Save,
-  Plus, Trash2, Store, QrCode, Download, Hash, RotateCcw,
+  Plus, Trash2, Store, QrCode, Download, Hash, RotateCcw, Printer as PrinterIcon, Bluetooth,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import { downloadQrCard } from '../../utils/qrCard';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
+import { useUserRole } from '../../hooks/useUserRole';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -106,6 +107,10 @@ export default function OutletProfilePage() {
     phone: '',
     gstNumber: '', upiId: '',
   });
+  const [kitchenPrint, setKitchenPrint] = useState({ auto: false, allowManual: false });
+  const [printers, setPrinters] = useState<Array<{ id: string; name: string; address: string | null; model: string | null; connection: string; stations?: Array<{ id: string; name: string }> }>>([]);
+  const [printerForm, setPrinterForm] = useState({ name: '', address: '', model: '' });
+  const [savingPrinter, setSavingPrinter] = useState(false);
   const [gst, setGst] = useState({
     applicable: false,
     percent: '5',
@@ -180,6 +185,14 @@ export default function OutletProfilePage() {
         percent: String(o.gstPercent ?? 5),
         includesGst: !!o.priceIncludesGst,
       });
+      setKitchenPrint({
+        auto: !!o.kitchenAutoPrint,
+        allowManual: !!o.kitchenAllowManualPrint,
+      });
+      try {
+        const pRes = await api.get(`/outlets/${outletId}/printers`);
+        setPrinters(pRes.data.data || []);
+      } catch { setPrinters([]); }
       setPrimary(o.primaryImageUrl || null);
       setLogo(o.logoUrl || null);
       setGallery((o.images || []).map((g: any) => ({ id: g.id, url: g.url })));
@@ -381,6 +394,8 @@ export default function OutletProfilePage() {
         upiId: form.upiId.trim() || undefined,
         primaryImageUrl: primary,
         logoUrl: logo,
+        kitchenAutoPrint: kitchenPrint.auto,
+        kitchenAllowManualPrint: kitchenPrint.allowManual,
       });
 
       // Gallery sync
@@ -409,6 +424,63 @@ export default function OutletProfilePage() {
       toast.error(e.response?.data?.message || 'Failed to save');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ── Printers ─────────────────────────────────────────────
+  const addPrinter = async () => {
+    if (!outletId || !printerForm.name.trim()) return;
+    setSavingPrinter(true);
+    try {
+      await api.post(`/outlets/${outletId}/printers`, {
+        name: printerForm.name.trim(),
+        address: printerForm.address.trim() || undefined,
+        model: printerForm.model.trim() || undefined,
+      });
+      setPrinterForm({ name: '', address: '', model: '' });
+      const pRes = await api.get(`/outlets/${outletId}/printers`);
+      setPrinters(pRes.data.data || []);
+      toast.success('Printer added');
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to add printer');
+    } finally {
+      setSavingPrinter(false);
+    }
+  };
+
+  const removePrinter = async (id: string) => {
+    if (!outletId) return;
+    try {
+      await api.delete(`/outlets/${outletId}/printers/${id}`);
+      setPrinters((ps) => ps.filter((p) => p.id !== id));
+      toast.success('Printer removed');
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed');
+    }
+  };
+
+  // Pair via Web Bluetooth. Browsers without support (Safari iOS, Firefox)
+  // get a graceful fallback message — the admin can still enter the address
+  // by hand for native bridges.
+  const pairBluetoothPrinter = async () => {
+    const nav: any = navigator;
+    if (!nav.bluetooth) {
+      toast.error('Web Bluetooth not supported in this browser. Enter address manually.');
+      return;
+    }
+    try {
+      const device = await nav.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb'], // common ESC/POS printer service
+      });
+      setPrinterForm((f) => ({
+        ...f,
+        name: f.name || device.name || 'Bluetooth printer',
+        address: device.id,
+      }));
+      toast.success(`Paired ${device.name || 'device'}`);
+    } catch (e: any) {
+      if (e?.name !== 'NotFoundError') toast.error('Pairing cancelled');
     }
   };
 
@@ -446,7 +518,9 @@ export default function OutletProfilePage() {
     });
   };
 
-  const isMultiOutlet = outlets.length > 1;
+  // Outlet-tier admins are pinned to their own outlet — hide the cross-outlet switcher.
+  const { tier } = useUserRole();
+  const isMultiOutlet = tier !== 'outlet' && outlets.length > 1;
 
   if (loading) return <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="card h-24 animate-pulse" />)}</div>;
   if (!outletId) return <p className="text-sm text-slate-500">No outlet selected.</p>;
@@ -638,6 +712,99 @@ export default function OutletProfilePage() {
           <button onClick={resetTokens} disabled={savingToken} className="btn-secondary text-xs">
             <RotateCcw size={13} /> Reset token counter
           </button>
+        </div>
+      </div>
+
+      {/* Kitchen printing */}
+      <div className="card p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <PrinterIcon size={15} className="text-slate-400" />
+          <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Kitchen Printing</p>
+        </div>
+        <p className="text-[11px] text-slate-400">
+          When enabled, each station prints its slice of every order to the bluetooth printer assigned to it. Receipt shows token, table/service desk and items with variant + topping details — handed by station staff to the service team.
+        </p>
+
+        <label className="flex items-start justify-between gap-3 cursor-pointer p-3 rounded-xl border border-slate-200 hover:bg-slate-50">
+          <div>
+            <p className="text-sm font-bold text-slate-700">Auto-print kitchen receipts</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Every confirmed order auto-prints at the concerned station(s).</p>
+          </div>
+          <input type="checkbox" checked={kitchenPrint.auto}
+            onChange={(e) => setKitchenPrint(p => ({ ...p, auto: e.target.checked }))}
+            className="w-4 h-4 mt-1 accent-orange-500 rounded" />
+        </label>
+
+        <label className="flex items-start justify-between gap-3 cursor-pointer p-3 rounded-xl border border-slate-200 hover:bg-slate-50">
+          <div>
+            <p className="text-sm font-bold text-slate-700">Allow station staff to print on demand</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Adds a Print button on each ticket. Useful when auto-print is off, or as a reprint.</p>
+          </div>
+          <input type="checkbox" checked={kitchenPrint.allowManual}
+            onChange={(e) => setKitchenPrint(p => ({ ...p, allowManual: e.target.checked }))}
+            className="w-4 h-4 mt-1 accent-orange-500 rounded" />
+        </label>
+
+        <div className="border-t border-slate-100 pt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Printers</p>
+            <span className="text-[10px] text-slate-400">{printers.length} configured</span>
+          </div>
+
+          {printers.length === 0 ? (
+            <p className="text-xs text-slate-400 italic">No printers added yet. Add one below and assign it to a station.</p>
+          ) : (
+            <div className="space-y-2">
+              {printers.map((p) => (
+                <div key={p.id} className="flex items-start justify-between gap-3 p-3 rounded-xl border border-slate-200 bg-white">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-slate-800 truncate">{p.name}</p>
+                    <p className="text-[11px] text-slate-400 truncate font-mono">{p.address || 'No address — connect manually from kitchen device'}</p>
+                    {p.model && <p className="text-[11px] text-slate-400">{p.model}</p>}
+                    {p.stations && p.stations.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {p.stations.map((s) => (
+                          <span key={s.id} className="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-100">{s.name}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={() => removePrinter(p.id)} className="btn-ghost p-1.5 text-red-400 hover:bg-red-50 shrink-0">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <input
+              value={printerForm.name}
+              onChange={(e) => setPrinterForm(f => ({ ...f, name: e.target.value }))}
+              placeholder="Printer name (e.g. Kitchen 1)"
+              className="input text-xs"
+            />
+            <input
+              value={printerForm.address}
+              onChange={(e) => setPrinterForm(f => ({ ...f, address: e.target.value }))}
+              placeholder="Device id / MAC"
+              className="input text-xs font-mono"
+            />
+            <input
+              value={printerForm.model}
+              onChange={(e) => setPrinterForm(f => ({ ...f, model: e.target.value }))}
+              placeholder="Model (optional)"
+              className="input text-xs"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={pairBluetoothPrinter} className="btn-secondary text-xs">
+              <Bluetooth size={13} /> Pair via Bluetooth
+            </button>
+            <button onClick={addPrinter} disabled={savingPrinter || !printerForm.name.trim()} className="btn-primary text-xs">
+              <Plus size={13} /> Add printer
+            </button>
+          </div>
         </div>
       </div>
 

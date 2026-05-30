@@ -61,6 +61,11 @@ export class UsersController {
     );
   }
 
+  @Get('me/promotions')
+  getMyPromotions(@CurrentUser('id') userId: string) {
+    return this.service.getCustomerPromotions(userId);
+  }
+
   @Get('me/favorites')
   listFavorites(@CurrentUser('id') userId: string, @PreferredLanguage() lang: string | null) {
     return this.service.listFavorites(userId, lang);

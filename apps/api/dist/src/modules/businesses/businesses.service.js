@@ -12,11 +12,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.BusinessesService = exports.CreateBusinessDto = void 0;
 const common_1 = require("@nestjs/common");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const class_validator_1 = require("class-validator");
 const prisma_service_1 = require("../../config/prisma/prisma.service");
 const client_1 = require("@prisma/client");
 const translations_service_1 = require("../translations/translations.service");
 const DEFAULT_ADMIN_PASSWORD = 'abc@123';
+function generateBusinessCode() {
+    return 'BIZ-' + crypto.randomBytes(4).toString('hex').toUpperCase();
+}
 class CreateBusinessDto {
 }
 exports.CreateBusinessDto = CreateBusinessDto;
@@ -92,6 +96,11 @@ __decorate([
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
+], CreateBusinessDto.prototype, "thumbnailUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
 ], CreateBusinessDto.prototype, "primaryImageUrl", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
@@ -103,6 +112,15 @@ __decorate([
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
 ], CreateBusinessDto.prototype, "adminName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Boolean)
+], CreateBusinessDto.prototype, "multipleMenusEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Boolean)
+], CreateBusinessDto.prototype, "isCluster", void 0);
 let BusinessesService = class BusinessesService {
     constructor(prisma, translations) {
         this.prisma = prisma;
@@ -118,14 +136,33 @@ let BusinessesService = class BusinessesService {
         };
     }
     async create(data) {
-        const { adminPhone, adminName, ...biz } = data;
+        const { adminPhone, adminName, isCluster, ...biz } = data;
         if (!adminPhone)
             throw new common_1.BadRequestException('Business admin phone is required');
         const existing = await this.prisma.user.findUnique({ where: { phone: adminPhone } });
         if (existing)
             throw new common_1.BadRequestException(`Phone ${adminPhone} is already registered`);
-        const business = await this.prisma.business.create({ data: biz });
+        let business = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+                business = await this.prisma.business.create({
+                    data: { ...biz, isCluster: !!isCluster, publicCode: generateBusinessCode() },
+                });
+                break;
+            }
+            catch (e) {
+                if (e?.code !== 'P2002' || !`${e?.message ?? ''}`.includes('publicCode'))
+                    throw e;
+            }
+        }
+        if (!business)
+            throw new common_1.BadRequestException('Could not allocate a unique business code, please retry');
         await this.translations.upsertAll('Business', business.id, this.translatableBusinessFields(business));
+        if (!isCluster) {
+            await this.prisma.menu.create({
+                data: { businessId: business.id, name: 'Main Menu', isDefault: true },
+            });
+        }
         const template = await this.prisma.role.findFirst({
             where: { name: 'Business Owner', isTemplate: true, businessId: null },
             select: { responsibilities: { select: { responsibilityId: true } } },

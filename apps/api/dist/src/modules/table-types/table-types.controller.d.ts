@@ -2,7 +2,9 @@ import { TableTypesService } from './table-types.service';
 export declare class TableTypesController {
     private service;
     constructor(service: TableTypesService);
-    list(outletId: string): import(".prisma/client").Prisma.PrismaPromise<({
+    list(outletId: string): Promise<{
+        disabledMenuIds: string[];
+        menus: undefined;
         _count: {
             tables: number;
             prices: number;
@@ -30,14 +32,13 @@ export declare class TableTypesController {
             capacity: number;
             tableTypeId: string | null;
         })[];
-    } & {
         name: string;
         id: string;
         outletId: string;
         createdAt: Date;
         updatedAt: Date;
         color: string;
-    })[]>;
+    }[]>;
     create(outletId: string, body: {
         name: string;
         color?: string;
@@ -120,5 +121,22 @@ export declare class TableTypesController {
         sectionId: string | null;
         capacity: number;
         tableTypeId: string | null;
+    }>;
+    listMenus(tableTypeId: string): Promise<{
+        id: string;
+        name: string;
+        isDefault: boolean;
+        isLocked: boolean;
+        isEnabled: boolean;
+    }[]>;
+    toggleMenu(tableTypeId: string, menuId: string, body: {
+        isEnabled: boolean;
+    }): Promise<{
+        id: string;
+        createdAt: Date;
+        updatedAt: Date;
+        isEnabled: boolean;
+        menuId: string;
+        tableTypeId: string;
     }>;
 }

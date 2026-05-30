@@ -6,6 +6,7 @@ import { RootState } from '../../store';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
+import { useUserRole } from '../../hooks/useUserRole';
 
 type Option = { name: string; priceAdd: number };
 type Topping = {
@@ -119,7 +120,9 @@ export default function ToppingsPage() {
     }
   };
 
-  const isMultiOutlet = outlets.length > 1;
+  // Outlet-tier admins are pinned to their own outlet — hide the cross-outlet switcher.
+  const { tier } = useUserRole();
+  const isMultiOutlet = tier !== 'outlet' && outlets.length > 1;
 
   return (
     <div className="space-y-5">

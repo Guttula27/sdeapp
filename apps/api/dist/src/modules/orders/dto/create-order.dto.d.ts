@@ -8,6 +8,7 @@ declare class OrderItemDto {
     quantity: number;
     notes?: string;
     toppings?: OrderItemToppingDto[];
+    bundleSelections?: string[];
 }
 declare class OrderPaymentDto {
     mode: string;
@@ -23,6 +24,8 @@ export declare class CreateOrderDto {
     isPostpaid?: boolean;
     notes?: string;
     couponCode?: string;
+    couponId?: string;
+    rewardPoints?: number;
     customerPhone?: string;
     paymentMode?: string;
     payment?: OrderPaymentDto;

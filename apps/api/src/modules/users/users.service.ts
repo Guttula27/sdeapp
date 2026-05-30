@@ -120,6 +120,17 @@ export class UsersService {
           },
           outlet: { select: { id: true, name: true, logoUrl: true } },
           payments: { select: { id: true, mode: true, status: true, amount: true } },
+          // Cluster context — populated only for child orders of a cluster
+          // checkout. HomePage uses this to group sibling orders under a
+          // single "Food court order" header.
+          clusterOrder: {
+            select: {
+              id: true,
+              clusterOrderNumber: true,
+              paymentStatus: true,
+              clusterBusiness: { select: { id: true, name: true, logoUrl: true, publicCode: true } },
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip: (p - 1) * l,
@@ -189,6 +200,131 @@ export class UsersService {
       hourly,
       orders,
     };
+  }
+
+  // ─── Promotions visible to this customer ──────────────────
+  // Aggregates the customer's "known" outlets — anywhere they've ordered or
+  // been explicitly linked via OutletCustomer — and pulls each outlet's
+  // active coupons (ALL or this customer in SPECIFIC), auto-applying
+  // discounts, and offers. Grouped by outlet so the customer UI can render
+  // a per-outlet card list without further client-side joining.
+  async getCustomerPromotions(userId: string) {
+    const orderOutlets = await this.prisma.order.findMany({
+      where: { customerId: userId },
+      distinct: ['outletId'],
+      select: { outletId: true },
+    });
+    const linkedOutlets = await this.prisma.outletCustomer.findMany({
+      where: { userId },
+      select: { outletId: true },
+    });
+    const outletIds = Array.from(new Set([
+      ...orderOutlets.map((o) => o.outletId),
+      ...linkedOutlets.map((o) => o.outletId),
+    ]));
+    if (outletIds.length === 0) return { outlets: [] };
+
+    const outlets = await this.prisma.outlet.findMany({
+      where: { id: { in: outletIds } },
+      select: {
+        id: true, name: true, logoUrl: true, primaryImageUrl: true,
+        businessId: true,
+        business: { select: { id: true, name: true, logoUrl: true } },
+      },
+    });
+
+    const now = new Date();
+    const isoDow = ((now.getDay() + 6) % 7) + 1;
+    const minute = now.getHours() * 60 + now.getMinutes();
+
+    const inScheduleNow = (row: any) => {
+      if (row.validFrom && new Date(row.validFrom) > now) return false;
+      if (row.validUntil && new Date(row.validUntil) < now) return false;
+      if (row.daysOfWeek) {
+        const days = String(row.daysOfWeek).split(',').map((s: string) => parseInt(s.trim(), 10));
+        if (days.length && !days.includes(isoDow)) return false;
+      }
+      if (row.startMinute != null && row.endMinute != null) {
+        if (minute < row.startMinute || minute > row.endMinute) return false;
+      }
+      return true;
+    };
+
+    // One bulk query per resource, scoped to the customer's businesses. We
+    // filter further in-memory by outlet (the businessId set is usually
+    // small for a given customer — handful of outlets across a few
+    // businesses — so an in-memory walk is cheap and the SQL stays simple).
+    const businessIds = Array.from(new Set(outlets.map((o) => o.businessId)));
+
+    const [allCoupons, allDiscounts, allOffers] = await Promise.all([
+      this.prisma.coupon.findMany({
+        where: {
+          businessId: { in: businessIds },
+          isActive: true,
+          validFrom: { lte: now },
+          validUntil: { gte: now },
+        },
+        include: { targetCustomers: { select: { userId: true } } },
+      }),
+      this.prisma.discount.findMany({
+        where: {
+          businessId: { in: businessIds },
+          isActive: true,
+          isManualOnly: false,
+        },
+        include: {
+          category: { select: { id: true, name: true } },
+          subcategory: { select: { id: true, name: true } },
+          item: { select: { id: true, name: true } },
+        },
+      }),
+      this.prisma.offer.findMany({
+        where: {
+          businessId: { in: businessIds },
+          isActive: true,
+        },
+        include: {
+          buyItem: { select: { id: true, name: true } },
+          getItem: { select: { id: true, name: true } },
+        },
+      }),
+    ]);
+
+    const grouped = outlets.map((o) => {
+      const couponMatch = (c: any) =>
+        c.businessId === o.businessId &&
+        (c.outletId === null || c.outletId === o.id) &&
+        (c.maxTotalUses == null || c.usesCount < c.maxTotalUses) &&
+        (c.targetType === 'ALL' || c.targetCustomers.some((t: any) => t.userId === userId));
+      const scopeMatch = (row: any) =>
+        row.businessId === o.businessId &&
+        (row.outletId === null || row.outletId === o.id) &&
+        inScheduleNow(row);
+
+      return {
+        outlet: {
+          id: o.id,
+          name: o.name,
+          logoUrl: o.logoUrl,
+          businessName: o.business?.name,
+        },
+        coupons: allCoupons
+          .filter(couponMatch)
+          .map(({ targetCustomers, ...rest }) => rest),
+        discounts: allDiscounts.filter(scopeMatch),
+        offers: allOffers.filter(scopeMatch),
+      };
+    });
+
+    // Sort: outlets with the most live promotions first so the customer's
+    // dashboard surface lands on what matters.
+    grouped.sort((a, b) => {
+      const aN = a.coupons.length + a.discounts.length + a.offers.length;
+      const bN = b.coupons.length + b.discounts.length + b.offers.length;
+      return bN - aN;
+    });
+
+    return { outlets: grouped };
   }
 
   // ─── Favourites ──────────────────────────────────────────

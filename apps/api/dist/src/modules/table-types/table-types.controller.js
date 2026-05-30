@@ -47,11 +47,17 @@ let TableTypesController = class TableTypesController {
     removeTable(tableId) {
         return this.service.removeTable(tableId);
     }
+    listMenus(tableTypeId) {
+        return this.service.listMenus(tableTypeId);
+    }
+    toggleMenu(tableTypeId, menuId, body) {
+        return this.service.toggleMenu(tableTypeId, menuId, !!body?.isEnabled);
+    }
 };
 exports.TableTypesController = TableTypesController;
 __decorate([
     (0, common_1.Get)(),
-    openapi.ApiResponse({ status: 200, type: [Object] }),
+    openapi.ApiResponse({ status: 200 }),
     __param(0, (0, common_1.Param)('outletId')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
@@ -122,6 +128,24 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], TableTypesController.prototype, "removeTable", null);
+__decorate([
+    (0, common_1.Get)(':tableTypeId/menus'),
+    openapi.ApiResponse({ status: 200 }),
+    __param(0, (0, common_1.Param)('tableTypeId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], TableTypesController.prototype, "listMenus", null);
+__decorate([
+    (0, common_1.Patch)(':tableTypeId/menus/:menuId'),
+    openapi.ApiResponse({ status: 200 }),
+    __param(0, (0, common_1.Param)('tableTypeId')),
+    __param(1, (0, common_1.Param)('menuId')),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, Object]),
+    __metadata("design:returntype", void 0)
+], TableTypesController.prototype, "toggleMenu", null);
 exports.TableTypesController = TableTypesController = __decorate([
     (0, swagger_1.ApiTags)('TableTypes'),
     (0, swagger_1.ApiBearerAuth)(),

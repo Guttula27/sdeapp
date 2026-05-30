@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import {
   Building2, Store, ShoppingBag, IndianRupee,
   CheckCircle2, Clock, XCircle, Plus, ToggleRight, ToggleLeft,
-  CreditCard, Zap,
+  CreditCard, Zap, Network, ChevronRight,
 } from 'lucide-react';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
@@ -14,8 +14,10 @@ import Modal from '../../components/common/Modal';
 interface Business {
   id: string;
   name: string;
+  publicCode?: string | null;
   gstNumber?: string | null;
   businessType: string;
+  isCluster?: boolean;
   status: string;
   subscription?: { status: string; plan: { name: string; monthlyCost: number } } | null;
   _count: { outlets: number };
@@ -55,6 +57,11 @@ export default function PlatformPage() {
 
   const [bizModal, setBizModal]   = useState(false);
   const [planModal, setPlanModal] = useState<{ open: boolean; plan?: Plan }>({ open: false });
+  // Local flag so we can hide the (regular-business-only) owner-login block
+  // when the admin is creating a Cluster. Clusters are platform-managed and
+  // don't get a Business Owner user provisioned.
+  const [isClusterForm, setIsClusterForm] = useState(false);
+  const navigate = useNavigate();
 
   /* ── fetch ────────────────────────────────────────────── */
   useEffect(() => {
@@ -86,15 +93,22 @@ export default function PlatformPage() {
     const fd = new FormData(e.currentTarget);
     setSaving(true);
     try {
+      const isCluster = fd.get('isCluster') === 'on';
       await api.post('/businesses', {
         name: fd.get('name'),
-        businessType: fd.get('businessType'),
+        businessType: isCluster ? 'FOOD_COURT' : fd.get('businessType'),
         gstNumber: fd.get('gstNumber') || undefined,
+        // Both standard and cluster businesses get an owner. For clusters
+        // the owner manages members, branding, and the cluster QR (they
+        // see ClusterDetailPage on login instead of the regular Business
+        // Profile page).
         adminPhone: fd.get('adminPhone'),
         adminName: fd.get('adminName') || undefined,
+        isCluster,
       });
-      toast.success('Business created');
+      toast.success(isCluster ? 'Cluster business created' : 'Business created');
       setBizModal(false);
+      setIsClusterForm(false);
       const { data } = await api.get('/businesses');
       setBusinesses(data.data.businesses || []);
     } catch (e: any) {
@@ -181,7 +195,12 @@ export default function PlatformPage() {
             <Plus size={13} /> Add Business
           </button>
         </div>
-        <BusinessTable businesses={businesses} loading={loading} onToggle={toggleBiz} />
+        <BusinessTable
+          businesses={businesses}
+          loading={loading}
+          onToggle={toggleBiz}
+          onOpen={(b) => b.isCluster && navigate(`/platform/clusters/${b.id}`)}
+        />
       </div>
     </div>
   );
@@ -199,7 +218,12 @@ export default function PlatformPage() {
         </button>
       </div>
       <div className="card overflow-hidden">
-        <BusinessTable businesses={businesses} loading={loading} onToggle={toggleBiz} />
+        <BusinessTable
+          businesses={businesses}
+          loading={loading}
+          onToggle={toggleBiz}
+          onOpen={(b) => b.isCluster && navigate(`/platform/clusters/${b.id}`)}
+        />
       </div>
     </div>
   );
@@ -257,39 +281,77 @@ export default function PlatformPage() {
       {view === 'plans'       && renderPlans()}
 
       {/* Add business modal */}
-      <Modal open={bizModal} onClose={() => setBizModal(false)} title="New Business" size="md"
+      <Modal open={bizModal} onClose={() => { setBizModal(false); setIsClusterForm(false); }} title="New Business" size="md"
         footer={
           <>
-            <button className="btn-secondary" onClick={() => setBizModal(false)}>Cancel</button>
+            <button className="btn-secondary" onClick={() => { setBizModal(false); setIsClusterForm(false); }}>Cancel</button>
             <button form="biz-form" type="submit" className="btn-primary" disabled={saving}>
               {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-              Create Business
+              {isClusterForm ? 'Create Cluster' : 'Create Business'}
             </button>
           </>
         }
       >
         <form id="biz-form" onSubmit={createBusiness} className="space-y-4">
-          <Field label="Business Name">
-            <input name="name" required className="input" placeholder="e.g. The Spice Garden" />
+          {/* Category toggle — Standard business vs Cluster (food-court roof
+              that aggregates outlets from other businesses). */}
+          <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setIsClusterForm(false)}
+              className={clsx('py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2',
+                !isClusterForm ? 'bg-white text-slate-900 shadow' : 'text-slate-500')}
+            >
+              <Building2 size={14} /> Standard
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsClusterForm(true)}
+              className={clsx('py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2',
+                isClusterForm ? 'bg-white text-slate-900 shadow' : 'text-slate-500')}
+            >
+              <Network size={14} /> Cluster
+            </button>
+          </div>
+          {/* Hidden field — picked up by FormData in createBusiness. */}
+          <input type="hidden" name="isCluster" value={isClusterForm ? 'on' : ''} />
+
+          <Field label={isClusterForm ? 'Cluster Name' : 'Business Name'}>
+            <input name="name" required className="input"
+              placeholder={isClusterForm ? 'e.g. Phoenix Food Court' : 'e.g. The Spice Garden'} />
           </Field>
-          <Field label="Business Type">
-            <select name="businessType" required className="input">
-              {BUSINESS_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
-            </select>
-          </Field>
+          {!isClusterForm && (
+            <Field label="Business Type">
+              <select name="businessType" required className="input">
+                {BUSINESS_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+              </select>
+            </Field>
+          )}
           <Field label="GST Number">
             <input name="gstNumber" className="input font-mono" placeholder="29ABCDE1234F1Z5" />
           </Field>
+          {isClusterForm && (
+            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-1">
+              <p className="text-xs font-bold text-indigo-700 uppercase tracking-wider">Cluster</p>
+              <p className="text-[12px] text-indigo-700 leading-relaxed">
+                A cluster aggregates outlets from <strong>other</strong> businesses (e.g. stalls in a food court, kiosks in a mall).
+                Add member outlets by their Outlet ID after creating the cluster. Customers see a unified menu and pay once;
+                payment is routed per outlet via Razorpay.
+              </p>
+            </div>
+          )}
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-3">
-            <p className="text-xs font-bold text-amber-700 uppercase tracking-wider">Business Owner Login</p>
+            <p className="text-xs font-bold text-amber-700 uppercase tracking-wider">
+              {isClusterForm ? 'Cluster Owner Login' : 'Business Owner Login'}
+            </p>
             <Field label="Owner Name (optional)">
-              <input name="adminName" className="input" placeholder="e.g. Ramesh" />
+              <input name="adminName" className="input" placeholder={isClusterForm ? 'e.g. Phoenix Mall Mgmt' : 'e.g. Ramesh'} />
             </Field>
             <Field label="Owner Phone (required)">
               <input name="adminPhone" required className="input" placeholder="+91 …" />
             </Field>
             <p className="text-[11px] text-amber-700">
-              We'll create the Business Owner login with default password <span className="font-mono font-bold">abc@123</span>.
+              We'll create the {isClusterForm ? 'Cluster' : 'Business'} Owner login with default password <span className="font-mono font-bold">abc@123</span>.
               The owner will be required to set a new password on first login.
             </p>
           </div>
@@ -346,10 +408,11 @@ export default function PlatformPage() {
 }
 
 /* ── Business table sub-component ────────────────────────── */
-function BusinessTable({ businesses, loading, onToggle }: {
+function BusinessTable({ businesses, loading, onToggle, onOpen }: {
   businesses: Business[];
   loading: boolean;
   onToggle: (id: string, status: string) => void;
+  onOpen: (b: Business) => void;
 }) {
   if (loading) {
     return (
@@ -384,9 +447,29 @@ function BusinessTable({ businesses, loading, onToggle }: {
         </thead>
         <tbody>
           {businesses.map(b => (
-            <tr key={b.id}>
-              <td className="font-semibold text-slate-900">{b.name}</td>
-              <td className="text-slate-500 text-xs">{b.businessType.replace(/_/g, ' ')}</td>
+            <tr
+              key={b.id}
+              onClick={() => onOpen(b)}
+              className={clsx(
+                'cursor-pointer hover:bg-slate-50 transition-colors',
+                b.isCluster && 'bg-indigo-50/40 hover:bg-indigo-50',
+              )}
+              title={b.isCluster ? 'Open cluster admin' : 'Open business'}
+            >
+              <td className="font-semibold text-slate-900">
+                <div className="flex items-center gap-2">
+                  {b.isCluster && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">
+                      <Network size={10} /> CLUSTER
+                    </span>
+                  )}
+                  <span>{b.name}</span>
+                </div>
+                {b.publicCode && (
+                  <div className="font-mono text-[10px] text-slate-400 mt-0.5">{b.publicCode}</div>
+                )}
+              </td>
+              <td className="text-slate-500 text-xs">{b.isCluster ? '—' : b.businessType.replace(/_/g, ' ')}</td>
               <td className="font-mono text-xs text-slate-500">{b.gstNumber || '—'}</td>
               <td className="text-center">{b._count?.outlets ?? 0}</td>
               <td>
@@ -400,18 +483,21 @@ function BusinessTable({ businesses, loading, onToggle }: {
                 </span>
               </td>
               <td>
-                <button
-                  onClick={() => onToggle(b.id, b.status)}
-                  className={clsx(
-                    'flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg transition-colors',
-                    b.status === 'ACTIVE'
-                      ? 'text-red-600 hover:bg-red-50'
-                      : 'text-emerald-600 hover:bg-emerald-50',
-                  )}
-                >
-                  {b.status === 'ACTIVE' ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
-                  {b.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
-                </button>
+                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={() => onToggle(b.id, b.status)}
+                    className={clsx(
+                      'flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg transition-colors',
+                      b.status === 'ACTIVE'
+                        ? 'text-red-600 hover:bg-red-50'
+                        : 'text-emerald-600 hover:bg-emerald-50',
+                    )}
+                  >
+                    {b.status === 'ACTIVE' ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+                    {b.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                  </button>
+                  <ChevronRight size={14} className="text-slate-300" />
+                </div>
               </td>
             </tr>
           ))}

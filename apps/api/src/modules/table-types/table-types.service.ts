@@ -19,8 +19,8 @@ export class TableTypesService {
     }
   }
 
-  list(outletId: string) {
-    return this.prisma.tableType.findMany({
+  async list(outletId: string) {
+    const rows = await this.prisma.tableType.findMany({
       where: { outletId },
       orderBy: { createdAt: 'asc' },
       include: {
@@ -29,9 +29,21 @@ export class TableTypesService {
           orderBy: { number: 'asc' },
           include: { qrCode: true },
         },
+        // Pull only the disabled menu links so the UI knows which menus to
+        // exclude from per-section price/GST overrides (no point pricing
+        // items the section's customers will never see).
+        menus: {
+          where: { isEnabled: false },
+          select: { menuId: true },
+        },
         _count: { select: { tables: true, prices: true } },
       },
     });
+    return rows.map((tt) => ({
+      ...tt,
+      disabledMenuIds: tt.menus.map((m) => m.menuId),
+      menus: undefined,
+    }));
   }
 
   // ─── Tables under a type ─────────────────────────────────
@@ -140,5 +152,56 @@ export class TableTypesService {
       where: { tableTypeId, itemId, variantId: variantId ?? null },
     });
     return { success: true };
+  }
+
+  // ─── Per-section menu availability ─────────────────────────
+  // Returns every menu in the section's business with the join row's
+  // isEnabled flag. Default menus include `isLocked: true` so the UI hides
+  // their toggle (they're always available regardless of any row).
+  async listMenus(tableTypeId: string) {
+    const tt = await this.prisma.tableType.findUnique({
+      where: { id: tableTypeId },
+      include: { outlet: { select: { businessId: true } } },
+    });
+    if (!tt) throw new NotFoundException('Section not found');
+
+    const [menus, links] = await Promise.all([
+      this.prisma.menu.findMany({
+        where: { businessId: tt.outlet.businessId },
+        orderBy: [{ isDefault: 'desc' }, { displayOrder: 'asc' }, { createdAt: 'asc' }],
+      }),
+      this.prisma.tableTypeMenu.findMany({ where: { tableTypeId } }),
+    ]);
+    const byMenuId = new Map(links.map((l) => [l.menuId, l]));
+    return menus.map((m) => ({
+      id: m.id,
+      name: m.name,
+      isDefault: m.isDefault,
+      isLocked: m.isDefault, // UI hint: hide toggle for default menu
+      isEnabled: m.isDefault ? true : (byMenuId.get(m.id)?.isEnabled ?? true),
+    }));
+  }
+
+  async toggleMenu(tableTypeId: string, menuId: string, isEnabled: boolean) {
+    const [tt, menu] = await Promise.all([
+      this.prisma.tableType.findUnique({
+        where: { id: tableTypeId },
+        include: { outlet: { select: { businessId: true } } },
+      }),
+      this.prisma.menu.findUnique({ where: { id: menuId } }),
+    ]);
+    if (!tt) throw new NotFoundException('Section not found');
+    if (!menu) throw new NotFoundException('Menu not found');
+    if (menu.businessId !== tt.outlet.businessId) {
+      throw new BadRequestException('Menu does not belong to this section\'s business');
+    }
+    if (menu.isDefault && !isEnabled) {
+      throw new BadRequestException('The default menu cannot be disabled');
+    }
+    return this.prisma.tableTypeMenu.upsert({
+      where: { tableTypeId_menuId: { tableTypeId, menuId } },
+      update: { isEnabled },
+      create: { tableTypeId, menuId, isEnabled },
+    });
   }
 }

@@ -8,6 +8,7 @@ import { UsersModule } from './modules/users/users.module';
 import { BusinessesModule } from './modules/businesses/businesses.module';
 import { OutletsModule } from './modules/outlets/outlets.module';
 import { MenuModule } from './modules/menu/menu.module';
+import { MenusModule } from './modules/menus/menus.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
@@ -31,6 +32,14 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { MessageTemplatesModule } from './modules/message-templates/message-templates.module';
 import { CustomerAlertsModule } from './modules/customer-alerts/customer-alerts.module';
 import { ReviewsModule } from './modules/reviews/reviews.module';
+import { ClustersModule } from './modules/clusters/clusters.module';
+import { ClusterOrdersModule } from './modules/cluster-orders/cluster-orders.module';
+import { CouponsModule } from './modules/coupons/coupons.module';
+import { DiscountsModule } from './modules/discounts/discounts.module';
+import { OffersModule } from './modules/offers/offers.module';
+import { RewardsModule } from './modules/rewards/rewards.module';
+import { PricingModule } from './modules/pricing/pricing.module';
+import { PrintersModule } from './modules/printers/printers.module';
 
 @Module({
   imports: [
@@ -45,6 +54,7 @@ import { ReviewsModule } from './modules/reviews/reviews.module';
     BusinessesModule,
     OutletsModule,
     MenuModule,
+    MenusModule,
     OrdersModule,
     PaymentsModule,
     InventoryModule,
@@ -68,6 +78,14 @@ import { ReviewsModule } from './modules/reviews/reviews.module';
     MessageTemplatesModule,
     CustomerAlertsModule,
     ReviewsModule,
+    ClustersModule,
+    ClusterOrdersModule,
+    CouponsModule,
+    DiscountsModule,
+    OffersModule,
+    RewardsModule,
+    PricingModule,
+    PrintersModule,
   ],
 })
 export class AppModule {}

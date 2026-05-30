@@ -37,7 +37,7 @@ export class ServiceStationsController {
   @Post()
   create(
     @Param('outletId') outletId: string,
-    @Body() body: { name: string; tableTypeId?: string | null },
+    @Body() body: { name: string; tableTypeId?: string | null; isParcelStation?: boolean },
   ) {
     return this.service.create(outletId, body);
   }
@@ -45,7 +45,7 @@ export class ServiceStationsController {
   @Patch(':id')
   update(
     @Param('id') id: string,
-    @Body() body: { name?: string; tableTypeId?: string | null },
+    @Body() body: { name?: string; tableTypeId?: string | null; isParcelStation?: boolean },
   ) {
     return this.service.update(id, body);
   }

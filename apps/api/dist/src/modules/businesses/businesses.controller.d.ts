@@ -2,33 +2,7 @@ import { BusinessesService, CreateBusinessDto } from './businesses.service';
 export declare class BusinessesController {
     private service;
     constructor(service: BusinessesService);
-    create(dto: CreateBusinessDto): Promise<{
-        admin: {
-            name: string;
-            phone: string;
-            id: string;
-        };
-        name: string;
-        description: string | null;
-        id: string;
-        status: import(".prisma/client").$Enums.UserStatus;
-        createdAt: Date;
-        updatedAt: Date;
-        address: string | null;
-        addressLine1: string | null;
-        addressLine2: string | null;
-        city: string | null;
-        state: string | null;
-        pincode: string | null;
-        country: string | null;
-        mapsLocation: string | null;
-        gstNumber: string | null;
-        upiId: string | null;
-        logoUrl: string | null;
-        primaryImageUrl: string | null;
-        businessType: import(".prisma/client").$Enums.BusinessType;
-        subscriptionId: string | null;
-    }>;
+    create(dto: CreateBusinessDto): Promise<any>;
     findAll(page?: number, limit?: number, lang?: string | null): Promise<{
         businesses: ({
             subscription: ({
@@ -77,9 +51,13 @@ export declare class BusinessesController {
             mapsLocation: string | null;
             gstNumber: string | null;
             upiId: string | null;
-            logoUrl: string | null;
-            primaryImageUrl: string | null;
             businessType: import(".prisma/client").$Enums.BusinessType;
+            logoUrl: string | null;
+            thumbnailUrl: string | null;
+            primaryImageUrl: string | null;
+            publicCode: string | null;
+            isCluster: boolean;
+            multipleMenusEnabled: boolean;
             subscriptionId: string | null;
         })[];
         total: number;
@@ -114,16 +92,9 @@ export declare class BusinessesController {
             planId: string;
         }) | null;
         _count: {
-            users: number;
             outlets: number;
+            users: number;
         };
-        images: {
-            id: string;
-            businessId: string;
-            createdAt: Date;
-            displayOrder: number;
-            url: string;
-        }[];
         outlets: {
             name: string;
             description: string | null;
@@ -133,7 +104,6 @@ export declare class BusinessesController {
             createdAt: Date;
             updatedAt: Date;
             address: string | null;
-            outletType: import(".prisma/client").$Enums.OutletType;
             addressLine1: string | null;
             addressLine2: string | null;
             city: string | null;
@@ -145,6 +115,9 @@ export declare class BusinessesController {
             upiId: string | null;
             logoUrl: string | null;
             primaryImageUrl: string | null;
+            publicCode: string | null;
+            multipleMenusEnabled: boolean;
+            outletType: import(".prisma/client").$Enums.OutletType;
             isActive: boolean;
             defaultPrepTime: number | null;
             parcelChargeEnabled: boolean;
@@ -155,7 +128,18 @@ export declare class BusinessesController {
             gstApplicable: boolean;
             gstPercent: import("@prisma/client/runtime/library").Decimal;
             priceIncludesGst: boolean;
+            razorpayLinkedAccountId: string | null;
             facilityId: string | null;
+            acceptRewardRedemption: boolean;
+            kitchenAutoPrint: boolean;
+            kitchenAllowManualPrint: boolean;
+        }[];
+        images: {
+            id: string;
+            businessId: string;
+            createdAt: Date;
+            displayOrder: number;
+            url: string;
         }[];
     } & {
         name: string;
@@ -174,9 +158,13 @@ export declare class BusinessesController {
         mapsLocation: string | null;
         gstNumber: string | null;
         upiId: string | null;
-        logoUrl: string | null;
-        primaryImageUrl: string | null;
         businessType: import(".prisma/client").$Enums.BusinessType;
+        logoUrl: string | null;
+        thumbnailUrl: string | null;
+        primaryImageUrl: string | null;
+        publicCode: string | null;
+        isCluster: boolean;
+        multipleMenusEnabled: boolean;
         subscriptionId: string | null;
     }>;
     dashboard(id: string): Promise<{
@@ -207,9 +195,13 @@ export declare class BusinessesController {
         mapsLocation: string | null;
         gstNumber: string | null;
         upiId: string | null;
-        logoUrl: string | null;
-        primaryImageUrl: string | null;
         businessType: import(".prisma/client").$Enums.BusinessType;
+        logoUrl: string | null;
+        thumbnailUrl: string | null;
+        primaryImageUrl: string | null;
+        publicCode: string | null;
+        isCluster: boolean;
+        multipleMenusEnabled: boolean;
         subscriptionId: string | null;
     }>;
     toggleStatus(id: string): Promise<{
@@ -229,9 +221,13 @@ export declare class BusinessesController {
         mapsLocation: string | null;
         gstNumber: string | null;
         upiId: string | null;
-        logoUrl: string | null;
-        primaryImageUrl: string | null;
         businessType: import(".prisma/client").$Enums.BusinessType;
+        logoUrl: string | null;
+        thumbnailUrl: string | null;
+        primaryImageUrl: string | null;
+        publicCode: string | null;
+        isCluster: boolean;
+        multipleMenusEnabled: boolean;
         subscriptionId: string | null;
     }>;
     admin(id: string): Promise<{

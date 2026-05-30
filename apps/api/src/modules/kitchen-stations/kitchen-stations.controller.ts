@@ -34,7 +34,7 @@ export class KitchenStationsController {
   @Patch(':id')
   update(
     @Param('id') id: string,
-    @Body() body: { name?: string; currentWorkerId?: string | null; isMaster?: boolean },
+    @Body() body: { name?: string; currentWorkerId?: string | null; isMaster?: boolean; printerId?: string | null },
   ) {
     return this.service.update(id, body);
   }

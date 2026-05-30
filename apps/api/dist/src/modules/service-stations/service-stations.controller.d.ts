@@ -44,6 +44,7 @@ export declare class ServiceStationsController {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     })[]>;
     listStaff(outletId: string): import(".prisma/client").Prisma.PrismaPromise<{
         role: {
@@ -78,6 +79,7 @@ export declare class ServiceStationsController {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     })[]>;
     listTables(outletId: string, tableTypeId: string): import(".prisma/client").Prisma.PrismaPromise<({
         section: {
@@ -98,6 +100,7 @@ export declare class ServiceStationsController {
     create(outletId: string, body: {
         name: string;
         tableTypeId?: string | null;
+        isParcelStation?: boolean;
     }): Promise<{
         tableType: {
             name: string;
@@ -142,10 +145,12 @@ export declare class ServiceStationsController {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     }>;
     update(id: string, body: {
         name?: string;
         tableTypeId?: string | null;
+        isParcelStation?: boolean;
     }): Promise<{
         tableType: {
             name: string;
@@ -190,6 +195,7 @@ export declare class ServiceStationsController {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     }>;
     setWorkers(id: string, body: {
         userIds: string[];
@@ -235,6 +241,7 @@ export declare class ServiceStationsController {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     }) | undefined>;
     setTables(id: string, body: {
         tableIds: string[];
@@ -280,6 +287,7 @@ export declare class ServiceStationsController {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     }) | undefined>;
     remove(id: string): Promise<{
         name: string;
@@ -289,5 +297,6 @@ export declare class ServiceStationsController {
         updatedAt: Date;
         isActive: boolean;
         tableTypeId: string | null;
+        isParcelStation: boolean;
     }>;
 }

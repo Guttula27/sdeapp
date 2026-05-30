@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 import {
   User, Phone, Mail, Shield, Building2, Lock, Eye, EyeOff, Languages,
   Tag, Sandwich, Flame, LayoutGrid, ChevronRight, ConciergeBell,
-  Plug, MessageCircle, ClipboardCheck,
+  Plug, MessageCircle, ClipboardCheck, Copy,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import { useUserRole, UserTier } from '../../hooks/useUserRole';
@@ -28,9 +28,9 @@ const SECTIONS_BY_TIER: Record<UserTier, Section[]> = {
   outlet: [
     { to: '/roles',       icon: Shield,     label: 'Roles',       description: 'Adjust permissions for outlet roles' },
     { to: '/tags',        icon: Tag,        label: 'Tags',        description: 'Customer tags and tag-based pricing' },
-    { to: '/table-types', icon: LayoutGrid, label: 'Table Types', description: 'Table classes and per-type pricing' },
+    { to: '/table-types', icon: LayoutGrid, label: 'Dine In Sections', description: 'Per-section pricing, menu availability and tables' },
     { to: '/stations',    icon: Flame,      label: 'Stations',    description: 'Kitchen stations for item routing' },
-    { to: '/service-stations', icon: ConciergeBell, label: 'Service Stations', description: 'Floor staff grouped by table type for table service' },
+    { to: '/service-stations', icon: ConciergeBell, label: 'Service Stations', description: 'Floor staff grouped by dine-in section for table service' },
     { to: '/toppings',    icon: Sandwich,   label: 'Toppings',    description: 'Topping groups and option pricing' },
     { to: '/messaging',   icon: MessageCircle, label: 'Messaging', description: 'WhatsApp, SMS and Email templates for customers' },
   ],
@@ -62,6 +62,11 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [languages, setLanguages] = useState<{ code: string; name: string; nativeName: string }[]>([]);
   const [lang, setLang] = useState<string>(user?.preferredLanguage || 'en');
+  // Outlet reference code for outlet-tier admins. Shown as a copyable badge
+  // near the top of the settings page since this is the place admins land
+  // when they need their outlet identifier (support tickets, integrations, etc.).
+  const [outletCode, setOutletCode] = useState<string | null>(null);
+  const [outletName, setOutletName] = useState<string | null>(null);
   const { register, handleSubmit, reset, formState: { errors }, watch } = useForm<PwForm>();
   const nextPw = watch('next');
 
@@ -70,6 +75,22 @@ export default function SettingsPage() {
       .then(({ data }) => setLanguages(data.data || []))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!user?.outletId) { setOutletCode(null); setOutletName(null); return; }
+    api.get(`/outlets/${user.outletId}`)
+      .then(({ data }) => {
+        setOutletCode(data?.data?.publicCode ?? null);
+        setOutletName(data?.data?.name ?? null);
+      })
+      .catch(() => {});
+  }, [user?.outletId]);
+
+  const copyOutletCode = () => {
+    if (!outletCode) return;
+    navigator.clipboard?.writeText(outletCode);
+    toast.success(`Copied ${outletCode}`);
+  };
 
   const saveLanguage = async (code: string) => {
     setLang(code);
@@ -102,6 +123,31 @@ export default function SettingsPage() {
         <h1 className="page-title">{t('settings.title')}</h1>
         <p className="page-subtitle">{t('settings.subtitle')}</p>
       </div>
+
+      {/* Outlet reference code — shown for outlet-tier users so they always
+          know their outlet's short identifier (used in support, invoices, etc.). */}
+      {outletCode && (
+        <div className="card p-4 flex items-center justify-between gap-3 border-l-4 border-brand-500">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="icon-wrap w-10 h-10 bg-brand-50 text-brand-600 shrink-0"><Building2 size={18} /></div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Outlet Reference Code</p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <p className="font-mono font-black text-lg text-slate-900 tracking-wider">{outletCode}</p>
+                <button
+                  type="button"
+                  onClick={copyOutletCode}
+                  className="btn-ghost p-1 text-slate-400 hover:text-brand-600"
+                  title="Copy code"
+                >
+                  <Copy size={14} />
+                </button>
+              </div>
+              {outletName && <p className="text-xs text-slate-500 truncate">{outletName}</p>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Settings subsections — appears for tiers that have admin areas. */}
       {sections.length > 0 && (

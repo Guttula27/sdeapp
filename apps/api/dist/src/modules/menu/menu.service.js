@@ -38,9 +38,59 @@ let MenuService = class MenuService {
         ]);
         return categories;
     }
-    async getMenu(outletId, viewerUserId, tableId, lang) {
+    async getMenu(outletId, viewerUserId, tableId, lang, opts) {
+        const outletMeta = await this.prisma.outlet.findUnique({
+            where: { id: outletId },
+            select: { multipleMenusEnabled: true, businessId: true },
+        });
+        let allowedMenuIds = [];
+        if (outletMeta) {
+            const defaultMenu = await this.prisma.menu.findFirst({
+                where: { businessId: outletMeta.businessId, isDefault: true },
+                select: { id: true },
+            });
+            if (!outletMeta.multipleMenusEnabled) {
+                allowedMenuIds = defaultMenu ? [defaultMenu.id] : [];
+            }
+            else {
+                const links = await this.prisma.outletMenu.findMany({
+                    where: { outletId, isEnabled: true },
+                    select: { menuId: true },
+                });
+                const enabled = new Set(links.map((l) => l.menuId));
+                if (defaultMenu)
+                    enabled.add(defaultMenu.id);
+                if (tableId) {
+                    const table = await this.prisma.table.findUnique({
+                        where: { id: tableId },
+                        select: { tableTypeId: true, outletId: true },
+                    });
+                    if (table && table.outletId === outletId && table.tableTypeId) {
+                        const sectionDisabled = await this.prisma.tableTypeMenu.findMany({
+                            where: { tableTypeId: table.tableTypeId, isEnabled: false },
+                            select: { menuId: true },
+                        });
+                        for (const s of sectionDisabled) {
+                            if (defaultMenu && s.menuId === defaultMenu.id)
+                                continue;
+                            enabled.delete(s.menuId);
+                        }
+                    }
+                }
+                allowedMenuIds = Array.from(enabled);
+            }
+        }
         const categories = await this.prisma.category.findMany({
-            where: { outletId, isActive: true },
+            where: {
+                outletId,
+                isActive: true,
+                OR: [
+                    { menuId: { in: allowedMenuIds } },
+                    ...(outletMeta && !outletMeta.multipleMenusEnabled
+                        ? [{ menuId: null }]
+                        : []),
+                ],
+            },
             orderBy: { displayOrder: 'asc' },
             include: {
                 subcategories: {
@@ -48,7 +98,7 @@ let MenuService = class MenuService {
                     orderBy: { displayOrder: 'asc' },
                     include: {
                         items: {
-                            where: { isDisplayed: true },
+                            ...(opts?.includeHidden ? {} : { where: { isDisplayed: true } }),
                             orderBy: { displayOrder: 'asc' },
                             include: {
                                 variants: true,
@@ -62,6 +112,13 @@ let MenuService = class MenuService {
                                         topping: {
                                             include: { options: { orderBy: { displayOrder: 'asc' } } },
                                         },
+                                    },
+                                },
+                                bundleChildren: {
+                                    orderBy: { displayOrder: 'asc' },
+                                    include: {
+                                        childItem: { select: { id: true, name: true } },
+                                        variant: { select: { id: true, name: true } },
                                     },
                                 },
                             },
@@ -170,7 +227,20 @@ let MenuService = class MenuService {
         }));
     }
     async createCategory(outletId, data) {
-        const category = await this.prisma.category.create({ data: { ...data, outletId } });
+        let menuId = data.menuId ?? null;
+        if (!menuId) {
+            const outlet = await this.prisma.outlet.findUnique({ where: { id: outletId } });
+            if (outlet) {
+                const defaultMenu = await this.prisma.menu.findFirst({
+                    where: { businessId: outlet.businessId, isDefault: true },
+                    select: { id: true },
+                });
+                menuId = defaultMenu?.id ?? null;
+            }
+        }
+        const category = await this.prisma.category.create({
+            data: { name: data.name, imageUrl: data.imageUrl, outletId, menuId: menuId ?? undefined },
+        });
         await this.translations.upsertAll('Category', category.id, { name: category.name });
         return category;
     }
@@ -232,10 +302,14 @@ let MenuService = class MenuService {
                     data.gstRate = outlet.gstPercent;
             }
         }
+        const { bundleChildren, ...itemData } = data || {};
         const item = await this.prisma.item.create({
-            data: { ...data, subcategoryId },
+            data: { ...itemData, subcategoryId },
             include: { variants: true, options: true },
         });
+        if (Array.isArray(bundleChildren) && bundleChildren.length) {
+            await this.replaceBundleChildren(item.id, bundleChildren);
+        }
         await this.translations.upsertAll('Item', item.id, {
             name: item.name,
             description: item.description ?? undefined,
@@ -249,11 +323,15 @@ let MenuService = class MenuService {
         return item;
     }
     async updateItem(id, data) {
+        const { bundleChildren, ...itemData } = data || {};
         const item = await this.prisma.item.update({
             where: { id },
-            data,
+            data: itemData,
             include: { variants: true, options: true },
         });
+        if (Array.isArray(bundleChildren)) {
+            await this.replaceBundleChildren(id, bundleChildren);
+        }
         if (data.name !== undefined || data.description !== undefined) {
             await this.translations.upsertAll('Item', item.id, {
                 name: item.name,
@@ -262,6 +340,22 @@ let MenuService = class MenuService {
         }
         return item;
     }
+    async replaceBundleChildren(parentItemId, children) {
+        await this.prisma.$transaction([
+            this.prisma.itemBundleChild.deleteMany({ where: { parentItemId } }),
+            ...(children.length
+                ? [this.prisma.itemBundleChild.createMany({
+                        data: children.map((c, idx) => ({
+                            parentItemId,
+                            childItemId: c.childItemId,
+                            variantId: c.variantId ?? null,
+                            quantity: Math.max(1, Number(c.quantity ?? 1)),
+                            displayOrder: c.displayOrder ?? idx,
+                        })),
+                    })]
+                : []),
+        ]);
+    }
     async toggleItemAvailability(id) {
         const item = await this.prisma.item.findUnique({ where: { id } });
         if (!item)
@@ -269,6 +363,15 @@ let MenuService = class MenuService {
         return this.prisma.item.update({
             where: { id },
             data: { isAvailable: !item.isAvailable },
+        });
+    }
+    async toggleItemVisibility(id) {
+        const item = await this.prisma.item.findUnique({ where: { id } });
+        if (!item)
+            throw new common_1.NotFoundException('Item not found');
+        return this.prisma.item.update({
+            where: { id },
+            data: { isDisplayed: !item.isDisplayed },
         });
     }
     async adjustItemStock(id, body) {
@@ -426,6 +529,7 @@ let MenuService = class MenuService {
                         name: cat.name,
                         imageUrl: cat.imageUrl,
                         displayOrder: cat.displayOrder,
+                        menuId: cat.menuId ?? undefined,
                     },
                 });
                 categoriesCount++;
@@ -509,8 +613,22 @@ let MenuService = class MenuService {
         return this.hydrateMenu(categories, lang);
     }
     async createBusinessCategory(businessId, dto) {
+        let menuId = dto.menuId ?? null;
+        if (!menuId) {
+            const defaultMenu = await this.prisma.menu.findFirst({
+                where: { businessId, isDefault: true },
+                select: { id: true },
+            });
+            menuId = defaultMenu?.id ?? null;
+        }
         const cat = await this.prisma.category.create({
-            data: { businessId, name: dto.name, imageUrl: dto.imageUrl, displayOrder: dto.displayOrder ?? 0 },
+            data: {
+                businessId,
+                name: dto.name,
+                imageUrl: dto.imageUrl,
+                displayOrder: dto.displayOrder ?? 0,
+                menuId: menuId ?? undefined,
+            },
         });
         await this.translations.upsertAll('Category', cat.id, { name: cat.name });
         return cat;
@@ -612,6 +730,7 @@ let MenuService = class MenuService {
                             name: cat.name,
                             imageUrl: cat.imageUrl,
                             displayOrder: cat.displayOrder,
+                            menuId: cat.menuId ?? undefined,
                         },
                     });
                     categoriesCount++;

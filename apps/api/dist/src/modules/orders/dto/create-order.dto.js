@@ -30,7 +30,7 @@ __decorate([
 ], OrderItemToppingDto.prototype, "optionId", void 0);
 class OrderItemDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { itemId: { required: true, type: () => String }, variantId: { required: false, type: () => String }, quantity: { required: true, type: () => Number, minimum: 1 }, notes: { required: false, type: () => String }, toppings: { required: false, type: () => [OrderItemToppingDto] } };
+        return { itemId: { required: true, type: () => String }, variantId: { required: false, type: () => String }, quantity: { required: true, type: () => Number, minimum: 1 }, notes: { required: false, type: () => String }, toppings: { required: false, type: () => [OrderItemToppingDto] }, bundleSelections: { required: false, type: () => [String] } };
     }
 }
 __decorate([
@@ -59,6 +59,12 @@ __decorate([
     (0, class_transformer_1.Type)(() => OrderItemToppingDto),
     __metadata("design:type", Array)
 ], OrderItemDto.prototype, "toppings", void 0);
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)({ each: true }),
+    __metadata("design:type", Array)
+], OrderItemDto.prototype, "bundleSelections", void 0);
 class OrderPaymentDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { mode: { required: true, type: () => String }, app: { required: false, type: () => String }, gatewayRef: { required: false, type: () => String }, status: { required: false, type: () => String } };
@@ -85,7 +91,7 @@ __decorate([
 ], OrderPaymentDto.prototype, "status", void 0);
 class CreateOrderDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { items: { required: true, type: () => [OrderItemDto] }, tableId: { required: false, type: () => String }, sectionId: { required: false, type: () => String }, isParcel: { required: false, type: () => Boolean }, isPostpaid: { required: false, type: () => Boolean }, notes: { required: false, type: () => String }, couponCode: { required: false, type: () => String }, customerPhone: { required: false, type: () => String }, paymentMode: { required: false, type: () => String }, payment: { required: false, type: () => OrderPaymentDto } };
+        return { items: { required: true, type: () => [OrderItemDto] }, tableId: { required: false, type: () => String }, sectionId: { required: false, type: () => String }, isParcel: { required: false, type: () => Boolean }, isPostpaid: { required: false, type: () => Boolean }, notes: { required: false, type: () => String }, couponCode: { required: false, type: () => String }, couponId: { required: false, type: () => String }, rewardPoints: { required: false, type: () => Number }, customerPhone: { required: false, type: () => String }, paymentMode: { required: false, type: () => String }, payment: { required: false, type: () => OrderPaymentDto } };
     }
 }
 exports.CreateOrderDto = CreateOrderDto;
@@ -126,6 +132,16 @@ __decorate([
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
 ], CreateOrderDto.prototype, "couponCode", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateOrderDto.prototype, "couponId", void 0);
+__decorate([
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Number)
+], CreateOrderDto.prototype, "rewardPoints", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsOptional)(),

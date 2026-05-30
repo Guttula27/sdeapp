@@ -35,7 +35,6 @@ export declare class QrController {
             createdAt: Date;
             updatedAt: Date;
             address: string | null;
-            outletType: import(".prisma/client").$Enums.OutletType;
             addressLine1: string | null;
             addressLine2: string | null;
             city: string | null;
@@ -47,6 +46,9 @@ export declare class QrController {
             upiId: string | null;
             logoUrl: string | null;
             primaryImageUrl: string | null;
+            publicCode: string | null;
+            multipleMenusEnabled: boolean;
+            outletType: import(".prisma/client").$Enums.OutletType;
             isActive: boolean;
             defaultPrepTime: number | null;
             parcelChargeEnabled: boolean;
@@ -57,7 +59,11 @@ export declare class QrController {
             gstApplicable: boolean;
             gstPercent: import("@prisma/client/runtime/library").Decimal;
             priceIncludesGst: boolean;
+            razorpayLinkedAccountId: string | null;
             facilityId: string | null;
+            acceptRewardRedemption: boolean;
+            kitchenAutoPrint: boolean;
+            kitchenAllowManualPrint: boolean;
         } | null;
         table: {
             number: string;

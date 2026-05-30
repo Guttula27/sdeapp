@@ -8,6 +8,7 @@ import { Users, Phone, Mail, Tag as TagIcon, Plus, User as UserIcon, ShoppingBag
 import { RootState } from '../../store';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
+import { useUserRole } from '../../hooks/useUserRole';
 
 dayjs.extend(relativeTime);
 
@@ -122,7 +123,9 @@ export default function CustomersPage() {
     }
   };
 
-  const isMultiOutlet = outlets.length > 1;
+  // Outlet-tier admins are pinned to their own outlet — hide the cross-outlet switcher.
+  const { tier } = useUserRole();
+  const isMultiOutlet = tier !== 'outlet' && outlets.length > 1;
   const filtered = customers
     .filter(c => {
       if (search) {

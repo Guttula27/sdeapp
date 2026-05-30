@@ -12,6 +12,8 @@ interface CartItem {
   name: string; variantName?: string;
   price: number; quantity: number;
   toppings?: CartTopping[];
+  bundleSelections?: string[];
+  bundleSelectionLabels?: string[];
 }
 
 const FOOD_GRADE_COLOR: Record<string, string> = { VEG: '#16a34a', NON_VEG: '#dc2626', VEGAN: '#0d9488' };
@@ -25,8 +27,15 @@ function FoodGradeDot({ grade }: { grade?: string }) {
   );
 }
 
-const makeLineId = (itemId: string, variantId: string | undefined, toppings: CartTopping[]) =>
-  `${itemId}-${variantId || ''}-${toppings.map(t => `${t.toppingId}:${t.optionId || ''}`).sort().join('|')}`;
+const makeLineId = (
+  itemId: string,
+  variantId: string | undefined,
+  toppings: CartTopping[],
+  bundleSelections?: string[],
+) =>
+  `${itemId}-${variantId || ''}` +
+  `-${toppings.map(t => `${t.toppingId}:${t.optionId || ''}`).sort().join('|')}` +
+  (bundleSelections?.length ? `-b:${[...bundleSelections].sort().join(',')}` : '');
 
 export default function ItemDetailPage() {
   const navigate = useNavigate();
@@ -42,6 +51,7 @@ export default function ItemDetailPage() {
   const [qty, setQty] = useState(1);
   const [activeImage, setActiveImage] = useState(0);
   const [topSel, setTopSel] = useState<Record<string, { selected: boolean; optionId?: string }>>({});
+  const [bundleSel, setBundleSel] = useState<Set<string>>(new Set());
 
   // Load from menu if no state was passed
   useEffect(() => {
@@ -98,8 +108,30 @@ export default function ItemDetailPage() {
 
   const gallery = [item.imageUrl, ...(item.images?.map((g: any) => g.url) || [])].filter(Boolean) as string[];
 
+  const maxBundlePicks = item.isBundle && item.maxBundleSelections
+    ? Number(item.maxBundleSelections) || 0
+    : 0;
+  const toggleBundlePick = (id: string) => setBundleSel((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) { next.delete(id); return next; }
+    if (maxBundlePicks > 0 && next.size >= maxBundlePicks) return prev;
+    next.add(id);
+    return next;
+  });
+
   const addToCart = () => {
-    const cartLineId = makeLineId(item.id, variant?.id, toppings);
+    if (maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks) {
+      toast.error(`Please pick ${maxBundlePicks} item${maxBundlePicks === 1 ? '' : 's'} from the bundle`);
+      return;
+    }
+    const bundleSelections = maxBundlePicks > 0 ? Array.from(bundleSel) : undefined;
+    const bundleSelectionLabels = bundleSelections?.map((id) => {
+      const child = item.bundleChildren?.find((c: any) => c.id === id);
+      if (!child) return '';
+      const v = child.variant?.name ? ` · ${child.variant.name}` : '';
+      return `${child.childItem?.name || 'Item'}${v}`;
+    });
+    const cartLineId = makeLineId(item.id, variant?.id, toppings, bundleSelections);
     const key = `cart-${outletId || ''}`;
     let existing: CartItem[] = [];
     try { existing = JSON.parse(sessionStorage.getItem(key) || '[]'); } catch {}
@@ -110,6 +142,8 @@ export default function ItemDetailPage() {
       name: item.name, variantName: variant?.name,
       price: unitPrice, quantity: qty,
       toppings: toppings.length ? toppings : undefined,
+      bundleSelections,
+      bundleSelectionLabels,
     });
     sessionStorage.setItem(key, JSON.stringify(existing));
     toast.success(`Added ${qty} × ${item.name}`);
@@ -282,6 +316,57 @@ export default function ItemDetailPage() {
           </div>
         )}
 
+        {/* Bundle picker */}
+        {maxBundlePicks > 0 && Array.isArray(item.bundleChildren) && item.bundleChildren.length > 0 && (
+          <div className="bg-white rounded-2xl border border-slate-100 p-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                Pick {maxBundlePicks} of {item.bundleChildren.length}
+              </p>
+              <span className={clsx(
+                'text-[11px] font-bold px-2 py-0.5 rounded-full',
+                bundleSel.size === maxBundlePicks
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'bg-amber-50 text-amber-700',
+              )}>
+                {bundleSel.size}/{maxBundlePicks} selected
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              {item.bundleChildren.map((child: any) => {
+                const checked = bundleSel.has(child.id);
+                const atCap = !checked && bundleSel.size >= maxBundlePicks;
+                const childName = child.childItem?.name || 'Item';
+                const variantName = child.variant?.name ? ` · ${child.variant.name}` : '';
+                const qtyLabel = (Number(child.quantity) || 1) > 1 ? ` × ${child.quantity}` : '';
+                return (
+                  <label
+                    key={child.id}
+                    className={clsx(
+                      'flex items-center justify-between px-3 py-2.5 rounded-xl border',
+                      checked ? 'border-brand-300 bg-brand-50/40' : 'border-slate-100 bg-white',
+                      atCap && 'opacity-50',
+                    )}
+                  >
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={atCap}
+                        onChange={() => toggleBundlePick(child.id)}
+                        className="w-4 h-4 accent-brand-500 rounded"
+                      />
+                      <span className="text-sm font-semibold text-slate-800">
+                        {childName}{variantName}{qtyLabel}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Quantity */}
         <div className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center justify-between">
           <p className="text-sm font-semibold text-slate-700">Quantity</p>
@@ -301,9 +386,13 @@ export default function ItemDetailPage() {
         </div>
         <button
           onClick={addToCart}
-          className="flex-1 bg-gradient-to-r from-orange-500 to-orange-600 text-white py-3 rounded-2xl text-sm font-bold shadow-md flex items-center justify-center gap-2"
+          disabled={maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks}
+          className="flex-1 bg-gradient-to-r from-orange-500 to-orange-600 text-white py-3 rounded-2xl text-sm font-bold shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <ShoppingCart size={15} /> Add {qty} to cart
+          <ShoppingCart size={15} />
+          {maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks
+            ? `Pick ${maxBundlePicks - bundleSel.size} more`
+            : `Add ${qty} to cart`}
         </button>
       </div>
     </div>

@@ -6,6 +6,9 @@ import { OrdersGateway } from './orders.gateway';
 import { OrderStatus, OrderItemStatus, OutletType } from '@prisma/client';
 import { TranslationsService } from '../translations/translations.service';
 import { LifecycleDispatcherService } from '../customer-alerts/lifecycle-dispatcher.service';
+import { PricingService } from '../pricing/pricing.service';
+import { RewardsService } from '../rewards/rewards.service';
+import { ServiceStationsService } from '../service-stations/service-stations.service';
 
 @Injectable()
 export class OrdersService {
@@ -15,6 +18,9 @@ export class OrdersService {
     private translations: TranslationsService,
     @Inject(forwardRef(() => LifecycleDispatcherService))
     private dispatcher: LifecycleDispatcherService,
+    private pricing: PricingService,
+    private rewards: RewardsService,
+    private serviceStations: ServiceStationsService,
   ) {}
 
   /** Hydrate items[].item, items[].variant, and outlet for a batch of orders. */
@@ -60,10 +66,98 @@ export class OrdersService {
       if (t?.outletId === outletId) tableTypeId = t.tableTypeId;
     }
 
+    // Bundle expansion: an item flagged isBundle=true is rewritten into N
+    // child OrderItem rows so the kitchen ticket lists each prep separately.
+    // The first child carries the full bundle price; siblings have
+    // totalPrice=0. The bundle metadata lives on the parent Item (price,
+    // GST, name) — no separate Bundle table.
+    //
+    // Customer-choice bundles (maxBundleSelections > 0): the cart line
+    // carries bundleSelections — the picked ItemBundleChild ids. We expand
+    // only those rows after validating count + ownership.
+    const expanded: { dto: any; bundleId?: string; bundleName?: string; bundlePrice?: number; bundleGstRate?: number; isPrimary?: boolean }[] = [];
+    for (const li of dto.items) {
+      const parent = await this.prisma.item.findUnique({
+        where: { id: li.itemId },
+        include: {
+          bundleChildren: { orderBy: { displayOrder: 'asc' } },
+        },
+      });
+      if (parent?.isBundle) {
+        if (!parent.bundleChildren.length) {
+          throw new BadRequestException('Bundle has no items configured');
+        }
+        let childrenForOrder = parent.bundleChildren;
+        const maxPicks = parent.maxBundleSelections ?? 0;
+        if (maxPicks > 0) {
+          const picks = (li as any).bundleSelections as string[] | undefined;
+          if (!Array.isArray(picks) || picks.length !== maxPicks) {
+            throw new BadRequestException(
+              `Bundle "${parent.name}" requires exactly ${maxPicks} selection${maxPicks === 1 ? '' : 's'}`,
+            );
+          }
+          if (new Set(picks).size !== picks.length) {
+            throw new BadRequestException(`Bundle "${parent.name}" selections must be unique`);
+          }
+          const validIds = new Set(parent.bundleChildren.map((c) => c.id));
+          for (const id of picks) {
+            if (!validIds.has(id)) {
+              throw new BadRequestException(`Bundle "${parent.name}" got an invalid selection`);
+            }
+          }
+          const bySelectedId = new Set(picks);
+          childrenForOrder = parent.bundleChildren.filter((c) => bySelectedId.has(c.id));
+        }
+        // Bundle price uses the parent Item's basePrice (or selected variant
+        // price if the cart line specified one — handled by resolveOrderItems
+        // for the primary row below).
+        const bundlePrice = Number(parent.basePrice) * li.quantity;
+        const bundleGstRate = parent.gstRate != null ? Number(parent.gstRate) : undefined;
+        childrenForOrder.forEach((child, idx) => {
+          expanded.push({
+            dto: {
+              itemId: child.childItemId,
+              variantId: child.variantId || undefined,
+              quantity: child.quantity * li.quantity,
+            },
+            bundleId: parent.id,
+            bundleName: parent.name,
+            bundlePrice: idx === 0 ? bundlePrice : 0,
+            bundleGstRate,
+            isPrimary: idx === 0,
+          });
+        });
+      } else {
+        expanded.push({ dto: li });
+      }
+    }
+
     const items = await this.resolveOrderItems(
-      dto.items,
+      expanded.map((e) => e.dto) as any,
       gstOn ? { viewerTagId, tableTypeId, outletDefaultPct } : null,
     );
+
+    // Override prices for bundle child rows so the bundle's fixed price wins
+    // over the sum of regular item prices. The primary row holds the full
+    // bundle revenue; siblings are zeroed out.
+    for (let i = 0; i < items.length; i++) {
+      const meta = expanded[i];
+      if (!meta?.bundleId) continue;
+      const line = items[i];
+      (line as any).bundleId = meta.bundleId;
+      if (meta.isPrimary) {
+        line.unitPrice = (meta.bundlePrice ?? 0) / Math.max(1, line.quantity);
+        line.totalPrice = meta.bundlePrice ?? 0;
+        if (meta.bundleGstRate !== undefined) line.gstRate = meta.bundleGstRate;
+        line.gstAmount = line.totalPrice * (line.gstRate / 100);
+      } else {
+        line.unitPrice = 0;
+        line.totalPrice = 0;
+        line.gstAmount = 0;
+      }
+      const bundleNote = `Bundle: ${meta.bundleName}`;
+      line.notes = line.notes ? `${bundleNote} | ${line.notes}` : bundleNote;
+    }
 
     const linesTotal = items.reduce((sum, i) => sum + i.totalPrice, 0);
 
@@ -94,27 +188,19 @@ export class OrdersService {
     const sgstAmount = taxAmount / 2;
     const cgstAmount = taxAmount / 2;
 
-    const parcelAmount = dto.isParcel ? await this.computeParcelCharge(outletId, items) : 0;
-    const totalAmount = subtotal + taxAmount + parcelAmount;
+    const parcelAmount = dto.isParcel ? await this.computeParcelCharge(outletId, items as any) : 0;
+    let totalAmount = subtotal + taxAmount + parcelAmount;
+    let discountAmount = 0;
+    let appliedCouponId: string | null = null;
+    let appliedCouponDiscount = 0;
+    let appliedRewardPoints = 0;
+    let appliedRewardAmount = 0;
 
-    // Pull-and-increment the outlet's persistent order sequence and configurable
-    // token counter atomically. Atomic increment prevents collisions when two
-    // orders are placed concurrently.
-    const counters = await this.prisma.outlet.update({
-      where: { id: outletId },
-      data: {
-        nextOrderSequence: { increment: 1 },
-        nextTokenNumber:   { increment: 1 },
-      },
-      select: { nextOrderSequence: true, nextTokenNumber: true },
-    });
-    // We incremented first; consume the previous value for this order.
-    const orderSeq    = counters.nextOrderSequence - 1;
-    const tokenNumber = counters.nextTokenNumber - 1;
-    const orderNumber = `ORD-${outletId.slice(0, 4).toUpperCase()}-${String(orderSeq).padStart(5, '0')}`;
-
-    // Staff Place Order may pass a customer phone to attach (upsert a stub user)
-    let resolvedCustomerId = userId;
+    // Resolve customer identity ahead of the promotions step so coupon
+    // targeting + reward redemption know who they're for. The same block
+    // ran later in the original flow; pulling it forward keeps it usable
+    // both as a promo input and for the order create downstream.
+    let resolvedCustomerId: string | undefined = userId;
     let resolvedStaffId: string | undefined;
     if (dto.customerPhone) {
       const phone = dto.customerPhone.trim();
@@ -128,11 +214,76 @@ export class OrdersService {
       }
     }
 
+    // ─── Promotions waterfall ─────────────────────────────────────
+    // Auto-applying discounts (bill / category / subcategory / item), one
+    // customer-selected coupon, and an optional reward-point redemption.
+    // PricingService is the single source of truth — the customer-side
+    // /cart/quote endpoint runs the exact same code.
+    // For the promo quote we use the customer's *original* cart lines,
+    // not the expanded child rows. A bundle counts as one line at the
+    // bundle's parent-item price; pricing handles category/subcategory
+    // lookup from the parent Item.
+    const promoLines: any[] = dto.items.map((li) => ({
+      itemId: li.itemId,
+      variantId: li.variantId,
+      quantity: li.quantity,
+    }));
+    try {
+      const quote = await this.pricing.quoteCart({
+        outletId,
+        lines: promoLines,
+        isParcel: !!dto.isParcel,
+        customerId: resolvedCustomerId,
+        couponId: dto.couponId,
+        rewardPoints: dto.rewardPoints,
+      });
+      // The pricing quote reflects the full bill (subtotal + tax + parcel +
+      // promotions). Use its totalAmount as the persisted total; surface the
+      // delta as the order's discountAmount for receipt summary.
+      const preDiscount = subtotal + taxAmount + parcelAmount;
+      totalAmount = quote.totalAmount;
+      discountAmount = Math.max(0, preDiscount - quote.totalAmount);
+      appliedCouponId = quote.coupon?.id ?? null;
+      appliedCouponDiscount = quote.coupon?.amount ?? 0;
+      appliedRewardPoints = quote.reward?.points ?? 0;
+      appliedRewardAmount = quote.reward?.amount ?? 0;
+    } catch (e: any) {
+      // If the customer asked for a coupon / redemption and it failed, fail
+      // the whole order — the customer's expectation of the bill total
+      // would otherwise be off by the discount they thought they'd get.
+      if (dto.couponId || dto.rewardPoints) throw e;
+      // No promotions requested — silently fall back to the un-promo bill.
+    }
+
+    // Pull-and-increment the outlet's persistent order sequence and configurable
+    // token counter atomically. Atomic increment prevents collisions when two
+    // orders are placed concurrently.
+    const counters = await this.prisma.outlet.update({
+      where: { id: outletId },
+      data: {
+        nextOrderSequence: { increment: 1 },
+        nextTokenNumber:   { increment: 1 },
+      },
+      select: { nextOrderSequence: true, nextTokenNumber: true, publicCode: true },
+    });
+    // We incremented first; consume the previous value for this order.
+    const orderSeq    = counters.nextOrderSequence - 1;
+    const tokenNumber = counters.nextTokenNumber - 1;
+    // Prefer the outlet's publicCode (e.g. "OL-A4F23C81") as the order-number
+    // prefix — it's unique by design. The legacy outletId.slice(0,4) prefix
+    // collided when two outlets shared the first 4 chars of their CUID
+    // (caught by the cluster smoke test on 2026-05-25).
+    const prefix = counters.publicCode || `OL-${outletId.slice(0, 8).toUpperCase()}`;
+    const orderNumber = `ORD-${prefix}-${String(orderSeq).padStart(5, '0')}`;
+
+    // (customer + staff already resolved above, ahead of promotions)
+
     // Aggregate quantities per item so a cart with the same item twice still
     // decrements once with the combined count.
     const stockDeltas = new Map<string, number>();
     for (const line of items) {
-      stockDeltas.set(line.itemId, (stockDeltas.get(line.itemId) ?? 0) + line.quantity);
+      const itemId = (line as any).itemId as string;
+      stockDeltas.set(itemId, (stockDeltas.get(itemId) ?? 0) + line.quantity);
     }
 
     const order = await this.prisma.$transaction(async (tx) => {
@@ -169,7 +320,7 @@ export class OrdersService {
         });
       }
 
-      return tx.order.create({
+      const created = await tx.order.create({
         data: {
           orderNumber,
           tokenNumber,
@@ -186,10 +337,13 @@ export class OrdersService {
           sgstAmount,
           cgstAmount,
           parcelAmount,
-          discountAmount: 0,
+          discountAmount,
           totalAmount,
           items: {
-            create: items,
+            create: items.map((it: any) => ({
+              ...it,
+              ...(it.bundleId ? { bundleId: it.bundleId } : {}),
+            })),
           },
           statusHistory: {
             create: { status: OrderStatus.CREATED, changedBy: userId },
@@ -219,6 +373,57 @@ export class OrdersService {
           },
         },
       });
+
+      // Persist the coupon redemption (ledger row + counter increment) inside
+      // the same transaction as the order — atomic against double-claims.
+      if (appliedCouponId && resolvedCustomerId) {
+        await tx.couponUsage.create({
+          data: {
+            couponId: appliedCouponId,
+            userId: resolvedCustomerId,
+            orderId: created.id,
+            discountAmount: appliedCouponDiscount,
+          },
+        });
+        await tx.coupon.update({
+          where: { id: appliedCouponId },
+          data: { usesCount: { increment: 1 } },
+        });
+      }
+
+      // Reward redemption — decrement balance + write the REDEEM transaction.
+      // We persist inline so it fails the order if the balance race-loses.
+      if (appliedRewardPoints > 0 && resolvedCustomerId) {
+        const account = await tx.customerRewardAccount.upsert({
+          where: { userId: resolvedCustomerId },
+          create: { userId: resolvedCustomerId },
+          update: {},
+        });
+        if (account.balance < appliedRewardPoints) {
+          throw new BadRequestException('Insufficient reward points');
+        }
+        const updated = await tx.customerRewardAccount.update({
+          where: { id: account.id },
+          data: {
+            balance: { decrement: appliedRewardPoints },
+            lifetimeRedeemed: { increment: appliedRewardPoints },
+          },
+        });
+        await tx.rewardTransaction.create({
+          data: {
+            accountId: account.id,
+            userId: resolvedCustomerId,
+            type: 'REDEEM',
+            points: -appliedRewardPoints,
+            amountValue: appliedRewardAmount,
+            balanceAfter: updated.balance,
+            orderId: created.id,
+            outletId,
+          },
+        });
+      }
+
+      return created;
     });
 
     this.ordersGateway.emitOrderCreated(outletId, order);
@@ -260,6 +465,10 @@ export class OrdersService {
       this.dispatcher.fire('ORDER_PLACED', ctx).catch(() => {});
       if ((order.payments || []).some((p: any) => p.status === 'SUCCESS')) {
         this.dispatcher.fire('PAYMENT_RECEIVED', ctx).catch(() => {});
+        // Bundled-payment path (counter cash, prepaid): order was paid at
+        // create time so we credit earn-points right here. Deferred online
+        // payments flow through PaymentsService.confirmPayment instead.
+        this.tryEarnRewards(order.id, order.customerId, outletId, Number(order.subtotal)).catch(() => {});
       }
     }
     return order;
@@ -279,6 +488,13 @@ export class OrdersService {
     // (not an admin / counter / kitchen role), restrict to orders placed at
     // tables assigned to any of their service stations. Admins and other
     // staff see the full list.
+    //
+    // Parcel station workers see every isParcel order at this outlet,
+    // independent of the table-based scoping. If no parcel station has an
+    // active worker, parcel orders also flow to whichever regular station
+    // the user is on, so they don't get lost (the fallback the product
+    // spec calls out: "parcel orders will be routed to regular service
+    // station").
     if (filters.callerUserId) {
       const stations = await this.prisma.serviceStation.findMany({
         where: {
@@ -286,12 +502,33 @@ export class OrdersService {
           isActive: true,
           workers: { some: { userId: filters.callerUserId } },
         },
-        select: { tables: { select: { tableId: true } } },
+        select: { isParcelStation: true, tables: { select: { tableId: true } } },
       });
       if (stations.length > 0) {
-        const tableIds = stations.flatMap((s) => s.tables.map((t) => t.tableId));
-        // Empty assignment means "no tables yet" — return nothing rather than everything.
-        where.tableId = { in: tableIds.length ? tableIds : ['__none__'] };
+        const tableIds = stations
+          .filter((s) => !s.isParcelStation)
+          .flatMap((s) => s.tables.map((t) => t.tableId));
+        const userIsOnParcelStation = stations.some((s) => s.isParcelStation);
+        const parcelActive = await this.serviceStations.hasActiveParcelStation(outletId);
+
+        const visibility: any[] = [];
+        if (tableIds.length) visibility.push({ tableId: { in: tableIds } });
+        if (userIsOnParcelStation) {
+          // The parcel desk sees every parcel ticket at this outlet.
+          visibility.push({ isParcel: true });
+        } else if (!parcelActive) {
+          // Fallback: no parcel desk staffed → regular service workers
+          // also see parcel orders so they don't go unattended.
+          visibility.push({ isParcel: true });
+        }
+
+        if (visibility.length === 0) {
+          where.tableId = '__none__';
+        } else if (visibility.length === 1) {
+          Object.assign(where, visibility[0]);
+        } else {
+          where.OR = visibility;
+        }
       }
     }
 
@@ -366,6 +603,9 @@ export class OrdersService {
           include: {
             item: true,
             variant: true,
+            // Include the snapshot menu so receipts can group by it without
+            // having to walk back through subcategory → category.
+            menu: { select: { id: true, name: true } },
             review: {
               include: {
                 paybackPayment: { select: { id: true, mode: true, amount: true, status: true, createdAt: true } },
@@ -393,16 +633,38 @@ export class OrdersService {
     return order;
   }
 
+  // Bill-number lookup used by the cashier dispute flow. orderNumber is
+  // @unique globally; we still scope the lookup to the caller's outlet so a
+  // cashier at outlet A can't accidentally raise a dispute against B.
+  async findByOrderNumber(outletId: string, orderNumber: string, lang?: string | null) {
+    const trimmed = orderNumber.trim();
+    if (!trimmed) throw new NotFoundException('Bill number is required');
+    const order = await this.prisma.order.findFirst({
+      where: { orderNumber: trimmed, outletId },
+      include: {
+        items: { include: { item: true, variant: true } },
+        table: true,
+        outlet: { select: { id: true, name: true } },
+        customer: { select: { id: true, name: true, phone: true } },
+        payments: true,
+      },
+    });
+    if (!order) throw new NotFoundException(`No order found with bill number ${trimmed} at this outlet`);
+    await this.hydrateOrders([order], lang);
+    return order;
+  }
+
   async updateStatus(id: string, dto: UpdateOrderStatusDto, userId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id },
-      include: { outlet: { select: { outletType: true } } },
+      include: { outlet: { select: { outletType: true, name: true, businessId: true } } },
     });
     if (!order) throw new NotFoundException('Order not found');
 
     this.validateStatusTransition(order.status, dto.status, {
       outletType: order.outlet?.outletType,
       tableId: order.tableId,
+      isParcel: order.isParcel,
     });
 
     const updated = await this.prisma.order.update({
@@ -426,11 +688,161 @@ export class OrdersService {
     });
 
     this.ordersGateway.emitOrderStatusUpdated(order.outletId, updated);
+
+    // Parcel handoff: parcel station marked the bag READY_FOR_PICKUP → ping
+    // the customer so they walk to the counter. Best-effort; doesn't block
+    // the status update.
+    if (dto.status === OrderStatus.READY_FOR_PICKUP && updated.customerId) {
+      this.dispatcher.fire('PICKUP_READY', {
+        customerId: updated.customerId,
+        customerName: updated.customer?.name,
+        customerPhone: updated.customer?.phone,
+        businessId: order.outlet?.businessId ?? null,
+        outletId: order.outletId,
+        outletName: order.outlet?.name,
+        orderId: updated.id,
+        orderNumber: updated.orderNumber,
+      }).catch(() => {});
+    }
     return updated;
+  }
+
+  // Idempotent reward-earn — public so PaymentsService can call after a
+  // successful capture. Guards against double-credits on retries via an
+  // EARN-row lookup keyed by orderId.
+  async tryEarnRewards(orderId: string, customerId: string, outletId: string, subtotal: number) {
+    try {
+      const existing = await this.prisma.rewardTransaction.findFirst({
+        where: { orderId, type: 'EARN' },
+        select: { id: true },
+      });
+      if (existing) return;
+      await this.rewards.earnForOrder({
+        userId: customerId,
+        orderId,
+        outletId,
+        subtotal,
+      });
+    } catch {
+      // Best-effort: a reward credit failure should never break the
+      // checkout. Operational alerts pick up via the audit trail.
+    }
   }
 
   async cancel(id: string, userId: string, reason?: string) {
     return this.updateStatus(id, { status: OrderStatus.CANCELLED, notes: reason }, userId);
+  }
+
+  /**
+   * Course planner: assign items to course numbers and optionally name each
+   * course. Items not listed are left as-is. Sequence on items that have
+   * already progressed past PENDING is disallowed — once an item is
+   * cooking, reordering it is meaningless.
+   */
+  async setSequences(
+    orderId: string,
+    payload: {
+      items?: Array<{ itemId: string; sequenceNumber: number | null }>;
+      labels?: Record<string, string> | null;
+    },
+  ) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    if (payload.items?.length) {
+      const byId = new Map(order.items.map((it) => [it.id, it]));
+      for (const { itemId, sequenceNumber } of payload.items) {
+        const item = byId.get(itemId);
+        if (!item) throw new BadRequestException(`Item ${itemId} is not part of this order`);
+        // Once an item has started cooking the course-position no longer
+        // changes its lifecycle, so block edits to keep the model honest.
+        if (item.status !== OrderItemStatus.PENDING && item.sequenceNumber !== sequenceNumber) {
+          throw new BadRequestException(
+            `Item "${itemId}" is already ${item.status} — sequencing can only be edited on PENDING items`,
+          );
+        }
+        if (sequenceNumber != null && (!Number.isInteger(sequenceNumber) || sequenceNumber < 1)) {
+          throw new BadRequestException('sequenceNumber must be a positive integer or null');
+        }
+      }
+      await this.prisma.$transaction(
+        payload.items.map(({ itemId, sequenceNumber }) =>
+          this.prisma.orderItem.update({
+            where: { id: itemId },
+            data: { sequenceNumber },
+          }),
+        ),
+      );
+    }
+
+    if (payload.labels !== undefined) {
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: { sequenceLabels: payload.labels === null ? null : (payload.labels as any) },
+      });
+    }
+
+    // Recompute the active course — if the customer/staff shifted things
+    // around such that the current course has no live items, fast-forward.
+    await this.advanceCourseIfReady(orderId);
+
+    const updated = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: { include: { item: true, variant: true } }, table: true },
+    });
+    if (updated) this.ordersGateway.emitOrderStatusUpdated(updated.outletId, updated);
+    return updated;
+  }
+
+  /**
+   * If every live item (not CANCELLED) at the order's current course is
+   * SERVED, bump activeSequence to the next course that has any live
+   * items. Repeats until it finds a course with outstanding work, or runs
+   * out of courses (in which case activeSequence still advances past the
+   * last course — harmless).
+   */
+  private async advanceCourseIfReady(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { activeSequence: true, items: { select: { sequenceNumber: true, status: true } } },
+    });
+    if (!order) return;
+
+    let active = order.activeSequence;
+    const live = order.items.filter((i) => i.status !== OrderItemStatus.CANCELLED);
+
+    // Build the set of distinct sequence numbers in use (skip nulls — those
+    // items are always-active and don't gate anything).
+    const sequenceNumbers = Array.from(
+      new Set(live.map((i) => i.sequenceNumber).filter((n): n is number => n != null)),
+    ).sort((a, b) => a - b);
+    if (sequenceNumbers.length === 0) return; // no sequencing configured
+
+    while (true) {
+      const atCurrent = live.filter((i) => i.sequenceNumber === active);
+      if (atCurrent.length === 0) {
+        // No items at this course → if a later course exists, jump to it.
+        const next = sequenceNumbers.find((n) => n > active);
+        if (next == null) break;
+        active = next;
+        continue;
+      }
+      const allDone = atCurrent.every((i) => i.status === OrderItemStatus.SERVED);
+      if (!allDone) break;
+      const next = sequenceNumbers.find((n) => n > active);
+      if (next == null) { active = active + 1; break; }
+      active = next;
+    }
+
+    if (active !== order.activeSequence) {
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: { activeSequence: active },
+      });
+    }
   }
 
   async updateItemStatus(orderId: string, orderItemId: string, status: OrderItemStatus, userId?: string) {
@@ -459,6 +871,14 @@ export class OrdersService {
       where: { id: orderItemId },
       data: { status },
     });
+
+    // Course sequencing: when an item is SERVED, check whether the order's
+    // current course is now fully done. If so, advance to the next course
+    // so the kitchen sees the next batch of items. Idempotent — re-runs
+    // are a no-op once the next sequence has items present.
+    if (status === OrderItemStatus.SERVED) {
+      await this.advanceCourseIfReady(orderId);
+    }
 
     // Auto-rollup: derive parent order status from item statuses
     const rolledUp = await this.rollupOrderStatus(orderId, userId);
@@ -545,7 +965,8 @@ export class OrdersService {
 
     // Don't touch frozen / manual-only states
     const frozen: OrderStatus[] = [
-      OrderStatus.OUT_FOR_SERVICE, OrderStatus.SERVED, OrderStatus.CANCELLED,
+      OrderStatus.READY_FOR_PICKUP, OrderStatus.OUT_FOR_SERVICE,
+      OrderStatus.SERVED, OrderStatus.CANCELLED,
       OrderStatus.DISPUTED, OrderStatus.RESOLVED,
       OrderStatus.FOR_REFUND, OrderStatus.REFUND_COMPLETE,
     ];
@@ -587,6 +1008,10 @@ export class OrdersService {
         const item = await this.prisma.item.findUnique({
           where: { id: i.itemId },
           include: {
+            // Walk up to Category so we can snapshot the menuId on the
+            // OrderItem — keeps historical receipt grouping stable even if
+            // the category is later moved to a different menu.
+            subcategory: { select: { category: { select: { menuId: true } } } },
             customerTagPrices: gstCtx?.viewerTagId
               ? { where: { customerTagId: gstCtx.viewerTagId } }
               : false,
@@ -683,6 +1108,7 @@ export class OrdersService {
           gstRate,
           gstAmount,
           notes: composedNotes,
+          menuId: (item as any).subcategory?.category?.menuId ?? null,
         };
       }),
     );
@@ -758,25 +1184,36 @@ export class OrdersService {
   private validateStatusTransition(
     current: OrderStatus,
     next: OrderStatus,
-    ctx: { outletType?: OutletType | null; tableId?: string | null } = {},
+    ctx: { outletType?: OutletType | null; tableId?: string | null; isParcel?: boolean } = {},
   ) {
-    const skipService = !this.needsOutForService(ctx.outletType, ctx.tableId);
-    const readyNext = skipService
-      ? [OrderStatus.SERVED, OrderStatus.CANCELLED]                         // counter-collect path
-      : [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED];               // table-service path
+    // Three READY → … paths:
+    //   parcel orders            → READY_FOR_PICKUP (parcel counter step)
+    //   table-service orders     → OUT_FOR_SERVICE  (server walks to table)
+    //   self-service / counter   → SERVED           (no intermediate step)
+    const parcelPath = !!ctx.isParcel;
+    const skipService = !parcelPath && !this.needsOutForService(ctx.outletType, ctx.tableId);
+    let readyNext: OrderStatus[];
+    if (parcelPath) {
+      readyNext = [OrderStatus.READY_FOR_PICKUP, OrderStatus.SERVED, OrderStatus.CANCELLED];
+    } else if (skipService) {
+      readyNext = [OrderStatus.SERVED, OrderStatus.CANCELLED];               // counter-collect path
+    } else {
+      readyNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED];      // table-service path
+    }
 
     const allowed: Record<OrderStatus, OrderStatus[]> = {
-      CREATED:         [OrderStatus.QUEUED, OrderStatus.CANCELLED],
-      QUEUED:          [OrderStatus.PREPARING, OrderStatus.CANCELLED],
-      PREPARING:       [OrderStatus.READY, OrderStatus.CANCELLED],
-      READY:           readyNext,
-      OUT_FOR_SERVICE: [OrderStatus.SERVED],
-      SERVED:          [OrderStatus.DISPUTED],
-      CANCELLED:       [],
-      DISPUTED:        [OrderStatus.RESOLVED, OrderStatus.FOR_REFUND],
-      RESOLVED:        [],
-      FOR_REFUND:      [OrderStatus.REFUND_COMPLETE],
-      REFUND_COMPLETE: [],
+      CREATED:          [OrderStatus.QUEUED, OrderStatus.CANCELLED],
+      QUEUED:           [OrderStatus.PREPARING, OrderStatus.CANCELLED],
+      PREPARING:        [OrderStatus.READY, OrderStatus.CANCELLED],
+      READY:            readyNext,
+      READY_FOR_PICKUP: [OrderStatus.SERVED, OrderStatus.CANCELLED],
+      OUT_FOR_SERVICE:  [OrderStatus.SERVED],
+      SERVED:           [OrderStatus.DISPUTED],
+      CANCELLED:        [],
+      DISPUTED:         [OrderStatus.RESOLVED, OrderStatus.FOR_REFUND],
+      RESOLVED:         [],
+      FOR_REFUND:       [OrderStatus.REFUND_COMPLETE],
+      REFUND_COMPLETE:  [],
     };
     if (current === next) return;
     if (!allowed[current].includes(next)) {
@@ -859,14 +1296,14 @@ export class OrdersService {
     }
 
     const newItems = await this.resolveOrderItems(
-      dto.items,
+      dto.items as any,
       gstOn ? { viewerTagId, tableTypeId, outletDefaultPct } : null,
     );
 
     // Persist new items, then recompute totals across every line on the order.
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.orderItem.createMany({
-        data: newItems.map((i) => ({ ...i, orderId })),
+        data: newItems.map((i) => ({ ...i, orderId })) as any,
       });
 
       const allItems = await tx.orderItem.findMany({

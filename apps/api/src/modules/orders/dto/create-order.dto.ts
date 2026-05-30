@@ -12,6 +12,10 @@ class OrderItemToppingDto {
 }
 
 class OrderItemDto {
+  // itemId references the selected menu item. If the item is a bundle
+  // (isBundle=true on the Item), the server transparently expands it into
+  // N child OrderItem rows at order time — the cart sends the same shape
+  // for bundles and regular items.
   @IsString()
   itemId: string;
 
@@ -32,6 +36,14 @@ class OrderItemDto {
   @ValidateNested({ each: true })
   @Type(() => OrderItemToppingDto)
   toppings?: OrderItemToppingDto[];
+
+  // Customer-choice bundles: the picked ItemBundleChild ids. Required when
+  // the parent Item has maxBundleSelections set; ignored otherwise. The
+  // server validates count + ownership before expanding.
+  @IsArray()
+  @IsOptional()
+  @IsString({ each: true })
+  bundleSelections?: string[];
 }
 
 class OrderPaymentDto {
@@ -83,6 +95,17 @@ export class CreateOrderDto {
   @IsString()
   @IsOptional()
   couponCode?: string;
+
+  // Newer structured promo fields (the cart's POST /cart/quote returns these
+  // by id). Coupon is one-per-bill; rewardPoints is the customer's chosen
+  // burn amount and is validated server-side against their balance + cap.
+  @IsString()
+  @IsOptional()
+  couponId?: string;
+
+  @IsInt()
+  @IsOptional()
+  rewardPoints?: number;
 
   @IsString()
   @IsOptional()

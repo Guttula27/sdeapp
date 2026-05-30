@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import {
-  Plus, UserCog, Trash2, Edit2, Check, X, ChefHat, Search, Crown,
+  Plus, UserCog, Trash2, Edit2, Check, X, ChefHat, Search, Crown, Printer as PrinterIcon,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import api from '../../services/api';
@@ -12,12 +12,15 @@ import ConfirmDialog from '../../components/common/ConfirmDialog';
 
 type StaffLite = { id: string; name: string; phone: string; role?: { name: string } };
 type StationItem = { id: string; name: string };
+type PrinterLite = { id: string; name: string; address: string | null; connection: string };
 type Station = {
   id: string;
   name: string;
   isMaster?: boolean;
   currentWorker?: { id: string; name: string; phone: string } | null;
   items: StationItem[];
+  printerId?: string | null;
+  printer?: PrinterLite | null;
 };
 
 type MenuItem = { id: string; name: string };
@@ -31,6 +34,7 @@ export default function StationsPage() {
   const [stations, setStations] = useState<Station[]>([]);
   const [staff, setStaff] = useState<StaffLite[]>([]);
   const [menu, setMenu] = useState<MenuCat[]>([]);
+  const [printers, setPrinters] = useState<PrinterLite[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -44,14 +48,16 @@ export default function StationsPage() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [s, st, m] = await Promise.all([
+      const [s, st, m, pr] = await Promise.all([
         api.get(`/outlets/${outletId}/kitchen-stations`),
         api.get(`/outlets/${outletId}/kitchen-stations/staff`),
         api.get(`/outlets/${outletId}/menu`),
+        api.get(`/outlets/${outletId}/printers`).catch(() => null),
       ]);
       setStations(s.data.data || []);
       setStaff(st.data.data || []);
       setMenu(m.data.data || []);
+      setPrinters(pr?.data.data || []);
     } finally {
       setLoading(false);
     }
@@ -93,6 +99,16 @@ export default function StationsPage() {
         currentWorkerId: workerId,
       });
       toast.success(workerId ? 'Worker assigned' : 'Worker unassigned');
+      fetchAll();
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed');
+    }
+  };
+
+  const assignPrinter = async (stationId: string, printerId: string | null) => {
+    try {
+      await api.patch(`/outlets/${outletId}/kitchen-stations/${stationId}`, { printerId });
+      toast.success(printerId ? 'Printer assigned' : 'Printer cleared');
       fetchAll();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed');
@@ -226,6 +242,25 @@ export default function StationsPage() {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500 flex items-center gap-1 mb-1.5">
+                    <PrinterIcon size={11} /> Receipt Printer
+                  </label>
+                  <select
+                    value={station.printer?.id || station.printerId || ''}
+                    onChange={(e) => assignPrinter(station.id, e.target.value || null)}
+                    className="input text-xs"
+                  >
+                    <option value="">— No printer —</option>
+                    {printers.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                  {printers.length === 0 && (
+                    <p className="text-[10px] text-slate-400 mt-1 italic">Add printers under Outlet Profile › Kitchen Printing.</p>
+                  )}
                 </div>
 
                 <label className="flex items-center justify-between gap-2 cursor-pointer">

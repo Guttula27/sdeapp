@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import {
   Plus, Trash2, Edit2, Check, X, ConciergeBell, Users as UsersIcon,
-  LayoutGrid,
+  LayoutGrid, Package,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import api from '../../services/api';
@@ -24,6 +24,7 @@ type ServiceStation = {
   id: string;
   name: string;
   tableType?: TableTypeLite | null;
+  isParcelStation?: boolean;
   workers: { id: string; user: StaffLite }[];
   tables: { id: string; table: TableLite }[];
 };
@@ -40,6 +41,7 @@ export default function ServiceStationsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName]       = useState('');
   const [newTableType, setNewTT]    = useState<string>('');
+  const [newIsParcel, setNewIsParcel] = useState(false);
   const [saving, setSaving]         = useState(false);
 
   const [editingName, setEditingName]   = useState<{ id: string; value: string } | null>(null);
@@ -71,12 +73,14 @@ export default function ServiceStationsPage() {
     try {
       await api.post(`/outlets/${outletId}/service-stations`, {
         name: newName.trim(),
-        tableTypeId: newTableType || null,
+        tableTypeId: newIsParcel ? null : (newTableType || null),
+        isParcelStation: newIsParcel,
       });
       toast.success('Service station created');
       setCreateOpen(false);
       setNewName('');
       setNewTT('');
+      setNewIsParcel(false);
       fetchAll();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed');
@@ -99,7 +103,17 @@ export default function ServiceStationsPage() {
   const setStationTableType = async (stationId: string, tableTypeId: string | null) => {
     try {
       await api.patch(`/outlets/${outletId}/service-stations/${stationId}`, { tableTypeId });
-      toast.success(tableTypeId ? 'Table type set' : 'Table type cleared');
+      toast.success(tableTypeId ? 'Section set' : 'Section cleared');
+      fetchAll();
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed');
+    }
+  };
+
+  const setParcelFlag = async (stationId: string, isParcelStation: boolean) => {
+    try {
+      await api.patch(`/outlets/${outletId}/service-stations/${stationId}`, { isParcelStation });
+      toast.success(isParcelStation ? 'Marked as parcel station' : 'Parcel mode off');
       fetchAll();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed');
@@ -127,7 +141,7 @@ export default function ServiceStationsPage() {
           </div>
           <div>
             <h1 className="page-title">Service Stations</h1>
-            <p className="page-subtitle">Group floor staff by table type and assign the tables they serve</p>
+            <p className="page-subtitle">Group floor staff by dine-in section and assign the tables they serve</p>
           </div>
         </div>
         <button className="btn-primary" onClick={() => setCreateOpen(true)}>
@@ -144,7 +158,7 @@ export default function ServiceStationsPage() {
           <div className="empty-state-icon"><ConciergeBell size={22} className="text-slate-400" /></div>
           <p className="text-sm font-semibold text-slate-600">No service stations yet</p>
           <p className="text-xs text-slate-400 mt-1">
-            Set one up if your outlet serves orders to seated tables. Each station pins service staff to a table type and a set of tables.
+            Set one up if your outlet serves orders to seated tables. Each station pins service staff to a dine-in section and a set of tables.
           </p>
         </div>
       ) : (
@@ -173,9 +187,17 @@ export default function ServiceStationsPage() {
                   </div>
                 ) : (
                   <div className="min-w-0">
-                    <p className="text-sm font-bold text-slate-900 truncate">{station.name}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-sm font-bold text-slate-900 truncate">{station.name}</p>
+                      {station.isParcelStation && (
+                        <span className="inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">
+                          <Package size={9} /> PARCEL
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[10px] text-slate-400 mt-0.5">
-                      {station.workers.length} worker{station.workers.length === 1 ? '' : 's'} · {station.tables.length} table{station.tables.length === 1 ? '' : 's'}
+                      {station.workers.length} worker{station.workers.length === 1 ? '' : 's'}
+                      {!station.isParcelStation && ` · ${station.tables.length} table${station.tables.length === 1 ? '' : 's'}`}
                     </p>
                   </div>
                 )}
@@ -188,26 +210,43 @@ export default function ServiceStationsPage() {
               </div>
 
               <div className="px-4 py-3 space-y-3">
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500 flex items-center gap-1 mb-1.5">
-                    <LayoutGrid size={11} /> Table Type
-                  </label>
-                  <select
-                    value={station.tableType?.id || ''}
-                    onChange={(e) => setStationTableType(station.id, e.target.value || null)}
-                    className="input text-xs"
-                  >
-                    <option value="">— None —</option>
-                    {tableTypes.map((tt) => (
-                      <option key={tt.id} value={tt.id}>{tt.name}</option>
-                    ))}
-                  </select>
-                  {station.tableType && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white px-2 py-0.5 rounded-full mt-1.5" style={{ background: station.tableType.color }}>
-                      🪑 {station.tableType.name}
-                    </span>
-                  )}
-                </div>
+                <label className="flex items-start justify-between gap-2 cursor-pointer p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 flex items-center gap-1">
+                      <Package size={11} /> Parcel station
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Handles every parcel order. Falls back to regular stations if unstaffed.</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={!!station.isParcelStation}
+                    onChange={(e) => setParcelFlag(station.id, e.target.checked)}
+                    className="w-4 h-4 mt-0.5 accent-blue-500 rounded"
+                  />
+                </label>
+
+                {!station.isParcelStation && (
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500 flex items-center gap-1 mb-1.5">
+                      <LayoutGrid size={11} /> Section
+                    </label>
+                    <select
+                      value={station.tableType?.id || ''}
+                      onChange={(e) => setStationTableType(station.id, e.target.value || null)}
+                      className="input text-xs"
+                    >
+                      <option value="">— None —</option>
+                      {tableTypes.map((tt) => (
+                        <option key={tt.id} value={tt.id}>{tt.name}</option>
+                      ))}
+                    </select>
+                    {station.tableType && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white px-2 py-0.5 rounded-full mt-1.5" style={{ background: station.tableType.color }}>
+                        🪑 {station.tableType.name}
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
@@ -230,36 +269,38 @@ export default function ServiceStationsPage() {
                   )}
                 </div>
 
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Tables</label>
-                    <button
-                      onClick={() => setTablePicker(station)}
-                      disabled={!station.tableType}
-                      className={clsx(
-                        'text-[10px] font-semibold',
-                        station.tableType ? 'text-orange-600 hover:text-orange-700' : 'text-slate-300 cursor-not-allowed',
-                      )}
-                      title={!station.tableType ? 'Pick a table type first' : ''}
-                    >
-                      Manage
-                    </button>
-                  </div>
-                  {!station.tableType ? (
-                    <p className="text-[11px] text-slate-400 italic">Set a table type to assign tables.</p>
-                  ) : station.tables.length === 0 ? (
-                    <p className="text-xs text-slate-400 italic">No tables assigned.</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-1">
-                      {station.tables.slice(0, 10).map((t) => (
-                        <span key={t.id} className="badge badge-slate text-[10px]">#{t.table.number}</span>
-                      ))}
-                      {station.tables.length > 10 && (
-                        <span className="badge badge-slate text-[10px]">+{station.tables.length - 10}</span>
-                      )}
+                {!station.isParcelStation && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Tables</label>
+                      <button
+                        onClick={() => setTablePicker(station)}
+                        disabled={!station.tableType}
+                        className={clsx(
+                          'text-[10px] font-semibold',
+                          station.tableType ? 'text-orange-600 hover:text-orange-700' : 'text-slate-300 cursor-not-allowed',
+                        )}
+                        title={!station.tableType ? 'Pick a section first' : ''}
+                      >
+                        Manage
+                      </button>
                     </div>
-                  )}
-                </div>
+                    {!station.tableType ? (
+                      <p className="text-[11px] text-slate-400 italic">Set a section to assign tables.</p>
+                    ) : station.tables.length === 0 ? (
+                      <p className="text-xs text-slate-400 italic">No tables assigned.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {station.tables.slice(0, 10).map((t) => (
+                          <span key={t.id} className="badge badge-slate text-[10px]">#{t.table.number}</span>
+                        ))}
+                        {station.tables.length > 10 && (
+                          <span className="badge badge-slate text-[10px]">+{station.tables.length - 10}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -289,12 +330,26 @@ export default function ServiceStationsPage() {
             placeholder="Station name"
             className="input"
           />
-          <select value={newTableType} onChange={(e) => setNewTT(e.target.value)} className="input">
-            <option value="">— Pick a table type (optional) —</option>
-            {tableTypes.map((tt) => (
-              <option key={tt.id} value={tt.id}>{tt.name}</option>
-            ))}
-          </select>
+          <label className="flex items-start justify-between gap-2 cursor-pointer p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50">
+            <div>
+              <p className="text-xs font-bold text-slate-700 flex items-center gap-1"><Package size={12} /> Parcel station</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">Handles parcel orders instead of a dine-in section.</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={newIsParcel}
+              onChange={(e) => setNewIsParcel(e.target.checked)}
+              className="w-4 h-4 mt-0.5 accent-blue-500 rounded"
+            />
+          </label>
+          {!newIsParcel && (
+            <select value={newTableType} onChange={(e) => setNewTT(e.target.value)} className="input">
+              <option value="">— Pick a section (optional) —</option>
+              {tableTypes.map((tt) => (
+                <option key={tt.id} value={tt.id}>{tt.name}</option>
+              ))}
+            </select>
+          )}
         </div>
       </Modal>
 
@@ -457,7 +512,7 @@ function TablePicker({
     <Modal
       open onClose={onClose} size="md"
       title={`Tables in ${station.name}`}
-      subtitle={`${station.tableType?.name || 'No table type'} · ${selected.size} of ${tables.length} selected`}
+      subtitle={`${station.tableType?.name || 'No section'} · ${selected.size} of ${tables.length} selected`}
       footer={
         <>
           <button className="btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>

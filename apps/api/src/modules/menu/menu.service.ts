@@ -33,9 +33,76 @@ export class MenuService {
 
   // ─── Categories ──────────────────────────────────────────
 
-  async getMenu(outletId: string, viewerUserId?: string, tableId?: string, lang?: string | null) {
+  async getMenu(
+    outletId: string,
+    viewerUserId?: string,
+    tableId?: string,
+    lang?: string | null,
+    // When true, include items where isDisplayed=false. Admin tools (menu
+    // editor, bundle picker) pass this so they can see/manage hidden items
+    // — e.g. a "mini dosa" that's only ever sold as part of a combo.
+    opts?: { includeHidden?: boolean },
+  ) {
+    // Resolve which menus are visible to this caller right now. This is the
+    // single source of truth for menu visibility — both the customer app and
+    // staff PlaceOrderPage hit this endpoint, so filtering here covers both.
+    //   • Outlet.multipleMenusEnabled = false → only the default menu's
+    //     categories are returned, regardless of any other menus that exist.
+    //   • Outlet.multipleMenusEnabled = true  → include menus where the
+    //     OutletMenu link has isEnabled=true (default menu always counts),
+    //     minus any menus the table's section has disabled.
+    const outletMeta = await this.prisma.outlet.findUnique({
+      where: { id: outletId },
+      select: { multipleMenusEnabled: true, businessId: true },
+    });
+    let allowedMenuIds: string[] = [];
+    if (outletMeta) {
+      const defaultMenu = await this.prisma.menu.findFirst({
+        where: { businessId: outletMeta.businessId, isDefault: true },
+        select: { id: true },
+      });
+      if (!outletMeta.multipleMenusEnabled) {
+        allowedMenuIds = defaultMenu ? [defaultMenu.id] : [];
+      } else {
+        const links = await this.prisma.outletMenu.findMany({
+          where: { outletId, isEnabled: true },
+          select: { menuId: true },
+        });
+        const enabled = new Set<string>(links.map((l) => l.menuId));
+        if (defaultMenu) enabled.add(defaultMenu.id);
+        // Section-level disables (when a table QR is scanned)
+        if (tableId) {
+          const table = await this.prisma.table.findUnique({
+            where: { id: tableId },
+            select: { tableTypeId: true, outletId: true },
+          });
+          if (table && table.outletId === outletId && table.tableTypeId) {
+            const sectionDisabled = await this.prisma.tableTypeMenu.findMany({
+              where: { tableTypeId: table.tableTypeId, isEnabled: false },
+              select: { menuId: true },
+            });
+            for (const s of sectionDisabled) {
+              if (defaultMenu && s.menuId === defaultMenu.id) continue;
+              enabled.delete(s.menuId);
+            }
+          }
+        }
+        allowedMenuIds = Array.from(enabled);
+      }
+    }
     const categories = await this.prisma.category.findMany({
-      where: { outletId, isActive: true },
+      where: {
+        outletId,
+        isActive: true,
+        // Only include categories whose menu is currently visible. Legacy
+        // categories with no menuId fall back to the default menu.
+        OR: [
+          { menuId: { in: allowedMenuIds } },
+          ...(outletMeta && !outletMeta.multipleMenusEnabled
+            ? [{ menuId: null }] // single-menu mode shows unassigned too
+            : []),
+        ],
+      },
       orderBy: { displayOrder: 'asc' },
       include: {
         subcategories: {
@@ -43,7 +110,7 @@ export class MenuService {
           orderBy: { displayOrder: 'asc' },
           include: {
             items: {
-              where: { isDisplayed: true },
+              ...(opts?.includeHidden ? {} : { where: { isDisplayed: true } }),
               orderBy: { displayOrder: 'asc' },
               include: {
                 variants: true,
@@ -57,6 +124,13 @@ export class MenuService {
                     topping: {
                       include: { options: { orderBy: { displayOrder: 'asc' } } },
                     },
+                  },
+                },
+                bundleChildren: {
+                  orderBy: { displayOrder: 'asc' },
+                  include: {
+                    childItem: { select: { id: true, name: true } },
+                    variant: { select: { id: true, name: true } },
                   },
                 },
               },
@@ -187,8 +261,23 @@ export class MenuService {
     }));
   }
 
-  async createCategory(outletId: string, data: { name: string; imageUrl?: string }) {
-    const category = await this.prisma.category.create({ data: { ...data, outletId } });
+  async createCategory(outletId: string, data: { name: string; imageUrl?: string; menuId?: string }) {
+    // Resolve a menuId so the new category lands inside a menu. When the
+    // caller hasn't specified one we use the outlet's business's default menu.
+    let menuId = data.menuId ?? null;
+    if (!menuId) {
+      const outlet = await this.prisma.outlet.findUnique({ where: { id: outletId } });
+      if (outlet) {
+        const defaultMenu = await this.prisma.menu.findFirst({
+          where: { businessId: outlet.businessId, isDefault: true },
+          select: { id: true },
+        });
+        menuId = defaultMenu?.id ?? null;
+      }
+    }
+    const category = await this.prisma.category.create({
+      data: { name: data.name, imageUrl: data.imageUrl, outletId, menuId: menuId ?? undefined },
+    });
     await this.translations.upsertAll('Category', category.id, { name: category.name });
     return category;
   }
@@ -261,10 +350,16 @@ export class MenuService {
         if (outlet?.gstApplicable) data.gstRate = outlet.gstPercent;
       }
     }
+    // Pull bundleChildren off the payload — they're stored in a separate
+    // join table after the item is created.
+    const { bundleChildren, ...itemData } = data || {};
     const item = await this.prisma.item.create({
-      data: { ...data, subcategoryId },
+      data: { ...itemData, subcategoryId },
       include: { variants: true, options: true },
     });
+    if (Array.isArray(bundleChildren) && bundleChildren.length) {
+      await this.replaceBundleChildren(item.id, bundleChildren);
+    }
     await this.translations.upsertAll('Item', item.id, {
       name: item.name,
       description: item.description ?? undefined,
@@ -279,11 +374,16 @@ export class MenuService {
   }
 
   async updateItem(id: string, data: any) {
+    const { bundleChildren, ...itemData } = data || {};
     const item = await this.prisma.item.update({
       where: { id },
-      data,
+      data: itemData,
       include: { variants: true, options: true },
     });
+    if (Array.isArray(bundleChildren)) {
+      // Empty array clears all children; null/undefined leaves them alone.
+      await this.replaceBundleChildren(id, bundleChildren);
+    }
     if (data.name !== undefined || data.description !== undefined) {
       await this.translations.upsertAll('Item', item.id, {
         name: item.name,
@@ -293,12 +393,46 @@ export class MenuService {
     return item;
   }
 
+  // Bundle children: replace the entire set in one transaction so the admin
+  // can drag-reorder, swap items in/out and tweak quantities atomically.
+  private async replaceBundleChildren(
+    parentItemId: string,
+    children: Array<{ childItemId: string; variantId?: string | null; quantity?: number; displayOrder?: number }>,
+  ) {
+    await this.prisma.$transaction([
+      this.prisma.itemBundleChild.deleteMany({ where: { parentItemId } }),
+      ...(children.length
+        ? [this.prisma.itemBundleChild.createMany({
+            data: children.map((c, idx) => ({
+              parentItemId,
+              childItemId: c.childItemId,
+              variantId: c.variantId ?? null,
+              quantity: Math.max(1, Number(c.quantity ?? 1)),
+              displayOrder: c.displayOrder ?? idx,
+            })),
+          })]
+        : []),
+    ]);
+  }
+
   async toggleItemAvailability(id: string) {
     const item = await this.prisma.item.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Item not found');
     return this.prisma.item.update({
       where: { id },
       data: { isAvailable: !item.isAvailable },
+    });
+  }
+
+  // Toggle whether this item is visible on the customer menu. Hidden items
+  // still exist and can be ordered indirectly (e.g. inside a bundle); they
+  // just don't show up in the customer's category listing.
+  async toggleItemVisibility(id: string) {
+    const item = await this.prisma.item.findUnique({ where: { id } });
+    if (!item) throw new NotFoundException('Item not found');
+    return this.prisma.item.update({
+      where: { id },
+      data: { isDisplayed: !item.isDisplayed },
     });
   }
 
@@ -485,6 +619,9 @@ export class MenuService {
             name: cat.name,
             imageUrl: cat.imageUrl,
             displayOrder: cat.displayOrder,
+            // Preserve the menu mapping when copying: the imported category
+            // lands inside the same menu it had at the business level.
+            menuId: cat.menuId ?? undefined,
           },
         });
         categoriesCount++;
@@ -581,9 +718,23 @@ export class MenuService {
     return this.hydrateMenu(categories, lang);
   }
 
-  async createBusinessCategory(businessId: string, dto: { name: string; imageUrl?: string; displayOrder?: number }) {
+  async createBusinessCategory(businessId: string, dto: { name: string; imageUrl?: string; displayOrder?: number; menuId?: string }) {
+    let menuId = dto.menuId ?? null;
+    if (!menuId) {
+      const defaultMenu = await this.prisma.menu.findFirst({
+        where: { businessId, isDefault: true },
+        select: { id: true },
+      });
+      menuId = defaultMenu?.id ?? null;
+    }
     const cat = await this.prisma.category.create({
-      data: { businessId, name: dto.name, imageUrl: dto.imageUrl, displayOrder: dto.displayOrder ?? 0 },
+      data: {
+        businessId,
+        name: dto.name,
+        imageUrl: dto.imageUrl,
+        displayOrder: dto.displayOrder ?? 0,
+        menuId: menuId ?? undefined,
+      },
     });
     await this.translations.upsertAll('Category', cat.id, { name: cat.name });
     return cat;
@@ -702,6 +853,9 @@ export class MenuService {
               name: cat.name,
               imageUrl: cat.imageUrl,
               displayOrder: cat.displayOrder,
+              // Carry the source category's menu through the import so the
+              // outlet copy lands in the same menu it had at the business level.
+              menuId: cat.menuId ?? undefined,
             },
           });
           categoriesCount++;

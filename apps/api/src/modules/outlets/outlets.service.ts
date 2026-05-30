@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
 import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, ValidateIf } from 'class-validator';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { OutletType } from '@prisma/client';
@@ -7,6 +8,12 @@ import { TranslationsService } from '../translations/translations.service';
 import { allowsSeating } from '../../common/outlet-type';
 
 const DEFAULT_OUTLET_ADMIN_PASSWORD = 'abc@123';
+
+// 8 random hex chars (16^8 ≈ 4B combinations) prefixed with OL-. Plenty
+// of space for retries if uniqueness collides.
+function generateOutletCode(): string {
+  return 'OL-' + crypto.randomBytes(4).toString('hex').toUpperCase();
+}
 
 export class CreateOutletDto {
   @IsString() name!: string;
@@ -33,6 +40,10 @@ export class CreateOutletDto {
   @IsBoolean() @IsOptional() gstApplicable?: boolean;
   @IsNumber() @IsOptional() gstPercent?: number;
   @IsBoolean() @IsOptional() priceIncludesGst?: boolean;
+  @IsBoolean() @IsOptional() multipleMenusEnabled?: boolean;
+  @IsBoolean() @IsOptional() acceptRewardRedemption?: boolean;
+  @IsBoolean() @IsOptional() kitchenAutoPrint?: boolean;
+  @IsBoolean() @IsOptional() kitchenAllowManualPrint?: boolean;
   @IsString() @IsOptional() adminPhone?: string;
   @IsString() @IsOptional() adminName?: string;
 }
@@ -72,7 +83,21 @@ export class OutletsService {
     const existing = await this.prisma.user.findUnique({ where: { phone: adminPhone } });
     if (existing) throw new BadRequestException(`Phone ${adminPhone} is already registered`);
 
-    const outlet = await this.prisma.outlet.create({ data: outletData, include: { business: true } });
+    // Stamp a publicCode. The column is UNIQUE, so on the extremely rare
+    // collision we re-roll a few times before giving up.
+    let outlet: any = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        outlet = await this.prisma.outlet.create({
+          data: { ...outletData, publicCode: generateOutletCode() },
+          include: { business: true },
+        });
+        break;
+      } catch (e: any) {
+        if (e?.code !== 'P2002' || !`${e?.message ?? ''}`.includes('publicCode')) throw e;
+      }
+    }
+    if (!outlet) throw new BadRequestException('Could not allocate outlet code');
     await this.translations.upsertAll('Outlet', outlet.id, this.translatableOutletFields(outlet));
 
     // Reuse or create the 'Outlet Admin' role for this business
@@ -219,14 +244,32 @@ export class OutletsService {
   async getOpenStatus(outletId: string) {
     const outlet = await this.prisma.outlet.findUnique({
       where: { id: outletId },
-      select: { id: true, isActive: true, name: true, outletType: true, hours: true },
+      select: {
+        id: true, isActive: true, name: true, outletType: true, hours: true,
+        // Cluster membership signals the customer app to redirect a standalone
+        // QR scan into the cluster shell. Public — no PII.
+        clusterMembership: {
+          select: {
+            clusterBusiness: { select: { id: true, publicCode: true, name: true } },
+          },
+        },
+      },
     });
     if (!outlet) throw new NotFoundException('Outlet not found');
 
     // outletType is included in the response so the customer PWA can decide
     // whether to use the open-tab postpaid UX without needing an auth'd call
     // to /outlets/:id.
-    const base = { outletType: outlet.outletType };
+    const base = {
+      outletType: outlet.outletType,
+      clusterMembership: outlet.clusterMembership?.clusterBusiness
+        ? {
+            clusterBusinessId: outlet.clusterMembership.clusterBusiness.id,
+            clusterPublicCode: outlet.clusterMembership.clusterBusiness.publicCode,
+            clusterName: outlet.clusterMembership.clusterBusiness.name,
+          }
+        : null,
+    };
 
     if (!outlet.isActive) {
       return { ...base, isOpen: false, isActive: false, reason: 'Outlet is currently closed' };

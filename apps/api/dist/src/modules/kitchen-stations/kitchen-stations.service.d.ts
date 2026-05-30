@@ -3,6 +3,12 @@ export declare class KitchenStationsService {
     private prisma;
     constructor(prisma: PrismaService);
     list(outletId: string): import(".prisma/client").Prisma.PrismaPromise<({
+        printer: {
+            name: string;
+            id: string;
+            address: string | null;
+            connection: string;
+        } | null;
         items: {
             name: string;
             id: string;
@@ -21,6 +27,7 @@ export declare class KitchenStationsService {
         isActive: boolean;
         isMaster: boolean;
         currentWorkerId: string | null;
+        printerId: string | null;
     })[]>;
     create(outletId: string, data: {
         name: string;
@@ -39,12 +46,20 @@ export declare class KitchenStationsService {
         isActive: boolean;
         isMaster: boolean;
         currentWorkerId: string | null;
+        printerId: string | null;
     }, never, import("@prisma/client/runtime/library").DefaultArgs>;
     update(id: string, data: {
         name?: string;
         currentWorkerId?: string | null;
         isMaster?: boolean;
+        printerId?: string | null;
     }): Promise<{
+        printer: {
+            name: string;
+            id: string;
+            address: string | null;
+            connection: string;
+        } | null;
         items: {
             name: string;
             id: string;
@@ -63,6 +78,7 @@ export declare class KitchenStationsService {
         isActive: boolean;
         isMaster: boolean;
         currentWorkerId: string | null;
+        printerId: string | null;
     }>;
     delete(id: string): Promise<{
         name: string;
@@ -73,6 +89,7 @@ export declare class KitchenStationsService {
         isActive: boolean;
         isMaster: boolean;
         currentWorkerId: string | null;
+        printerId: string | null;
     }>;
     setItems(stationId: string, itemIds: string[]): Promise<({
         items: {
@@ -93,6 +110,7 @@ export declare class KitchenStationsService {
         isActive: boolean;
         isMaster: boolean;
         currentWorkerId: string | null;
+        printerId: string | null;
     }) | null>;
     findMine(outletId: string, userId: string): import(".prisma/client").Prisma.Prisma__KitchenStationClient<({
         items: {
@@ -108,6 +126,7 @@ export declare class KitchenStationsService {
         isActive: boolean;
         isMaster: boolean;
         currentWorkerId: string | null;
+        printerId: string | null;
     }) | null, null, import("@prisma/client/runtime/library").DefaultArgs>;
     listOutletStaff(outletId: string): import(".prisma/client").Prisma.PrismaPromise<{
         role: {

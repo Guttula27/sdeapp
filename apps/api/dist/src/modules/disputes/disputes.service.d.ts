@@ -50,6 +50,9 @@ export declare class DisputesService {
                 totalPrice: import("@prisma/client/runtime/library").Decimal;
                 gstAmount: import("@prisma/client/runtime/library").Decimal;
                 variantId: string | null;
+                menuId: string | null;
+                bundleId: string | null;
+                sequenceNumber: number | null;
             })[];
             id: string;
             createdAt: Date;
@@ -92,6 +95,9 @@ export declare class DisputesService {
                 totalPrice: import("@prisma/client/runtime/library").Decimal;
                 gstAmount: import("@prisma/client/runtime/library").Decimal;
                 variantId: string | null;
+                menuId: string | null;
+                bundleId: string | null;
+                sequenceNumber: number | null;
             })[];
             customer: {
                 name: string;
@@ -121,6 +127,9 @@ export declare class DisputesService {
             tableId: string | null;
             customerId: string | null;
             staffId: string | null;
+            clusterOrderId: string | null;
+            activeSequence: number;
+            sequenceLabels: import("@prisma/client/runtime/library").JsonValue | null;
         };
     } & {
         description: string;
@@ -155,6 +164,9 @@ export declare class DisputesService {
                     totalPrice: import("@prisma/client/runtime/library").Decimal;
                     gstAmount: import("@prisma/client/runtime/library").Decimal;
                     variantId: string | null;
+                    menuId: string | null;
+                    bundleId: string | null;
+                    sequenceNumber: number | null;
                 })[];
                 id: string;
                 createdAt: Date;

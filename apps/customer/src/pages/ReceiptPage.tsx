@@ -90,29 +90,47 @@ export default function ReceiptPage() {
             </div>
           </div>
 
-          {/* Items */}
+          {/* Items — grouped by menu when the order spans more than one. */}
           <div>
             <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Items</p>
-            <div className="divide-y divide-slate-100">
-              {order.items?.map((it: any) => (
-                <div key={it.id} className="py-2.5">
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-slate-800">
-                        <span className="text-orange-600 font-bold mr-1">{it.quantity}×</span>
-                        {it.item?.name}
-                        {it.variant && <span className="text-xs text-slate-500"> ({it.variant.name})</span>}
-                      </p>
-                      {it.notes && <p className="text-[11px] text-slate-400 mt-0.5">{it.notes}</p>}
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-[10px] text-slate-400">@ ₹{Number(it.unitPrice).toFixed(2)}</p>
-                      <p className="text-sm font-bold text-slate-800">₹{Number(it.totalPrice).toFixed(2)}</p>
-                    </div>
+            {(() => {
+              const items = (order.items as any[]) || [];
+              const groups = new Map<string, { name: string; items: any[] }>();
+              for (const it of items) {
+                const key = it.menu?.id || it.menuId || '__none__';
+                const name = it.menu?.name || '';
+                if (!groups.has(key)) groups.set(key, { name, items: [] });
+                groups.get(key)!.items.push(it);
+              }
+              const showHeaders = groups.size > 1;
+              return Array.from(groups.values()).map((g, gi) => (
+                <div key={g.name || `g-${gi}`} className="mb-3 last:mb-0">
+                  {showHeaders && g.name && (
+                    <p className="text-[10px] font-bold text-brand-600 uppercase tracking-wider mb-1">{g.name}</p>
+                  )}
+                  <div className="divide-y divide-slate-100">
+                    {g.items.map((it: any) => (
+                      <div key={it.id} className="py-2.5">
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-slate-800">
+                              <span className="text-orange-600 font-bold mr-1">{it.quantity}×</span>
+                              {it.item?.name}
+                              {it.variant && <span className="text-xs text-slate-500"> ({it.variant.name})</span>}
+                            </p>
+                            {it.notes && <p className="text-[11px] text-slate-400 mt-0.5">{it.notes}</p>}
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-[10px] text-slate-400">@ ₹{Number(it.unitPrice).toFixed(2)}</p>
+                            <p className="text-sm font-bold text-slate-800">₹{Number(it.totalPrice).toFixed(2)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))}
-            </div>
+              ));
+            })()}
           </div>
 
           {/* Totals */}

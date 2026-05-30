@@ -13,15 +13,17 @@ exports.PaymentsService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../config/prisma/prisma.service");
 const orders_gateway_1 = require("../orders/orders.gateway");
+const orders_service_1 = require("../orders/orders.service");
 const client_1 = require("@prisma/client");
 const lifecycle_dispatcher_service_1 = require("../customer-alerts/lifecycle-dispatcher.service");
 const razorpay_service_1 = require("./razorpay.service");
 let PaymentsService = class PaymentsService {
-    constructor(prisma, ordersGateway, dispatcher, razorpay) {
+    constructor(prisma, ordersGateway, dispatcher, razorpay, orders) {
         this.prisma = prisma;
         this.ordersGateway = ordersGateway;
         this.dispatcher = dispatcher;
         this.razorpay = razorpay;
+        this.orders = orders;
     }
     async initiatePayment(orderId, mode, amount) {
         const order = await this.prisma.order.findUnique({ where: { id: orderId } });
@@ -64,6 +66,7 @@ let PaymentsService = class PaymentsService {
                 orderNumber: payment.order.orderNumber,
                 amount: payment.amount.toString(),
             }).catch(() => { });
+            this.orders.tryEarnRewards(payment.order.id, payment.order.customerId, payment.order.outletId, Number(payment.order.subtotal)).catch(() => { });
         }
         return updated;
     }
@@ -140,6 +143,7 @@ exports.PaymentsService = PaymentsService = __decorate([
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         orders_gateway_1.OrdersGateway,
         lifecycle_dispatcher_service_1.LifecycleDispatcherService,
-        razorpay_service_1.RazorpayService])
+        razorpay_service_1.RazorpayService,
+        orders_service_1.OrdersService])
 ], PaymentsService);
 //# sourceMappingURL=payments.service.js.map

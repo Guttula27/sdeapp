@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PreferredLanguage } from '../../common/language/preferred-language';
+import { IdempotencyInterceptor } from '../../common/interceptors/idempotency.interceptor';
 import { OrderStatus, OrderItemStatus } from '@prisma/client';
 
 @ApiTags('Orders')
@@ -16,6 +17,7 @@ export class OrdersController {
   constructor(private ordersService: OrdersService) {}
 
   @UseGuards(OptionalJwtAuthGuard)
+  @UseInterceptors(IdempotencyInterceptor)
   @Post()
   create(
     @Param('outletId') outletId: string,
@@ -72,6 +74,19 @@ export class OrdersController {
     return this.ordersService.requestBill(id, userId);
   }
 
+  // Cashier flow: look up an order by its printed bill number (orderNumber)
+  // so the dispute / refund flow can be started from a paper receipt without
+  // first scrolling through the orders list.
+  @UseGuards(JwtAuthGuard)
+  @Get('by-number/:orderNumber')
+  findByNumber(
+    @Param('outletId') outletId: string,
+    @Param('orderNumber') orderNumber: string,
+    @PreferredLanguage() lang: string | null,
+  ) {
+    return this.ordersService.findByOrderNumber(outletId, orderNumber, lang);
+  }
+
   @UseGuards(OptionalJwtAuthGuard)
   @Get(':id')
   findOne(@Param('id') id: string, @PreferredLanguage() lang: string | null) {
@@ -81,6 +96,7 @@ export class OrdersController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @UseInterceptors(IdempotencyInterceptor)
   @Patch(':id/status')
   updateStatus(
     @Param('id') id: string,
@@ -91,6 +107,7 @@ export class OrdersController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @UseInterceptors(IdempotencyInterceptor)
   @Patch(':id/cancel')
   cancel(
     @Param('id') id: string,
@@ -101,6 +118,7 @@ export class OrdersController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @UseInterceptors(IdempotencyInterceptor)
   @Patch(':id/items/:itemId/status')
   updateItemStatus(
     @Param('id') id: string,
@@ -109,5 +127,21 @@ export class OrdersController {
     @CurrentUser('id') userId: string,
   ) {
     return this.ordersService.updateItemStatus(id, itemId, status, userId);
+  }
+
+  // Course planner: bulk assign items to sequence numbers and rename
+  // courses. Body shape:
+  //   { items: [{ itemId, sequenceNumber }], labels: { "1": "Starter" } }
+  // Either field is optional; labels=null clears them.
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id/sequences')
+  setSequences(
+    @Param('id') id: string,
+    @Body() body: {
+      items?: Array<{ itemId: string; sequenceNumber: number | null }>;
+      labels?: Record<string, string> | null;
+    },
+  ) {
+    return this.ordersService.setSequences(id, body);
   }
 }

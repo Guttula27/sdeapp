@@ -6,6 +6,7 @@ import { RootState } from '../../store';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
+import { useUserRole } from '../../hooks/useUserRole';
 
 const SWATCHES = [
   '#f97316', '#ef4444', '#ec4899', '#a855f7',
@@ -109,7 +110,10 @@ export default function TagsPage() {
     }
   };
 
-  const isMultiOutlet = outlets.length > 1;
+  // Outlet-tier admins are pinned to their own outlet — hide the cross-outlet
+  // switcher entirely so they don't accidentally edit another outlet's data.
+  const { tier } = useUserRole();
+  const isMultiOutlet = tier !== 'outlet' && outlets.length > 1;
 
   return (
     <div className="space-y-5">

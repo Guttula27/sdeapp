@@ -2,6 +2,7 @@ import { PrismaService } from '../../config/prisma/prisma.service';
 export declare class QrService {
     private prisma;
     constructor(prisma: PrismaService);
+    private resolveQrDestination;
     generateTableQR(tableId: string, outletId: string, customerUrl: string): Promise<{
         url: string;
         type: import(".prisma/client").$Enums.QRType;
@@ -35,7 +36,6 @@ export declare class QrService {
             createdAt: Date;
             updatedAt: Date;
             address: string | null;
-            outletType: import(".prisma/client").$Enums.OutletType;
             addressLine1: string | null;
             addressLine2: string | null;
             city: string | null;
@@ -47,6 +47,9 @@ export declare class QrService {
             upiId: string | null;
             logoUrl: string | null;
             primaryImageUrl: string | null;
+            publicCode: string | null;
+            multipleMenusEnabled: boolean;
+            outletType: import(".prisma/client").$Enums.OutletType;
             isActive: boolean;
             defaultPrepTime: number | null;
             parcelChargeEnabled: boolean;
@@ -57,7 +60,11 @@ export declare class QrService {
             gstApplicable: boolean;
             gstPercent: import("@prisma/client/runtime/library").Decimal;
             priceIncludesGst: boolean;
+            razorpayLinkedAccountId: string | null;
             facilityId: string | null;
+            acceptRewardRedemption: boolean;
+            kitchenAutoPrint: boolean;
+            kitchenAllowManualPrint: boolean;
         } | null;
         table: {
             number: string;

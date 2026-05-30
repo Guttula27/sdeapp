@@ -63,4 +63,22 @@ export class TableTypesController {
   removeTable(@Param('tableId') tableId: string) {
     return this.service.removeTable(tableId);
   }
+
+  // List menus available to this dine-in section with their enable state.
+  // Returns the default menu marked locked (UI hides its toggle).
+  @Get(':tableTypeId/menus')
+  listMenus(@Param('tableTypeId') tableTypeId: string) {
+    return this.service.listMenus(tableTypeId);
+  }
+
+  // Toggle a non-default menu's availability for this section. Disabling the
+  // default menu is rejected at the service layer.
+  @Patch(':tableTypeId/menus/:menuId')
+  toggleMenu(
+    @Param('tableTypeId') tableTypeId: string,
+    @Param('menuId') menuId: string,
+    @Body() body: { isEnabled: boolean },
+  ) {
+    return this.service.toggleMenu(tableTypeId, menuId, !!body?.isEnabled);
+  }
 }

@@ -7,7 +7,8 @@ import {
   BarChart3, ChefHat, Settings, LogOut, Bell, User,
   ChevronDown, ChevronRight, Users, ShieldAlert, Building2, CreditCard,
   Gauge, Menu, Flame, Tag, Sandwich, Plus, LayoutGrid, Shield, Languages, ConciergeBell,
-  Plug, MessageCircle, ClipboardCheck, MessageSquare,
+  Plug, MessageCircle, ClipboardCheck, MessageSquare, Network,
+  Ticket, Percent as PercentIcon, Package, Gift, Award,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
@@ -39,7 +40,7 @@ const SETTINGS_CHILDREN: Record<UserTier, NavItem[]> = {
     { to: '/settings',    icon: User,       label: 'Account' },
     { to: '/roles',       icon: Shield,     label: 'Roles' },
     { to: '/tags',        icon: Tag,        label: 'Tags' },
-    { to: '/table-types', icon: LayoutGrid, label: 'Table Types' },
+    { to: '/table-types', icon: LayoutGrid, label: 'Dine In Sections' },
     { to: '/stations',    icon: Flame,      label: 'Stations' },
     { to: '/service-stations', icon: ConciergeBell, label: 'Service Stations' },
     { to: '/toppings',    icon: Sandwich,   label: 'Toppings' },
@@ -65,6 +66,12 @@ const NAV: Record<UserTier, NavItem[]> = {
     { to: '/outlets',   icon: Store,           label: 'Outlets' },
     { to: '/menu',      icon: UtensilsCrossed, label: 'Menu' },
     { to: '/orders',    icon: ShoppingBag,     label: 'Orders' },
+    { to: '/promotions/coupons', icon: Ticket, label: 'Promotions', children: [
+      { to: '/promotions/coupons',   icon: Ticket,      label: 'Coupons' },
+      { to: '/promotions/discounts', icon: PercentIcon, label: 'Discounts' },
+      { to: '/promotions/offers',    icon: Gift,        label: 'Offers' },
+      { to: '/promotions/rewards',   icon: Award,       label: 'Rewards' },
+    ]},
     { to: '/disputes',  icon: ShieldAlert,     label: 'Disputes' },
     { to: '/feedback',  icon: MessageSquare,   label: 'Feedback' },
     { to: '/reports',   icon: BarChart3,       label: 'Reports' },
@@ -77,6 +84,12 @@ const NAV: Record<UserTier, NavItem[]> = {
     { to: '/place-order',     icon: Plus,            label: 'Place Order' },
     { to: '/orders',    icon: ShoppingBag,     label: 'Orders' },
     { to: '/menu',      icon: UtensilsCrossed, label: 'Menu' },
+    { to: '/promotions/coupons', icon: Ticket, label: 'Promotions', children: [
+      { to: '/promotions/coupons',   icon: Ticket,      label: 'Coupons' },
+      { to: '/promotions/discounts', icon: PercentIcon, label: 'Discounts' },
+      { to: '/promotions/offers',    icon: Gift,        label: 'Offers' },
+      { to: '/promotions/rewards',   icon: Award,       label: 'Rewards' },
+    ]},
     { to: '/customers', icon: Users,           label: 'Customers' },
     { to: '/kitchen',   icon: ChefHat,         label: 'Kitchen' },
     { to: '/disputes',  icon: ShieldAlert,     label: 'Disputes' },
@@ -120,10 +133,23 @@ const MINIMAL_NAV: NavItem[] = [
     { to: '/settings',    icon: User,       label: 'Account' },
     { to: '/roles',       icon: Shield,     label: 'Roles',           requires: ['MANAGE_ROLES'] },
     { to: '/tags',        icon: Tag,        label: 'Tags',            requires: ['MANAGE_CUSTOMER_TAGS'] },
-    { to: '/table-types', icon: LayoutGrid, label: 'Table Types',     requires: ['MANAGE_TABLE_TYPES'] },
+    { to: '/table-types', icon: LayoutGrid, label: 'Dine In Sections', requires: ['MANAGE_TABLE_TYPES'] },
     { to: '/stations',    icon: Flame,      label: 'Stations',        requires: ['MANAGE_KITCHEN_STATIONS'] },
     { to: '/toppings',    icon: Sandwich,   label: 'Toppings',        requires: ['MANAGE_TOPPINGS'] },
   ]},
+];
+
+// Cluster Owner sidebar — overrides the standard `business` NAV when the
+// signed-in user's business is a cluster. The cluster doesn't own outlets
+// or a menu of its own, so swapping in cluster-shaped nav items keeps the
+// owner from landing on empty pages. Each link goes to a route that
+// understands the cluster context.
+const buildClusterNav = (businessId: string): NavItem[] => [
+  { to: `/platform/clusters/${businessId}`, icon: Network, label: 'Cluster' },
+  { to: '/orders',   icon: ShoppingBag,  label: 'Orders' },
+  { to: '/reports',  icon: BarChart3,    label: 'Reports' },
+  { to: '/staff',    icon: Users,        label: 'Staff' },
+  { to: '/settings', icon: Settings,     label: 'Settings', children: SETTINGS_CHILDREN.business },
 ];
 
 // Admin roles get the full tier sidebar; everyone else gets MINIMAL_NAV
@@ -297,7 +323,7 @@ const TIER_BADGE: Record<UserTier, { label: string; bg: string; dot: string }> =
 export default function Layout() {
   const dispatch  = useDispatch<AppDispatch>();
   const navigate  = useNavigate();
-  const { tier, has, user } = useUserRole();
+  const { tier, has, user, isClusterOwner } = useUserRole();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebar, setMobileSidebar] = useState(false);
@@ -314,9 +340,13 @@ export default function Layout() {
     return () => document.removeEventListener('mousedown', h);
   }, []);
 
-  const navItems = isAdminRole(user?.role?.name)
-    ? (NAV[tier] || NAV.outlet)
-    : filterNav(MINIMAL_NAV, has);
+  // Cluster Owners get a cluster-shaped sidebar even though their tier is
+  // `business`. Everyone else falls back to the standard rules.
+  const navItems = isClusterOwner && user?.businessId
+    ? buildClusterNav(user.businessId)
+    : isAdminRole(user?.role?.name)
+      ? (NAV[tier] || NAV.outlet)
+      : filterNav(MINIMAL_NAV, has);
   // Label = the user's actual role name. When the user has no role assigned
   // we hide the badge entirely instead of falling back to a misleading tier
   // label like "Outlet Admin". Tier still drives the color palette.

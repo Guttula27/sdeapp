@@ -12,12 +12,16 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.OutletsService = exports.CreateTableDto = exports.CreateSectionDto = exports.CreateOutletDto = void 0;
 const common_1 = require("@nestjs/common");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const class_validator_1 = require("class-validator");
 const prisma_service_1 = require("../../config/prisma/prisma.service");
 const client_1 = require("@prisma/client");
 const translations_service_1 = require("../translations/translations.service");
 const outlet_type_1 = require("../../common/outlet-type");
 const DEFAULT_OUTLET_ADMIN_PASSWORD = 'abc@123';
+function generateOutletCode() {
+    return 'OL-' + crypto.randomBytes(4).toString('hex').toUpperCase();
+}
 class CreateOutletDto {
 }
 exports.CreateOutletDto = CreateOutletDto;
@@ -139,6 +143,26 @@ __decorate([
     __metadata("design:type", Boolean)
 ], CreateOutletDto.prototype, "priceIncludesGst", void 0);
 __decorate([
+    (0, class_validator_1.IsBoolean)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Boolean)
+], CreateOutletDto.prototype, "multipleMenusEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Boolean)
+], CreateOutletDto.prototype, "acceptRewardRedemption", void 0);
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Boolean)
+], CreateOutletDto.prototype, "kitchenAutoPrint", void 0);
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Boolean)
+], CreateOutletDto.prototype, "kitchenAllowManualPrint", void 0);
+__decorate([
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
@@ -197,7 +221,22 @@ let OutletsService = class OutletsService {
         const existing = await this.prisma.user.findUnique({ where: { phone: adminPhone } });
         if (existing)
             throw new common_1.BadRequestException(`Phone ${adminPhone} is already registered`);
-        const outlet = await this.prisma.outlet.create({ data: outletData, include: { business: true } });
+        let outlet = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+                outlet = await this.prisma.outlet.create({
+                    data: { ...outletData, publicCode: generateOutletCode() },
+                    include: { business: true },
+                });
+                break;
+            }
+            catch (e) {
+                if (e?.code !== 'P2002' || !`${e?.message ?? ''}`.includes('publicCode'))
+                    throw e;
+            }
+        }
+        if (!outlet)
+            throw new common_1.BadRequestException('Could not allocate outlet code');
         await this.translations.upsertAll('Outlet', outlet.id, this.translatableOutletFields(outlet));
         let outletAdminRole = await this.prisma.role.findFirst({
             where: { businessId: outlet.businessId, name: 'Outlet Admin' },
@@ -313,11 +352,27 @@ let OutletsService = class OutletsService {
     async getOpenStatus(outletId) {
         const outlet = await this.prisma.outlet.findUnique({
             where: { id: outletId },
-            select: { id: true, isActive: true, name: true, outletType: true, hours: true },
+            select: {
+                id: true, isActive: true, name: true, outletType: true, hours: true,
+                clusterMembership: {
+                    select: {
+                        clusterBusiness: { select: { id: true, publicCode: true, name: true } },
+                    },
+                },
+            },
         });
         if (!outlet)
             throw new common_1.NotFoundException('Outlet not found');
-        const base = { outletType: outlet.outletType };
+        const base = {
+            outletType: outlet.outletType,
+            clusterMembership: outlet.clusterMembership?.clusterBusiness
+                ? {
+                    clusterBusinessId: outlet.clusterMembership.clusterBusiness.id,
+                    clusterPublicCode: outlet.clusterMembership.clusterBusiness.publicCode,
+                    clusterName: outlet.clusterMembership.clusterBusiness.name,
+                }
+                : null,
+        };
         if (!outlet.isActive) {
             return { ...base, isOpen: false, isActive: false, reason: 'Outlet is currently closed' };
         }

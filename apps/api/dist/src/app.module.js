@@ -17,6 +17,7 @@ const users_module_1 = require("./modules/users/users.module");
 const businesses_module_1 = require("./modules/businesses/businesses.module");
 const outlets_module_1 = require("./modules/outlets/outlets.module");
 const menu_module_1 = require("./modules/menu/menu.module");
+const menus_module_1 = require("./modules/menus/menus.module");
 const orders_module_1 = require("./modules/orders/orders.module");
 const payments_module_1 = require("./modules/payments/payments.module");
 const inventory_module_1 = require("./modules/inventory/inventory.module");
@@ -40,6 +41,14 @@ const integrations_module_1 = require("./modules/integrations/integrations.modul
 const message_templates_module_1 = require("./modules/message-templates/message-templates.module");
 const customer_alerts_module_1 = require("./modules/customer-alerts/customer-alerts.module");
 const reviews_module_1 = require("./modules/reviews/reviews.module");
+const clusters_module_1 = require("./modules/clusters/clusters.module");
+const cluster_orders_module_1 = require("./modules/cluster-orders/cluster-orders.module");
+const coupons_module_1 = require("./modules/coupons/coupons.module");
+const discounts_module_1 = require("./modules/discounts/discounts.module");
+const offers_module_1 = require("./modules/offers/offers.module");
+const rewards_module_1 = require("./modules/rewards/rewards.module");
+const pricing_module_1 = require("./modules/pricing/pricing.module");
+const printers_module_1 = require("./modules/printers/printers.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -57,6 +66,7 @@ exports.AppModule = AppModule = __decorate([
             businesses_module_1.BusinessesModule,
             outlets_module_1.OutletsModule,
             menu_module_1.MenuModule,
+            menus_module_1.MenusModule,
             orders_module_1.OrdersModule,
             payments_module_1.PaymentsModule,
             inventory_module_1.InventoryModule,
@@ -80,6 +90,14 @@ exports.AppModule = AppModule = __decorate([
             message_templates_module_1.MessageTemplatesModule,
             customer_alerts_module_1.CustomerAlertsModule,
             reviews_module_1.ReviewsModule,
+            clusters_module_1.ClustersModule,
+            cluster_orders_module_1.ClusterOrdersModule,
+            coupons_module_1.CouponsModule,
+            discounts_module_1.DiscountsModule,
+            offers_module_1.OffersModule,
+            rewards_module_1.RewardsModule,
+            pricing_module_1.PricingModule,
+            printers_module_1.PrintersModule,
         ],
     })
 ], AppModule);

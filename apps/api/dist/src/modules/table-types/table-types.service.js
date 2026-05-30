@@ -28,8 +28,8 @@ let TableTypesService = class TableTypesService {
             throw new common_1.BadRequestException('This outlet is self-service; table types do not apply.');
         }
     }
-    list(outletId) {
-        return this.prisma.tableType.findMany({
+    async list(outletId) {
+        const rows = await this.prisma.tableType.findMany({
             where: { outletId },
             orderBy: { createdAt: 'asc' },
             include: {
@@ -38,9 +38,18 @@ let TableTypesService = class TableTypesService {
                     orderBy: { number: 'asc' },
                     include: { qrCode: true },
                 },
+                menus: {
+                    where: { isEnabled: false },
+                    select: { menuId: true },
+                },
                 _count: { select: { tables: true, prices: true } },
             },
         });
+        return rows.map((tt) => ({
+            ...tt,
+            disabledMenuIds: tt.menus.map((m) => m.menuId),
+            menus: undefined,
+        }));
     }
     async addTable(outletId, tableTypeId, data) {
         await this.assertOutletAllowsSeating(outletId);
@@ -147,6 +156,53 @@ let TableTypesService = class TableTypesService {
             where: { tableTypeId, itemId, variantId: variantId ?? null },
         });
         return { success: true };
+    }
+    async listMenus(tableTypeId) {
+        const tt = await this.prisma.tableType.findUnique({
+            where: { id: tableTypeId },
+            include: { outlet: { select: { businessId: true } } },
+        });
+        if (!tt)
+            throw new common_1.NotFoundException('Section not found');
+        const [menus, links] = await Promise.all([
+            this.prisma.menu.findMany({
+                where: { businessId: tt.outlet.businessId },
+                orderBy: [{ isDefault: 'desc' }, { displayOrder: 'asc' }, { createdAt: 'asc' }],
+            }),
+            this.prisma.tableTypeMenu.findMany({ where: { tableTypeId } }),
+        ]);
+        const byMenuId = new Map(links.map((l) => [l.menuId, l]));
+        return menus.map((m) => ({
+            id: m.id,
+            name: m.name,
+            isDefault: m.isDefault,
+            isLocked: m.isDefault,
+            isEnabled: m.isDefault ? true : (byMenuId.get(m.id)?.isEnabled ?? true),
+        }));
+    }
+    async toggleMenu(tableTypeId, menuId, isEnabled) {
+        const [tt, menu] = await Promise.all([
+            this.prisma.tableType.findUnique({
+                where: { id: tableTypeId },
+                include: { outlet: { select: { businessId: true } } },
+            }),
+            this.prisma.menu.findUnique({ where: { id: menuId } }),
+        ]);
+        if (!tt)
+            throw new common_1.NotFoundException('Section not found');
+        if (!menu)
+            throw new common_1.NotFoundException('Menu not found');
+        if (menu.businessId !== tt.outlet.businessId) {
+            throw new common_1.BadRequestException('Menu does not belong to this section\'s business');
+        }
+        if (menu.isDefault && !isEnabled) {
+            throw new common_1.BadRequestException('The default menu cannot be disabled');
+        }
+        return this.prisma.tableTypeMenu.upsert({
+            where: { tableTypeId_menuId: { tableTypeId, menuId } },
+            update: { isEnabled },
+            create: { tableTypeId, menuId, isEnabled },
+        });
     }
 };
 exports.TableTypesService = TableTypesService;

@@ -21,15 +21,23 @@ export class ServiceStationsService {
     });
   }
 
-  async create(outletId: string, data: { name: string; tableTypeId?: string | null }) {
-    if (data.tableTypeId) {
+  async create(outletId: string, data: { name: string; tableTypeId?: string | null; isParcelStation?: boolean }) {
+    const isParcel = !!data.isParcelStation;
+    if (!isParcel && data.tableTypeId) {
       const tt = await this.prisma.tableType.findUnique({ where: { id: data.tableTypeId } });
       if (!tt || tt.outletId !== outletId) {
         throw new BadRequestException('Table type does not belong to this outlet');
       }
     }
     return this.prisma.serviceStation.create({
-      data: { name: data.name.trim(), outletId, tableTypeId: data.tableTypeId ?? null },
+      data: {
+        name: data.name.trim(),
+        outletId,
+        // Parcel stations don't bind to a table type — they handle every
+        // isParcel order routed to this outlet.
+        tableTypeId: isParcel ? null : (data.tableTypeId ?? null),
+        isParcelStation: isParcel,
+      },
       include: {
         tableType: { select: { id: true, name: true, color: true } },
         workers: { include: { user: { select: { id: true, name: true, phone: true } } } },
@@ -38,10 +46,11 @@ export class ServiceStationsService {
     });
   }
 
-  async update(id: string, data: { name?: string; tableTypeId?: string | null }) {
+  async update(id: string, data: { name?: string; tableTypeId?: string | null; isParcelStation?: boolean }) {
     const station = await this.prisma.serviceStation.findUnique({ where: { id } });
     if (!station) throw new NotFoundException('Service station not found');
-    if (data.tableTypeId !== undefined && data.tableTypeId !== null) {
+    const becomingParcel = data.isParcelStation === true;
+    if (!becomingParcel && data.tableTypeId !== undefined && data.tableTypeId !== null) {
       const tt = await this.prisma.tableType.findUnique({ where: { id: data.tableTypeId } });
       if (!tt || tt.outletId !== station.outletId) {
         throw new BadRequestException('Table type does not belong to this outlet');
@@ -50,11 +59,19 @@ export class ServiceStationsService {
       // drop them so the admin re-selects from the new pool.
       await this.prisma.serviceStationTable.deleteMany({ where: { stationId: id } });
     }
+    if (becomingParcel) {
+      // Switching to a parcel station: detach tables/section since parcel
+      // stations aren't table-bound.
+      await this.prisma.serviceStationTable.deleteMany({ where: { stationId: id } });
+    }
     return this.prisma.serviceStation.update({
       where: { id },
       data: {
         ...(data.name !== undefined ? { name: data.name.trim() } : {}),
-        ...(data.tableTypeId !== undefined ? { tableTypeId: data.tableTypeId } : {}),
+        ...(data.isParcelStation !== undefined ? { isParcelStation: data.isParcelStation } : {}),
+        ...(becomingParcel
+          ? { tableTypeId: null }
+          : data.tableTypeId !== undefined ? { tableTypeId: data.tableTypeId } : {}),
       },
       include: {
         tableType: { select: { id: true, name: true, color: true } },
@@ -163,5 +180,23 @@ export class ServiceStationsService {
         tables: { include: { table: { select: { id: true, number: true } } } },
       },
     });
+  }
+
+  /**
+   * Is there an *active* parcel station at this outlet — i.e. one flagged
+   * isParcelStation=true with at least one assigned worker. The orders
+   * service consults this to decide whether parcel orders go through the
+   * dedicated parcel queue or fall back to the regular service queue.
+   */
+  async hasActiveParcelStation(outletId: string): Promise<boolean> {
+    const count = await this.prisma.serviceStation.count({
+      where: {
+        outletId,
+        isActive: true,
+        isParcelStation: true,
+        workers: { some: {} },
+      },
+    });
+    return count > 0;
   }
 }

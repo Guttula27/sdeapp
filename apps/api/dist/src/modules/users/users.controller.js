@@ -41,6 +41,9 @@ let UsersController = class UsersController {
     getMyStats(userId, lang, from, to) {
         return this.service.getCustomerStats(userId, from ? new Date(from) : undefined, to ? new Date(to) : undefined, lang);
     }
+    getMyPromotions(userId) {
+        return this.service.getCustomerPromotions(userId);
+    }
     listFavorites(userId, lang) {
         return this.service.listFavorites(userId, lang);
     }
@@ -122,6 +125,14 @@ __decorate([
     __metadata("design:paramtypes", [String, Object, String, String]),
     __metadata("design:returntype", void 0)
 ], UsersController.prototype, "getMyStats", null);
+__decorate([
+    (0, common_1.Get)('me/promotions'),
+    openapi.ApiResponse({ status: 200 }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], UsersController.prototype, "getMyPromotions", null);
 __decorate([
     (0, common_1.Get)('me/favorites'),
     openapi.ApiResponse({ status: 200, type: [Object] }),

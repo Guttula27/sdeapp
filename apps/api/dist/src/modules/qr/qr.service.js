@@ -19,9 +19,30 @@ let QrService = class QrService {
     constructor(prisma) {
         this.prisma = prisma;
     }
+    async resolveQrDestination(customerUrl, outletId, tableId, qrCode) {
+        const membership = await this.prisma.clusterMember.findUnique({
+            where: { outletId },
+            select: { clusterBusiness: { select: { publicCode: true } } },
+        });
+        const base = customerUrl.replace(/\/$/, '');
+        if (membership?.clusterBusiness?.publicCode) {
+            const params = new URLSearchParams({
+                outletId,
+                qr: qrCode,
+                ...(tableId ? { tableId } : {}),
+            });
+            return `${base}/cluster/${membership.clusterBusiness.publicCode}?${params.toString()}`;
+        }
+        const params = new URLSearchParams({
+            outlet: outletId,
+            qr: qrCode,
+            ...(tableId ? { table: tableId } : {}),
+        });
+        return `${base}/order?${params.toString()}`;
+    }
     async generateTableQR(tableId, outletId, customerUrl) {
         const code = (0, uuid_1.v4)();
-        const url = `${customerUrl}/order?outlet=${outletId}&table=${tableId}&qr=${code}`;
+        const url = await this.resolveQrDestination(customerUrl, outletId, tableId, code);
         const imageUrl = await QRCode.toDataURL(url);
         const qr = await this.prisma.qRCode.upsert({
             where: { tableId },
@@ -32,7 +53,7 @@ let QrService = class QrService {
     }
     async generateOutletQR(outletId, customerUrl) {
         const code = (0, uuid_1.v4)();
-        const url = `${customerUrl}/order?outlet=${outletId}&qr=${code}`;
+        const url = await this.resolveQrDestination(customerUrl, outletId, undefined, code);
         const imageUrl = await QRCode.toDataURL(url);
         return this.prisma.qRCode.create({
             data: { type: client_1.QRType.OUTLET, code, imageUrl, outletId },

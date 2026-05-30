@@ -113,6 +113,14 @@ let UsersService = class UsersService {
                     },
                     outlet: { select: { id: true, name: true, logoUrl: true } },
                     payments: { select: { id: true, mode: true, status: true, amount: true } },
+                    clusterOrder: {
+                        select: {
+                            id: true,
+                            clusterOrderNumber: true,
+                            paymentStatus: true,
+                            clusterBusiness: { select: { id: true, name: true, logoUrl: true, publicCode: true } },
+                        },
+                    },
                 },
                 orderBy: { createdAt: 'desc' },
                 skip: (p - 1) * l,
@@ -174,6 +182,112 @@ let UsersService = class UsersService {
             hourly,
             orders,
         };
+    }
+    async getCustomerPromotions(userId) {
+        const orderOutlets = await this.prisma.order.findMany({
+            where: { customerId: userId },
+            distinct: ['outletId'],
+            select: { outletId: true },
+        });
+        const linkedOutlets = await this.prisma.outletCustomer.findMany({
+            where: { userId },
+            select: { outletId: true },
+        });
+        const outletIds = Array.from(new Set([
+            ...orderOutlets.map((o) => o.outletId),
+            ...linkedOutlets.map((o) => o.outletId),
+        ]));
+        if (outletIds.length === 0)
+            return { outlets: [] };
+        const outlets = await this.prisma.outlet.findMany({
+            where: { id: { in: outletIds } },
+            select: {
+                id: true, name: true, logoUrl: true, primaryImageUrl: true,
+                businessId: true,
+                business: { select: { id: true, name: true, logoUrl: true } },
+            },
+        });
+        const now = new Date();
+        const isoDow = ((now.getDay() + 6) % 7) + 1;
+        const minute = now.getHours() * 60 + now.getMinutes();
+        const inScheduleNow = (row) => {
+            if (row.validFrom && new Date(row.validFrom) > now)
+                return false;
+            if (row.validUntil && new Date(row.validUntil) < now)
+                return false;
+            if (row.daysOfWeek) {
+                const days = String(row.daysOfWeek).split(',').map((s) => parseInt(s.trim(), 10));
+                if (days.length && !days.includes(isoDow))
+                    return false;
+            }
+            if (row.startMinute != null && row.endMinute != null) {
+                if (minute < row.startMinute || minute > row.endMinute)
+                    return false;
+            }
+            return true;
+        };
+        const businessIds = Array.from(new Set(outlets.map((o) => o.businessId)));
+        const [allCoupons, allDiscounts, allOffers] = await Promise.all([
+            this.prisma.coupon.findMany({
+                where: {
+                    businessId: { in: businessIds },
+                    isActive: true,
+                    validFrom: { lte: now },
+                    validUntil: { gte: now },
+                },
+                include: { targetCustomers: { select: { userId: true } } },
+            }),
+            this.prisma.discount.findMany({
+                where: {
+                    businessId: { in: businessIds },
+                    isActive: true,
+                    isManualOnly: false,
+                },
+                include: {
+                    category: { select: { id: true, name: true } },
+                    subcategory: { select: { id: true, name: true } },
+                    item: { select: { id: true, name: true } },
+                },
+            }),
+            this.prisma.offer.findMany({
+                where: {
+                    businessId: { in: businessIds },
+                    isActive: true,
+                },
+                include: {
+                    buyItem: { select: { id: true, name: true } },
+                    getItem: { select: { id: true, name: true } },
+                },
+            }),
+        ]);
+        const grouped = outlets.map((o) => {
+            const couponMatch = (c) => c.businessId === o.businessId &&
+                (c.outletId === null || c.outletId === o.id) &&
+                (c.maxTotalUses == null || c.usesCount < c.maxTotalUses) &&
+                (c.targetType === 'ALL' || c.targetCustomers.some((t) => t.userId === userId));
+            const scopeMatch = (row) => row.businessId === o.businessId &&
+                (row.outletId === null || row.outletId === o.id) &&
+                inScheduleNow(row);
+            return {
+                outlet: {
+                    id: o.id,
+                    name: o.name,
+                    logoUrl: o.logoUrl,
+                    businessName: o.business?.name,
+                },
+                coupons: allCoupons
+                    .filter(couponMatch)
+                    .map(({ targetCustomers, ...rest }) => rest),
+                discounts: allDiscounts.filter(scopeMatch),
+                offers: allOffers.filter(scopeMatch),
+            };
+        });
+        grouped.sort((a, b) => {
+            const aN = a.coupons.length + a.discounts.length + a.offers.length;
+            const bN = b.coupons.length + b.discounts.length + b.offers.length;
+            return bN - aN;
+        });
+        return { outlets: grouped };
     }
     async addFavorite(userId, itemId) {
         return this.prisma.favorite.upsert({

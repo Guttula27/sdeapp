@@ -26,8 +26,12 @@ let MenuController = class MenuController {
     constructor(menuService) {
         this.menuService = menuService;
     }
-    getMenu(outletId, req, lang, tableId) {
-        return this.menuService.getMenu(outletId, req?.user?.id, tableId, lang);
+    getMenu(outletId, req, lang, tableId, includeHidden) {
+        const isStaff = !!(req?.user?.businessId || req?.user?.outletId);
+        const allowHidden = isStaff && includeHidden === 'true';
+        return this.menuService.getMenu(outletId, req?.user?.id, tableId, lang, {
+            includeHidden: allowHidden,
+        });
     }
     getPopular(outletId) {
         return this.menuService.getPopularItems(outletId);
@@ -55,6 +59,9 @@ let MenuController = class MenuController {
     }
     toggleAvailability(id) {
         return this.menuService.toggleItemAvailability(id);
+    }
+    toggleVisibility(id) {
+        return this.menuService.toggleItemVisibility(id);
     }
     adjustStock(id, body) {
         return this.menuService.adjustItemStock(id, body);
@@ -102,8 +109,9 @@ __decorate([
     __param(1, (0, common_1.Req)()),
     __param(2, (0, preferred_language_1.PreferredLanguage)()),
     __param(3, (0, common_1.Query)('tableId')),
+    __param(4, (0, common_1.Query)('includeHidden')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, Object, String]),
+    __metadata("design:paramtypes", [String, Object, Object, String, String]),
     __metadata("design:returntype", void 0)
 ], MenuController.prototype, "getMenu", null);
 __decorate([
@@ -201,6 +209,16 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], MenuController.prototype, "toggleAvailability", null);
+__decorate([
+    (0, swagger_1.ApiBearerAuth)(),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Patch)('items/:id/visibility'),
+    openapi.ApiResponse({ status: 200 }),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], MenuController.prototype, "toggleVisibility", null);
 __decorate([
     (0, swagger_1.ApiBearerAuth)(),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),

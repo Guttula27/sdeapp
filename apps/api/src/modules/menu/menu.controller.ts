@@ -19,8 +19,16 @@ export class MenuController {
     @Req() req: any,
     @PreferredLanguage() lang: string | null,
     @Query('tableId') tableId?: string,
+    @Query('includeHidden') includeHidden?: string,
   ) {
-    return this.menuService.getMenu(outletId, req?.user?.id, tableId, lang);
+    // includeHidden is honored only for staff users (those tied to a
+    // business or outlet). Customer/anon callers always get the public
+    // (display-filtered) view regardless of query string.
+    const isStaff = !!(req?.user?.businessId || req?.user?.outletId);
+    const allowHidden = isStaff && includeHidden === 'true';
+    return this.menuService.getMenu(outletId, req?.user?.id, tableId, lang, {
+      includeHidden: allowHidden,
+    });
   }
 
   @Public()
@@ -83,6 +91,13 @@ export class MenuController {
   @Patch('items/:id/availability')
   toggleAvailability(@Param('id') id: string) {
     return this.menuService.toggleItemAvailability(id);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Patch('items/:id/visibility')
+  toggleVisibility(@Param('id') id: string) {
+    return this.menuService.toggleItemVisibility(id);
   }
 
   // Stock management for limited-quantity items.

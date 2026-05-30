@@ -13,12 +13,22 @@ const orders_browse_controller_1 = require("./orders-browse.controller");
 const orders_service_1 = require("./orders.service");
 const orders_gateway_1 = require("./orders.gateway");
 const customer_alerts_module_1 = require("../customer-alerts/customer-alerts.module");
+const pricing_module_1 = require("../pricing/pricing.module");
+const rewards_module_1 = require("../rewards/rewards.module");
+const coupons_module_1 = require("../coupons/coupons.module");
+const service_stations_module_1 = require("../service-stations/service-stations.module");
 let OrdersModule = class OrdersModule {
 };
 exports.OrdersModule = OrdersModule;
 exports.OrdersModule = OrdersModule = __decorate([
     (0, common_1.Module)({
-        imports: [(0, common_1.forwardRef)(() => customer_alerts_module_1.CustomerAlertsModule)],
+        imports: [
+            (0, common_1.forwardRef)(() => customer_alerts_module_1.CustomerAlertsModule),
+            pricing_module_1.PricingModule,
+            rewards_module_1.RewardsModule,
+            coupons_module_1.CouponsModule,
+            service_stations_module_1.ServiceStationsModule,
+        ],
         controllers: [orders_browse_controller_1.OrdersBrowseController, orders_controller_1.OrdersController],
         providers: [orders_service_1.OrdersService, orders_gateway_1.OrdersGateway],
         exports: [orders_service_1.OrdersService, orders_gateway_1.OrdersGateway],

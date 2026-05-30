@@ -4,7 +4,7 @@ import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import {
   AlertTriangle, CheckCircle2, Clock, MessageSquare,
-  IndianRupee, User, Phone, ChevronRight, X, Plus,
+  IndianRupee, User, Phone, ChevronRight, X, Plus, Search, Loader2, Receipt,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import { useUserRole } from '../../hooks/useUserRole';
@@ -93,6 +93,13 @@ export default function DisputesPage() {
   const [raiseOrderId, setRaiseOrderId]         = useState('');
   const [raiseDescription, setRaiseDescription] = useState('');
   const [raiseClaim, setRaiseClaim]             = useState('');
+  // Cashier flow: type the bill number off the printed receipt, hit the
+  // resolve button, and the order auto-populates without scrolling the
+  // dropdown. `raiseBillLookup` is the typed value; `raiseLookupBusy`
+  // toggles the spinner; `raiseLookupHit` holds the resolved order.
+  const [raiseBillLookup, setRaiseBillLookup]   = useState('');
+  const [raiseLookupBusy, setRaiseLookupBusy]   = useState(false);
+  const [raiseLookupHit, setRaiseLookupHit]     = useState<any>(null);
   const [raising, setRaising]                   = useState(false);
 
   /* ── fetch ──────────────────────────────────────────────── */
@@ -170,11 +177,35 @@ export default function DisputesPage() {
     setRaiseOrderId('');
     setRaiseDescription('');
     setRaiseClaim('');
+    setRaiseBillLookup('');
+    setRaiseLookupHit(null);
     try {
       const { data } = await api.get(`/outlets/${outletId}/orders`, { params: { limit: 50 } });
       setRaiseOrders(data.data?.orders || []);
     } catch {
       setRaiseOrders([]);
+    }
+  };
+
+  // Resolve a bill number into an order id. Strict — must be exact. Used
+  // by the cashier flow where the customer hands over a printed receipt.
+  const lookupBill = async () => {
+    const trimmed = raiseBillLookup.trim();
+    if (!trimmed) return;
+    if (!outletId) { toast.error('Pick an outlet first'); return; }
+    setRaiseLookupBusy(true);
+    try {
+      const { data } = await api.get(`/outlets/${outletId}/orders/by-number/${encodeURIComponent(trimmed)}`);
+      const order = data.data ?? data;
+      setRaiseLookupHit(order);
+      setRaiseOrderId(order.id);
+      toast.success(`Found ${order.orderNumber}`);
+    } catch (e: any) {
+      setRaiseLookupHit(null);
+      setRaiseOrderId('');
+      toast.error(e?.response?.data?.message || 'No order found for that bill number');
+    } finally {
+      setRaiseLookupBusy(false);
     }
   };
 
@@ -515,11 +546,60 @@ export default function DisputesPage() {
         }
       >
         <div className="space-y-4">
+          {/* Bill ID lookup — primary path for the cashier flow. Type the
+              bill number from the printed receipt, hit Enter or the resolve
+              button, and the order is pre-filled below. */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide flex items-center gap-1.5">
+              <Receipt size={12} /> Bill / Order ID
+            </label>
+            <div className="flex gap-2">
+              <input
+                value={raiseBillLookup}
+                onChange={(e) => setRaiseBillLookup(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); lookupBill(); } }}
+                placeholder="e.g. ORD-OL-XXXXXXXX-00042"
+                className="input flex-1 font-mono text-xs"
+              />
+              <button
+                type="button"
+                onClick={lookupBill}
+                disabled={raiseLookupBusy || !raiseBillLookup.trim()}
+                className="btn-secondary"
+              >
+                {raiseLookupBusy ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                Find
+              </button>
+            </div>
+            {raiseLookupHit && (
+              <div className="mt-2 bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-start gap-3 text-xs">
+                <CheckCircle2 size={14} className="text-emerald-600 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-emerald-800">{raiseLookupHit.orderNumber}</p>
+                  <p className="text-emerald-700 mt-0.5">
+                    ₹{Number(raiseLookupHit.totalAmount).toFixed(0)} ·{' '}
+                    {raiseLookupHit.customer?.name || raiseLookupHit.customer?.phone || 'Counter'} ·{' '}
+                    {raiseLookupHit.items?.length || 0} item{(raiseLookupHit.items?.length || 0) !== 1 ? 's' : ''}
+                  </p>
+                  <p className="text-emerald-600 text-[10px] mt-0.5">
+                    Placed {new Date(raiseLookupHit.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            <span className="flex-1 h-px bg-slate-200" />
+            <span>or pick from recent</span>
+            <span className="flex-1 h-px bg-slate-200" />
+          </div>
+
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Order</label>
             <select
               value={raiseOrderId}
-              onChange={e => setRaiseOrderId(e.target.value)}
+              onChange={(e) => { setRaiseOrderId(e.target.value); setRaiseLookupHit(null); }}
               className="input"
             >
               <option value="">— Select an order —</option>

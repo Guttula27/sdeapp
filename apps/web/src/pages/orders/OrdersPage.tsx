@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download } from 'lucide-react';
+import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download, Maximize2, Minimize2, Filter, ChevronDown, ListOrdered, Save } from 'lucide-react';
 import { RootState } from '../../store';
 import { setOrders, updateOrder } from '../../store/slices/ordersSlice';
 import { getSocket } from '../../services/socket';
+import { useSocketStatus } from '../../hooks/useSocketStatus';
 import { useUserRole } from '../../hooks/useUserRole';
 import api from '../../services/api';
 import ThermalReceipt from '../../components/receipt/ThermalReceipt';
@@ -13,11 +14,12 @@ import { downloadReceiptPdf } from '../../components/receipt/downloadReceiptPdf'
 import Modal from '../../components/common/Modal';
 
 const STATUS: Record<string, { label: string; dot: string; bg: string; text: string; border: string }> = {
-  CREATED:         { label: 'Created',         dot: '#3b82f6', bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
-  QUEUED:          { label: 'Queued',          dot: '#f59e0b', bg: '#fffbeb', text: '#b45309', border: '#fde68a' },
-  PREPARING:       { label: 'Preparing',       dot: '#f97316', bg: '#fff7ed', text: '#c2410c', border: '#fed7aa' },
-  READY:           { label: 'Ready',           dot: '#10b981', bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0' },
-  OUT_FOR_SERVICE: { label: 'Out for Service', dot: '#14b8a6', bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4' },
+  CREATED:          { label: 'Created',          dot: '#3b82f6', bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
+  QUEUED:           { label: 'Queued',           dot: '#f59e0b', bg: '#fffbeb', text: '#b45309', border: '#fde68a' },
+  PREPARING:        { label: 'Preparing',        dot: '#f97316', bg: '#fff7ed', text: '#c2410c', border: '#fed7aa' },
+  READY:            { label: 'Ready',            dot: '#10b981', bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0' },
+  READY_FOR_PICKUP: { label: 'Ready for Pickup', dot: '#2563eb', bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
+  OUT_FOR_SERVICE:  { label: 'Out for Service',  dot: '#14b8a6', bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4' },
   SERVED:          { label: 'Served',          dot: '#64748b', bg: '#f8fafc', text: '#475569', border: '#e2e8f0' },
   CANCELLED:       { label: 'Cancelled',       dot: '#ef4444', bg: '#fff1f2', text: '#be123c', border: '#fecdd3' },
   DISPUTED:        { label: 'Disputed',        dot: '#8b5cf6', bg: '#faf5ff', text: '#7e22ce', border: '#e9d5ff' },
@@ -42,19 +44,22 @@ function needsOutForService(outletType?: string | null, tableId?: string | null)
     default:                    return true;
   }
 }
-type StatusCtx = { outletType?: string | null; tableId?: string | null };
+type StatusCtx = { outletType?: string | null; tableId?: string | null; isParcel?: boolean };
 function nextStatusFor(current: string, ctx: StatusCtx): { next: string; label: string } | null {
-  if (current === 'CREATED')         return { next: 'QUEUED', label: 'Accept' };
-  if (current === 'OUT_FOR_SERVICE') return { next: 'SERVED', label: 'Mark Served' };
-  if (current === 'FOR_REFUND')      return { next: 'REFUND_COMPLETE', label: 'Mark Refunded' };
+  if (current === 'CREATED')          return { next: 'QUEUED', label: 'Accept' };
+  if (current === 'OUT_FOR_SERVICE')  return { next: 'SERVED', label: 'Mark Served' };
+  if (current === 'READY_FOR_PICKUP') return { next: 'SERVED', label: 'Mark Picked Up' };
+  if (current === 'FOR_REFUND')       return { next: 'REFUND_COMPLETE', label: 'Mark Refunded' };
   if (current === 'READY') {
+    // Parcel: go through the pickup-counter step so the customer gets the alert.
+    if (ctx.isParcel) return { next: 'READY_FOR_PICKUP', label: 'Ready for Pickup' };
     return needsOutForService(ctx.outletType, ctx.tableId)
       ? { next: 'OUT_FOR_SERVICE', label: 'Out for Service' }
       : { next: 'SERVED',          label: 'Mark Served' };
   }
   return null;
 }
-const FILTERS = ['ACTIVE','ALL','CREATED','QUEUED','PREPARING','READY','OUT_FOR_SERVICE','SERVED','CANCELLED','DISPUTED','RESOLVED','FOR_REFUND','REFUND_COMPLETE'];
+const FILTERS = ['ACTIVE','ALL','CREATED','QUEUED','PREPARING','READY','READY_FOR_PICKUP','OUT_FOR_SERVICE','SERVED','CANCELLED','DISPUTED','RESOLVED','FOR_REFUND','REFUND_COMPLETE'];
 const FILTER_LABEL: Record<string, string> = {
   ACTIVE: 'Active',
   ALL: 'All',
@@ -88,12 +93,65 @@ export default function OrdersPage() {
   const user = useSelector((s: RootState) => s.auth.user);
   const { tier } = useUserRole();
   const { orders } = useSelector((s: RootState) => s.orders);
-  const [filter, setFilter] = useState('ACTIVE');
+  // Multi-select filter: users can combine statuses (e.g. ACTIVE + CANCELLED).
+  // ACTIVE/ALL act as presets that compose with specific statuses — see
+  // matchesFilter below for the OR logic. Default is just {ACTIVE}.
+  const [filterSet, setFilterSet] = useState<Set<string>>(() => new Set(['ACTIVE']));
+  const toggleFilter = (f: string) => {
+    setFilterSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(f)) next.delete(f);
+      else next.add(f);
+      if (next.size === 0) next.add('ACTIVE'); // never leave the page with no filter
+      return next;
+    });
+  };
   const [search, setSearch] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const receiptRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const statusMenuRef = useRef<HTMLDivElement>(null);
+
+  // Fullscreen toggle — uses the browser's Fullscreen API on the page wrapper
+  // so phones in landscape can use the whole screen. We also track via the
+  // browser's `fullscreenchange` event so the icon stays in sync if the user
+  // exits via Escape.
+  const toggleFullscreen = async () => {
+    const el = pageRef.current;
+    if (!el) return;
+    try {
+      if (!document.fullscreenElement) await el.requestFullscreen();
+      else await document.exitFullscreen();
+    } catch (e) { /* ignore — feature may be unavailable */ }
+  };
+  useEffect(() => {
+    const handler = () => setFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
+
+  // Expanded search: autofocus the input on open; collapse on Escape.
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
+
+  // Status dropdown: close on click-outside so the page feels native.
+  useEffect(() => {
+    if (!statusMenuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (statusMenuRef.current && !statusMenuRef.current.contains(e.target as Node)) {
+        setStatusMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [statusMenuOpen]);
 
   const downloadDetailReceipt = () => {
     if (!receiptRef.current || !detail) return;
@@ -161,6 +219,15 @@ export default function OrdersPage() {
     return () => { socket.off('orderCreated'); socket.off('orderStatusUpdated'); };
   }, [tier, outletId, businessId, selectedOutletId]);
 
+  // Socket state + auto-backfill. The orders page is the cashier's main
+  // view; missing a new order because the socket silently dropped is the
+  // worst-case scenario. Re-fetch on every reconnect.
+  const socketForStatus = !isReadOnly ? getSocket(outletId) : null;
+  const { phase: socketPhase, reconnectedAt } = useSocketStatus(socketForStatus);
+  useEffect(() => {
+    if (reconnectedAt) fetchOrders();
+  }, [reconnectedAt, fetchOrders]);
+
   const advance = async (orderId: string, status: string) => {
     setSaving(true);
     try {
@@ -210,10 +277,16 @@ export default function OrdersPage() {
     finally { setPendingItem(null); }
   };
 
-  const matchesFilter = (status: string) =>
-    filter === 'ALL' ? true :
-    filter === 'ACTIVE' ? !TERMINAL_STATUSES.has(status) :
-    status === filter;
+  // OR-composition across the selected filters:
+  //   • ALL wins outright
+  //   • ACTIVE matches any non-terminal status
+  //   • any specific status matches itself
+  const matchesFilter = (status: string) => {
+    if (filterSet.has('ALL')) return true;
+    if (filterSet.has(status)) return true;
+    if (filterSet.has('ACTIVE') && !TERMINAL_STATUSES.has(status)) return true;
+    return false;
+  };
   const counts = FILTERS.reduce((a, f) => ({
     ...a,
     [f]: f === 'ALL' ? orders.length
@@ -225,6 +298,12 @@ export default function OrdersPage() {
   const renderOrderCard = (order: any) => {
     const s = STATUS[order.status] || STATUS.SERVED;
     const isNew = order.status === 'CREATED';
+    // Service-station blink: card pulses while the order is sitting in a
+    // hand-off state (out of the kitchen, awaiting delivery / pickup).
+    // Drops as soon as the order moves to SERVED.
+    const needsServiceAction = order.status === 'READY'
+      || order.status === 'READY_FOR_PICKUP'
+      || order.status === 'OUT_FOR_SERVICE';
     const cardItems = visibleItems(order.items || []);
     // Hide cards that have no items relevant to my station
     if ((tier === 'kitchen' || tier === 'counter') && myStation && !myStation.isMaster && cardItems.length === 0) {
@@ -248,7 +327,11 @@ export default function OrdersPage() {
 
     return (
       <div key={order.id} onClick={() => openDetail(order)}
-        className={clsx('rounded-2xl border bg-white shadow-card overflow-hidden flex flex-col cursor-pointer hover:shadow-md transition-shadow', isNew && 'ring-2 ring-blue-200')}
+        className={clsx(
+          'rounded-2xl border bg-white shadow-card overflow-hidden flex flex-col cursor-pointer hover:shadow-md transition-shadow',
+          isNew && 'ring-2 ring-blue-200',
+          needsServiceAction && 'attn-blink-teal',
+        )}
         style={{ borderColor: s.border }}
       >
         {/* Tinted header band — table, token, time, elapsed */}
@@ -270,8 +353,10 @@ export default function OrdersPage() {
           </div>
         </div>
 
-        {/* Items list with per-item advance */}
-        <div className="px-3 py-2 flex-1 space-y-1.5" onClick={e => e.stopPropagation()}>
+        {/* Items list with per-item advance. The list area itself is clickable
+            (bubbles up to the card → opens detail); only the per-item advance
+            button stops propagation. */}
+        <div className="px-3 py-2 flex-1 space-y-1.5">
           {cardItems.map((item: any) => {
             const itStatus = (item.status || 'PENDING') as ItemStatus;
             const its = ITEM_STATUS[itStatus];
@@ -295,7 +380,7 @@ export default function OrdersPage() {
                 </div>
                 {!isReadOnly && !terminal && next && (
                   <button
-                    onClick={() => advanceItem(order.id, item.id, next.status)}
+                    onClick={(e) => { e.stopPropagation(); advanceItem(order.id, item.id, next.status); }}
                     disabled={busy}
                     className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-slate-600 border border-slate-200 hover:bg-slate-50 disabled:opacity-50"
                     title={`Mark ${next.label}`}
@@ -311,13 +396,15 @@ export default function OrdersPage() {
           )}
         </div>
 
-        {/* Footer — order-level actions */}
-        <div className="px-3 py-2 border-t border-slate-50 flex items-center justify-between gap-2"
-          onClick={e => e.stopPropagation()}>
+        {/* Footer — order-level actions. Empty areas of the footer still
+            bubble up to open the detail; only the action buttons stop the
+            propagation. Cancel was removed: it's now available from the
+            detail view to avoid accidental clicks. */}
+        <div className="px-3 py-2 border-t border-slate-50 flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
             {!isReadOnly && commonNext && (
               <button
-                onClick={advanceAll}
+                onClick={(e) => { e.stopPropagation(); advanceAll(e as any); }}
                 className="text-[10px] font-bold px-2 py-1 rounded-md bg-gradient-to-r from-orange-500 to-orange-600 text-white"
                 title={`Mark all items as ${commonNext.label}`}
               >
@@ -325,18 +412,12 @@ export default function OrdersPage() {
               </button>
             )}
             {isReadOnly && canAccept && order.status === 'CREATED' && (
-              <button onClick={() => advance(order.id, 'QUEUED')} disabled={saving} className="text-[10px] font-bold px-2 py-1 rounded-md bg-brand-500 text-white">
+              <button
+                onClick={(e) => { e.stopPropagation(); advance(order.id, 'QUEUED'); }}
+                disabled={saving}
+                className="text-[10px] font-bold px-2 py-1 rounded-md bg-brand-500 text-white"
+              >
                 Accept
-              </button>
-            )}
-          </div>
-          <div className="flex items-center gap-1 shrink-0">
-            <button onClick={() => openDetail(order)} className="btn-ghost p-1.5" title="Details">
-              <Eye size={12} />
-            </button>
-            {!isReadOnly && ['CREATED','QUEUED','PREPARING','READY'].includes(order.status) && (
-              <button onClick={() => setCancelTarget(order)} className="btn-ghost p-1.5 text-red-400 hover:bg-red-50" title="Cancel">
-                <X size={12} />
               </button>
             )}
           </div>
@@ -345,28 +426,104 @@ export default function OrdersPage() {
     );
   };
 
+  // Inline filters next to the title — the most-used presets. The rest live
+  // behind a "Status" dropdown opened with the Filter button to save space.
+  const INLINE_FILTERS = ['ACTIVE', 'ALL'];
+  const MORE_FILTERS = FILTERS.filter((f) => !INLINE_FILTERS.includes(f));
+
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div>
-            <h1 className="page-title">Orders</h1>
-            <p className="page-subtitle">
-              {orders.length} {tier === 'platform' ? 'across the platform' : tier === 'business' ? 'across your outlets' : 'total orders today'}
-            </p>
-          </div>
-          {isReadOnly && (
-            <span className="badge badge-slate"><Eye size={10} /> View only</span>
+    // Full-height flex column so the orders grid below claims every pixel of
+    // remaining vertical space. The Layout wrapper already gives this page a
+    // bounded scroll viewport; we just take all of it. In fullscreen we layer
+    // our own background since the Layout is bypassed.
+    <div ref={pageRef} className={clsx('flex flex-col gap-3', fullscreen ? 'bg-slate-50 p-4 h-screen' : 'h-[calc(100dvh-7rem)]')}>
+      {/* Single-line header. The status filter pills sit inline with the
+          "Orders" title; the rest of the action cluster (search, fullscreen,
+          refresh) hugs the right edge. Wraps on small screens. */}
+      <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
+        <h1 className="page-title m-0">Orders</h1>
+        <span className="text-xs text-slate-400 mr-2">
+          {orders.length} {tier === 'platform' ? 'across platform' : tier === 'business' ? 'across outlets' : 'today'}
+        </span>
+
+        {/* Primary filter pills — multi-select. Click toggles in/out of the set. */}
+        {INLINE_FILTERS.map((f) => {
+          const active = filterSet.has(f);
+          return (
+            <button key={f} onClick={() => toggleFilter(f)}
+              className={clsx('filter-pill', active ? 'filter-pill-active' : 'filter-pill-inactive')}>
+              {FILTER_LABEL[f] ?? STATUS[f]?.label}
+              {counts[f] > 0 && (
+                <span className={clsx('inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold ml-1',
+                  active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500')}>
+                  {counts[f]}
+                </span>
+              )}
+            </button>
+          );
+        })}
+
+        {/* "More" dropdown — checkbox rows. Each row toggles that specific
+            status in/out of the active filter set. The trigger pill counts
+            how many specific statuses are currently selected. */}
+        <div className="relative" ref={statusMenuRef}>
+          {(() => {
+            const selectedSpecific = MORE_FILTERS.filter((f) => filterSet.has(f));
+            const hasAny = selectedSpecific.length > 0;
+            const label = !hasAny
+              ? 'Status'
+              : selectedSpecific.length === 1
+                ? (FILTER_LABEL[selectedSpecific[0]] ?? STATUS[selectedSpecific[0]]?.label)
+                : `Status · ${selectedSpecific.length}`;
+            return (
+              <button
+                onClick={() => setStatusMenuOpen((v) => !v)}
+                className={clsx('filter-pill inline-flex items-center gap-1',
+                  hasAny ? 'filter-pill-active' : 'filter-pill-inactive',
+                )}
+              >
+                <Filter size={11} />
+                {label}
+                <ChevronDown size={11} />
+              </button>
+            );
+          })()}
+          {statusMenuOpen && (
+            <div className="absolute z-30 top-full mt-1 left-0 w-56 bg-white border border-slate-200 rounded-xl shadow-lg p-1 max-h-80 overflow-y-auto">
+              {MORE_FILTERS.map((f) => {
+                const active = filterSet.has(f);
+                return (
+                  <button
+                    key={f}
+                    onClick={() => toggleFilter(f)}
+                    className={clsx('w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left text-sm hover:bg-slate-50',
+                      active && 'bg-brand-50 text-brand-700 font-semibold')}
+                  >
+                    <span className={clsx('w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0',
+                      active ? 'bg-brand-500 border-brand-500' : 'border-slate-300')}>
+                      {active && <span className="w-1.5 h-1.5 rounded-sm bg-white" />}
+                    </span>
+                    <span className="flex-1 truncate">{FILTER_LABEL[f] ?? STATUS[f]?.label}</span>
+                    {counts[f] > 0 && (
+                      <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">
+                        {counts[f]}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
-        <div className="flex items-center gap-2">
+
+        {/* Right-aligned action cluster */}
+        <div className="flex items-center gap-2 ml-auto">
           {tier === 'business' && businessOutlets.length > 0 && (
             <select
               value={selectedOutletId}
               onChange={(e) => setSelectedOutletId(e.target.value)}
-              className="input py-2 text-sm"
-              style={{ minWidth: 180 }}
+              className="input py-1.5 text-xs"
+              style={{ minWidth: 140 }}
             >
               <option value="ALL">All outlets</option>
               {businessOutlets.map((o) => (
@@ -374,55 +531,108 @@ export default function OrdersPage() {
               ))}
             </select>
           )}
-          <button className="btn-secondary" onClick={fetchOrders} disabled={loading}>
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
-          </button>
-        </div>
-      </div>
 
-      {/* Filter + search bar */}
-      <div className="card p-3 flex flex-col sm:flex-row gap-2.5">
-        <div className="relative flex-1">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search order #…" className="input pl-9" />
-        </div>
-        <div className="flex gap-1.5 flex-wrap">
-          {FILTERS.map(f => (
-            <button key={f} onClick={() => setFilter(f)}
-              className={clsx('filter-pill', filter === f ? 'filter-pill-active' : 'filter-pill-inactive')}>
-              {FILTER_LABEL[f] ?? STATUS[f]?.label}
-              {counts[f] > 0 && (
-                <span className={clsx('inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold ml-1',
-                  filter === f ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500')}>
-                  {counts[f]}
-                </span>
-              )}
+          {/* Collapsible search — icon-only by default, expands on click. */}
+          {searchOpen ? (
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input
+                ref={searchInputRef}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Escape') { setSearch(''); setSearchOpen(false); } }}
+                placeholder="Order #…"
+                className="input pl-7 pr-7 py-1.5 text-xs"
+                style={{ width: 180 }}
+              />
+              <button
+                onClick={() => { setSearch(''); setSearchOpen(false); }}
+                className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700"
+                title="Close search"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setSearchOpen(true)}
+              className="btn-ghost p-2 text-slate-500 hover:text-slate-800"
+              title="Search orders"
+            >
+              <Search size={14} />
             </button>
-          ))}
+          )}
+
+          <button
+            onClick={toggleFullscreen}
+            className="btn-ghost p-2 text-slate-500 hover:text-slate-800"
+            title={fullscreen ? 'Exit full screen' : 'Full screen (good for landscape on mobile)'}
+          >
+            {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
+
+          <button className="btn-ghost p-2 text-slate-500 hover:text-slate-800" onClick={fetchOrders} disabled={loading} title="Refresh">
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          </button>
+
+          {/* Socket state pill — hidden for cross-outlet views (no socket). */}
+          {!isReadOnly && (
+            <span
+              className={
+                'inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-full border ' +
+                (socketPhase === 'connected'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                  : socketPhase === 'reconnecting'
+                    ? 'bg-amber-50 border-amber-200 text-amber-700'
+                    : 'bg-red-50 border-red-200 text-red-700')
+              }
+              title={
+                socketPhase === 'connected'
+                  ? 'Real-time channel connected'
+                  : socketPhase === 'reconnecting'
+                    ? 'Reconnecting — orders will sync once the channel is back'
+                    : 'Real-time channel disconnected — orders may be stale'
+              }
+            >
+              <span
+                className={
+                  'w-1.5 h-1.5 rounded-full ' +
+                  (socketPhase === 'connected'
+                    ? 'bg-emerald-500'
+                    : socketPhase === 'reconnecting'
+                      ? 'bg-amber-500 animate-pulse'
+                      : 'bg-red-500')
+                }
+              />
+              {socketPhase === 'connected' ? 'Live' : socketPhase === 'reconnecting' ? 'Reconnecting' : 'Offline'}
+            </span>
+          )}
+
+          {isReadOnly && (
+            <span className="badge badge-slate"><Eye size={10} /> View only</span>
+          )}
         </div>
       </div>
 
-      {/* Grid */}
+      {/* Grid — claims all remaining vertical space via flex-1 + min-h-0.
+          Order cards flow top-to-bottom through CSS columns; once a column
+          is full the next card spills into the next column to the right.
+          Vertical overflow is hidden so the layout doesn't grow past the
+          viewport — extra columns scroll horizontally instead. */}
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 flex-shrink-0">
           {Array.from({ length: 6 }).map((_, i) => <div key={i} className="card h-44 skeleton" />)}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="card empty-state">
+        <div className="card empty-state flex-shrink-0">
           <div className="empty-state-icon"><ShoppingBag size={22} className="text-slate-400" /></div>
           <p className="text-sm font-semibold text-slate-600">No orders found</p>
           <p className="text-xs text-slate-400 mt-1">Try adjusting your filter or search</p>
         </div>
       ) : (
-        <div className="flex gap-3" style={{ height: 'calc(100dvh - 240px)' }}>
-          <div className="flex-1 overflow-x-auto overflow-y-hidden pb-2 min-w-0">
-            <div
-              style={{
-                columnWidth: '220px',
-                columnGap: '14px',
-                height: '100%',
-              }}
-            >
+        <div className="flex gap-3 flex-1 min-h-0">
+          <div className="orders-cards-wrapper flex-1 pb-2 min-w-0 h-full">
+            <div className="orders-cards-columns">
               {[...filtered]
                 .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
                 .map(order => {
@@ -479,6 +689,7 @@ export default function OrdersPage() {
                 const step = nextStatusFor(detail.status, {
                   outletType: detail.outlet?.outletType,
                   tableId: detail.tableId,
+                  isParcel: detail.isParcel,
                 });
                 if (!step) return null;
                 return (
@@ -528,6 +739,12 @@ export default function OrdersPage() {
               );
             })()}
 
+            {/* Course planner */}
+            <CoursePlanner
+              order={detail}
+              onSaved={(updated) => setDetail(updated)}
+            />
+
             {/* Items with per-item status */}
             <div className="space-y-2">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Items</p>
@@ -549,6 +766,19 @@ export default function OrdersPage() {
                         <p className="text-sm font-semibold text-slate-800 truncate">{item.item?.name}</p>
                         {item.variant && <p className="text-xs text-slate-400">{item.variant.name}</p>}
                       </div>
+                      {item.sequenceNumber != null && (
+                        <span
+                          className={clsx(
+                            'text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap',
+                            item.sequenceNumber <= (detail.activeSequence ?? 1)
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                              : 'bg-slate-100 border-slate-200 text-slate-500',
+                          )}
+                          title={item.sequenceNumber > (detail.activeSequence ?? 1) ? 'Held until prior course is served' : 'Active course'}
+                        >
+                          {(detail.sequenceLabels?.[String(item.sequenceNumber)] || `Course ${item.sequenceNumber}`)}
+                        </span>
+                      )}
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
                         style={{ background: s.bg, color: s.text, border: `1px solid ${s.border}` }}>
                         {s.label}
@@ -749,5 +979,195 @@ function ItemStatusPanel({ orders, visibleItemsFn }: { orders: any[]; visibleIte
         )}
       </div>
     </aside>
+  );
+}
+
+/* ── Course planner ────────────────────────────────────────────
+   Groups order items into courses (Starter / Main / Dessert …)
+   that flow to the kitchen sequentially: course 2 stays held
+   until every item in course 1 is SERVED. */
+function CoursePlanner({
+  order,
+  onSaved,
+}: {
+  order: any;
+  onSaved: (updated: any) => void;
+}) {
+  const initial = useMemo(() => {
+    const labels: Record<string, string> = { ...(order.sequenceLabels || {}) };
+    const items: Record<string, number | null> = {};
+    let maxCourse = 0;
+    for (const it of order.items || []) {
+      items[it.id] = it.sequenceNumber ?? null;
+      if (it.sequenceNumber && it.sequenceNumber > maxCourse) maxCourse = it.sequenceNumber;
+    }
+    return { labels, items, courseCount: Math.max(1, maxCourse) };
+  }, [order.id, order.activeSequence, order.sequenceLabels]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [open, setOpen] = useState<boolean>(false);
+  const [labels, setLabels] = useState<Record<string, string>>(initial.labels);
+  const [seq, setSeq] = useState<Record<string, number | null>>(initial.items);
+  const [courseCount, setCourseCount] = useState<number>(initial.courseCount);
+  const [saving, setSaving] = useState(false);
+
+  const hasSequencing = (order.items || []).some((i: any) => i.sequenceNumber != null);
+  const activeLabel = order.sequenceLabels?.[String(order.activeSequence)] || `Course ${order.activeSequence}`;
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const payloadItems = (order.items || []).map((it: any) => ({
+        itemId: it.id,
+        sequenceNumber: seq[it.id] ?? null,
+      }));
+      // Trim labels to only the courses in use
+      const cleaned: Record<string, string> = {};
+      for (let i = 1; i <= courseCount; i++) {
+        const v = (labels[String(i)] || '').trim();
+        if (v) cleaned[String(i)] = v;
+      }
+      const { data } = await api.patch(`/orders/${order.id}/sequences`, {
+        items: payloadItems,
+        labels: Object.keys(cleaned).length ? cleaned : null,
+      });
+      toast.success('Courses saved');
+      onSaved(data.data);
+      setOpen(false);
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to save courses');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clearAll = () => {
+    const cleared: Record<string, number | null> = {};
+    for (const it of order.items || []) cleared[it.id] = null;
+    setSeq(cleared);
+    setLabels({});
+    setCourseCount(1);
+  };
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-slate-50 rounded-xl"
+      >
+        <ListOrdered size={14} className="text-indigo-500" />
+        <span className="text-sm font-bold text-slate-700">Courses</span>
+        {hasSequencing ? (
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+            Now serving · {activeLabel}
+          </span>
+        ) : (
+          <span className="text-[10px] text-slate-400">Not sequenced</span>
+        )}
+        <ChevronDown size={14} className={clsx('ml-auto text-slate-400 transition-transform', open && 'rotate-180')} />
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-100 px-4 py-3 space-y-3">
+          <p className="text-[11px] text-slate-500">
+            Group items into courses. The kitchen sees course 1 first; course 2 unlocks once every item in course 1 is SERVED. Already-cooking items can't be re-sequenced.
+          </p>
+
+          <div className="space-y-2">
+            {Array.from({ length: courseCount }, (_, i) => i + 1).map((c) => (
+              <div key={c} className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 w-16 shrink-0">Course {c}</span>
+                <input
+                  value={labels[String(c)] || ''}
+                  onChange={(e) => setLabels((p) => ({ ...p, [String(c)]: e.target.value }))}
+                  placeholder={c === 1 ? 'e.g. Starter' : c === 2 ? 'e.g. Main' : 'Name (optional)'}
+                  className="input text-sm py-1.5"
+                />
+                {c === order.activeSequence && hasSequencing && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 shrink-0">
+                    ACTIVE
+                  </span>
+                )}
+              </div>
+            ))}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCourseCount((n) => n + 1)}
+                className="text-[11px] font-semibold text-orange-600 hover:text-orange-700 inline-flex items-center gap-1"
+              >
+                <Plus size={11} /> Add a course
+              </button>
+              {courseCount > 1 && (
+                <button
+                  onClick={() => {
+                    const remove = courseCount;
+                    setCourseCount((n) => n - 1);
+                    // unassign items that were at the dropped course
+                    setSeq((p) => {
+                      const next = { ...p };
+                      for (const k of Object.keys(next)) {
+                        if (next[k] === remove) next[k] = null;
+                      }
+                      return next;
+                    });
+                    setLabels((p) => {
+                      const next = { ...p };
+                      delete next[String(remove)];
+                      return next;
+                    });
+                  }}
+                  className="text-[11px] font-semibold text-slate-500 hover:text-slate-700"
+                >
+                  Remove last course
+                </button>
+              )}
+              <button onClick={clearAll} className="text-[11px] font-semibold text-slate-400 hover:text-red-500 ml-auto">
+                Clear all
+              </button>
+            </div>
+          </div>
+
+          <div className="border-t border-slate-100 pt-3 space-y-1.5">
+            <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Assign items</p>
+            {(order.items || []).map((it: any) => {
+              const locked = it.status !== 'PENDING' && (seq[it.id] ?? null) === (it.sequenceNumber ?? null);
+              return (
+                <div key={it.id} className="flex items-center gap-2 text-xs">
+                  <span className="flex-1 truncate">
+                    {it.quantity}× {it.item?.name}{it.variant ? ` (${it.variant.name})` : ''}
+                  </span>
+                  <select
+                    value={seq[it.id] == null ? '' : String(seq[it.id])}
+                    onChange={(e) => {
+                      const v = e.target.value === '' ? null : Number(e.target.value);
+                      setSeq((p) => ({ ...p, [it.id]: v }));
+                    }}
+                    disabled={it.status !== 'PENDING'}
+                    title={it.status !== 'PENDING' ? `Already ${it.status} — can't reassign` : undefined}
+                    className="input text-xs py-1 w-28 disabled:opacity-60"
+                  >
+                    <option value="">None</option>
+                    {Array.from({ length: courseCount }, (_, i) => i + 1).map((c) => (
+                      <option key={c} value={c}>
+                        {labels[String(c)]?.trim() || `Course ${c}`}
+                      </option>
+                    ))}
+                  </select>
+                  {locked && it.sequenceNumber != null && (
+                    <span className="text-[9px] text-slate-400 shrink-0">locked</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={() => setOpen(false)} className="btn-ghost text-xs">Cancel</button>
+            <button onClick={save} disabled={saving} className="btn-primary text-xs">
+              <Save size={12} /> {saving ? 'Saving…' : 'Save courses'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

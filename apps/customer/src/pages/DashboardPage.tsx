@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { ShoppingBag, IndianRupee, Calendar, ChevronRight, Store } from 'lucide-react';
@@ -15,6 +15,42 @@ interface Stats {
 
 const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
 
+// Quick-range chips. First three are day-counts; the last three are month-
+// counts. Stored as { unit, n } so the click handler can switch on unit
+// without coupling chip labels to math.
+const QUICK_RANGES: { label: string; unit: 'day' | 'month'; n: number }[] = [
+  { label: '7d',  unit: 'day',   n: 7 },
+  { label: '30d', unit: 'day',   n: 30 },
+  { label: '90d', unit: 'day',   n: 90 },
+  { label: '3mo', unit: 'month', n: 3 },
+  { label: '6mo', unit: 'month', n: 6 },
+  { label: '1yr', unit: 'month', n: 12 },
+];
+
+// Status filter — pulled in from the old History page so the dashboard can
+// surface "completed only" / "cancelled" subsets without a separate screen.
+const STATUS_LABEL: Record<string, string> = {
+  CREATED: 'Created', QUEUED: 'Queued', PREPARING: 'Preparing', READY: 'Ready',
+  OUT_FOR_SERVICE: 'On its way', SERVED: 'Served',
+  CANCELLED: 'Cancelled', DISPUTED: 'Disputed', RESOLVED: 'Resolved',
+  FOR_REFUND: 'Refund pending', REFUND_COMPLETE: 'Refunded',
+};
+const STATUS_TONE: Record<string, string> = {
+  CREATED: 'bg-blue-100 text-blue-700',
+  QUEUED: 'bg-yellow-100 text-yellow-700',
+  PREPARING: 'bg-orange-100 text-orange-700',
+  READY: 'bg-emerald-100 text-emerald-700',
+  OUT_FOR_SERVICE: 'bg-teal-100 text-teal-700',
+  SERVED: 'bg-slate-100 text-slate-600',
+  CANCELLED: 'bg-red-100 text-red-700',
+  DISPUTED: 'bg-purple-100 text-purple-700',
+  RESOLVED: 'bg-sky-100 text-sky-700',
+  FOR_REFUND: 'bg-pink-100 text-pink-700',
+  REFUND_COMPLETE: 'bg-purple-100 text-purple-700',
+};
+
+type StatusFilter = 'ALL' | 'SERVED' | 'CANCELLED' | 'DISPUTED';
+
 export default function DashboardPage() {
   const navigate = useNavigate();
   const today = new Date();
@@ -24,6 +60,7 @@ export default function DashboardPage() {
   const [to, setTo] = useState(fmtDate(today));
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
 
   const fetchStats = useCallback(async () => {
     setLoading(true);
@@ -39,7 +76,25 @@ export default function DashboardPage() {
 
   useEffect(() => { fetchStats(); }, [fetchStats]);
 
-  const maxDaily = Math.max(1, ...(stats?.daily || []).map(d => d.orders));
+  const applyQuickRange = (unit: 'day' | 'month', n: number) => {
+    const end = new Date();
+    const start = new Date();
+    if (unit === 'day') start.setDate(start.getDate() - n);
+    else start.setMonth(start.getMonth() - n);
+    setFrom(fmtDate(start));
+    setTo(fmtDate(end));
+  };
+
+  const visibleOrders = useMemo(() => {
+    const orders = stats?.orders || [];
+    if (statusFilter === 'ALL') return orders;
+    if (statusFilter === 'SERVED')   return orders.filter(o => ['SERVED', 'RESOLVED', 'REFUND_COMPLETE'].includes(o.status));
+    if (statusFilter === 'CANCELLED') return orders.filter(o => o.status === 'CANCELLED');
+    if (statusFilter === 'DISPUTED') return orders.filter(o => ['DISPUTED', 'FOR_REFUND'].includes(o.status));
+    return orders;
+  }, [stats, statusFilter]);
+
+  const maxDaily  = Math.max(1, ...(stats?.daily  || []).map(d => d.orders));
   const maxHourly = Math.max(1, ...(stats?.hourly || []).map(h => h.orders));
 
   return (
@@ -47,7 +102,7 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="px-5 pt-6 pb-3">
         <h1 className="text-2xl font-black text-slate-900">Your dashboard</h1>
-        <p className="text-xs text-slate-500 mt-0.5">Order activity over time</p>
+        <p className="text-xs text-slate-500 mt-0.5">Order activity and history</p>
       </div>
 
       {/* Date range */}
@@ -60,16 +115,11 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="flex gap-2 mt-2 overflow-x-auto scrollbar-hide">
-          {[
-            { label: '7d', d: 7 }, { label: '30d', d: 30 }, { label: '90d', d: 90 },
-          ].map(p => (
+          {QUICK_RANGES.map(p => (
             <button
               key={p.label}
-              onClick={() => {
-                setFrom(fmtDate(new Date(today.getTime() - p.d * 24 * 60 * 60 * 1000)));
-                setTo(fmtDate(today));
-              }}
-              className="text-[11px] font-semibold bg-white border border-slate-200 text-slate-600 px-3 py-1.5 rounded-full hover:bg-slate-50"
+              onClick={() => applyQuickRange(p.unit, p.n)}
+              className="text-[11px] font-semibold bg-white border border-slate-200 text-slate-600 px-3 py-1.5 rounded-full hover:bg-slate-50 whitespace-nowrap"
             >
               Last {p.label}
             </button>
@@ -79,18 +129,8 @@ export default function DashboardPage() {
 
       {/* KPI cards */}
       <div className="px-4 mt-4 grid grid-cols-2 gap-3">
-        <KpiCard
-          label="Orders"
-          value={stats?.totalOrders ?? 0}
-          icon={ShoppingBag}
-          tone="orange"
-        />
-        <KpiCard
-          label="Total spend"
-          value={`₹${Math.round(stats?.totalValue ?? 0).toLocaleString('en-IN')}`}
-          icon={IndianRupee}
-          tone="emerald"
-        />
+        <KpiCard label="Orders" value={stats?.totalOrders ?? 0} icon={ShoppingBag} tone="orange" />
+        <KpiCard label="Total spend" value={`₹${Math.round(stats?.totalValue ?? 0).toLocaleString('en-IN')}`} icon={IndianRupee} tone="emerald" />
       </div>
 
       {/* Daily chart */}
@@ -150,11 +190,31 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Orders list */}
-      <div className="px-4 mt-3">
+      {/* Orders list (merged from the old History page) */}
+      <div className="px-4 mt-4">
         <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 px-1">Orders</p>
+
+        {/* Status filter pills */}
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-2 -mx-1 px-1">
+          {(['ALL', 'SERVED', 'CANCELLED', 'DISPUTED'] as const).map(f => (
+            <button
+              key={f}
+              onClick={() => setStatusFilter(f)}
+              className={`text-[11px] font-semibold px-3 py-1.5 rounded-full whitespace-nowrap border ${
+                statusFilter === f
+                  ? 'bg-brand-500 text-white border-brand-500'
+                  : 'bg-white text-slate-600 border-slate-200'
+              }`}
+            >
+              {f === 'ALL' ? 'All' : f === 'SERVED' ? 'Completed' : f === 'CANCELLED' ? 'Cancelled' : 'Disputed'}
+            </button>
+          ))}
+        </div>
+
         <div className="space-y-2">
-          {stats?.orders?.length ? stats.orders.map(o => (
+          {loading ? (
+            Array.from({ length: 3 }).map((_, i) => <div key={i} className="bg-white rounded-2xl h-16 animate-pulse" />)
+          ) : visibleOrders.length ? visibleOrders.map(o => (
             <button
               key={o.id}
               onClick={() => navigate(`/receipt/${o.id}`)}
@@ -166,18 +226,27 @@ export default function DashboardPage() {
                   : <Store size={16} className="text-slate-400" />}
               </div>
               <div className="flex-1 min-w-0 text-left">
-                <p className="text-sm font-semibold text-slate-800 truncate">{o.outlet?.name || 'Outlet'}</p>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <p className="text-sm font-semibold text-slate-800 truncate">{o.outlet?.name || 'Outlet'}</p>
+                  {o.tokenNumber != null && (
+                    <span className="inline-flex items-center text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full">
+                      Token #{o.tokenNumber}
+                    </span>
+                  )}
+                </div>
                 <p className="text-[11px] text-slate-400">
-                  {dayjs(o.createdAt).format('DD MMM, hh:mm A')} · {o.items?.length || 0} items
+                  {dayjs(o.createdAt).format('DD MMM, hh:mm A')}{o.items?.length ? ` · ${o.items.length} items` : ''}
                 </p>
+                <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full mt-1 ${STATUS_TONE[o.status] || 'bg-slate-100 text-slate-600'}`}>
+                  {STATUS_LABEL[o.status] || o.status}
+                </span>
               </div>
               <div className="text-right">
                 <p className="text-sm font-bold text-slate-900">₹{Number(o.totalAmount).toFixed(0)}</p>
-                <p className="text-[10px] text-slate-400">{o.status}</p>
               </div>
               <ChevronRight size={14} className="text-slate-300 shrink-0" />
             </button>
-          )) : !loading && (
+          )) : (
             <p className="text-xs text-slate-400 italic text-center py-6">No orders in this range</p>
           )}
         </div>
@@ -188,8 +257,8 @@ export default function DashboardPage() {
 
 function KpiCard({ label, value, icon: Icon, tone }: { label: string; value: number | string; icon: any; tone: 'orange' | 'emerald' }) {
   const tones = {
-    orange: { bg: 'from-orange-500 to-orange-400', iconBg: 'bg-orange-100 text-orange-600' },
-    emerald: { bg: 'from-emerald-500 to-emerald-400', iconBg: 'bg-emerald-100 text-emerald-600' },
+    orange:  { iconBg: 'bg-orange-100 text-orange-600' },
+    emerald: { iconBg: 'bg-emerald-100 text-emerald-600' },
   } as const;
   return (
     <div className="bg-white rounded-2xl border border-slate-100 p-4">

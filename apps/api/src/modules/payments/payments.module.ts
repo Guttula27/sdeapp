@@ -9,5 +9,8 @@ import { CustomerAlertsModule } from '../customer-alerts/customer-alerts.module'
   imports: [OrdersModule, CustomerAlertsModule],
   controllers: [PaymentsController],
   providers: [PaymentsService, RazorpayService],
+  // Re-exported so cluster-orders can compose its Route-based checkout
+  // on top of the same Razorpay client used for standard payments.
+  exports: [RazorpayService],
 })
 export class PaymentsModule {}

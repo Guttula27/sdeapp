@@ -38,9 +38,9 @@ export declare class CustomersController {
                 id: string;
                 createdAt: Date;
                 updatedAt: Date;
+                thumbnailUrl: string | null;
                 shortDescription: string | null;
                 longDescription: string | null;
-                thumbnailUrl: string | null;
                 imageUrl: string | null;
                 basePrice: import("@prisma/client/runtime/library").Decimal;
                 gstRate: import("@prisma/client/runtime/library").Decimal | null;
@@ -58,6 +58,8 @@ export declare class CustomersController {
                 displayOrder: number;
                 subcategoryId: string;
                 kitchenStationId: string | null;
+                isBundle: boolean;
+                maxBundleSelections: number | null;
             };
             variant: {
                 name: string;
@@ -83,6 +85,9 @@ export declare class CustomersController {
             totalPrice: import("@prisma/client/runtime/library").Decimal;
             gstAmount: import("@prisma/client/runtime/library").Decimal;
             variantId: string | null;
+            menuId: string | null;
+            bundleId: string | null;
+            sequenceNumber: number | null;
         })[];
         payments: {
             id: string;
@@ -119,6 +124,9 @@ export declare class CustomersController {
         tableId: string | null;
         customerId: string | null;
         staffId: string | null;
+        clusterOrderId: string | null;
+        activeSequence: number;
+        sequenceLabels: import("@prisma/client/runtime/library").JsonValue | null;
     })[]>;
     add(outletId: string, body: {
         name?: string;

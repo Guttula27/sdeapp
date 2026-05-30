@@ -164,17 +164,40 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
 
       <Divider thin />
 
-      {(order.items || []).map((it) => (
-        <div key={it.id} style={{ display: 'grid', gridTemplateColumns: '1fr 28px 38px 50px', gap: 4, padding: '2px 0' }}>
-          <span style={{ wordBreak: 'break-word' }}>
-            {it.item?.name || 'Item'}
-            {it.variant?.name ? ` (${it.variant.name})` : ''}
-          </span>
-          <span style={{ textAlign: 'right' }}>{it.quantity}</span>
-          <span style={{ textAlign: 'right' }}>{Number(it.unitPrice).toFixed(0)}</span>
-          <span style={{ textAlign: 'right' }}>{Number(it.totalPrice).toFixed(2)}</span>
-        </div>
-      ))}
+      {/* Group items by menu (Breakfast / Lunch / …). When the order spans a
+          single menu — or the business doesn't run multiple menus — the
+          group header is hidden so the receipt looks identical to before. */}
+      {(() => {
+        const items = order.items || [];
+        const groups = new Map<string, { name: string; items: typeof items }>();
+        for (const it of items) {
+          const key = (it as any).menu?.id || (it as any).menuId || '__none__';
+          const name = (it as any).menu?.name || '';
+          if (!groups.has(key)) groups.set(key, { name, items: [] });
+          groups.get(key)!.items.push(it);
+        }
+        const showHeaders = groups.size > 1;
+        return Array.from(groups.values()).map((g, gi) => (
+          <div key={g.name || `g-${gi}`}>
+            {showHeaders && g.name && (
+              <div style={{ fontWeight: 700, padding: '4px 0 2px', textTransform: 'uppercase', fontSize: 11 }}>
+                {g.name}
+              </div>
+            )}
+            {g.items.map((it) => (
+              <div key={it.id} style={{ display: 'grid', gridTemplateColumns: '1fr 28px 38px 50px', gap: 4, padding: '2px 0' }}>
+                <span style={{ wordBreak: 'break-word' }}>
+                  {it.item?.name || 'Item'}
+                  {it.variant?.name ? ` (${it.variant.name})` : ''}
+                </span>
+                <span style={{ textAlign: 'right' }}>{it.quantity}</span>
+                <span style={{ textAlign: 'right' }}>{Number(it.unitPrice).toFixed(0)}</span>
+                <span style={{ textAlign: 'right' }}>{Number(it.totalPrice).toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        ));
+      })()}
 
       <Divider />
 

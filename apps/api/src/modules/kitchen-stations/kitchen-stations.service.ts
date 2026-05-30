@@ -12,6 +12,7 @@ export class KitchenStationsService {
       include: {
         currentWorker: { select: { id: true, name: true, phone: true } },
         items: { select: { id: true, name: true } },
+        printer: { select: { id: true, name: true, connection: true, address: true } },
       },
     });
   }
@@ -23,7 +24,10 @@ export class KitchenStationsService {
     });
   }
 
-  async update(id: string, data: { name?: string; currentWorkerId?: string | null; isMaster?: boolean }) {
+  async update(
+    id: string,
+    data: { name?: string; currentWorkerId?: string | null; isMaster?: boolean; printerId?: string | null },
+  ) {
     const station = await this.prisma.kitchenStation.findUnique({ where: { id } });
     if (!station) throw new NotFoundException('Station not found');
     return this.prisma.kitchenStation.update({
@@ -32,6 +36,7 @@ export class KitchenStationsService {
       include: {
         currentWorker: { select: { id: true, name: true, phone: true } },
         items: { select: { id: true, name: true } },
+        printer: { select: { id: true, name: true, connection: true, address: true } },
       },
     });
   }

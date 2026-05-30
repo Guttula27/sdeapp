@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
-import toast from 'react-hot-toast';
 import {
   ShoppingBag, Clock, ChevronRight, ChefHat, CheckCircle2,
   XCircle, Package2, RefreshCw, Flame, Bell, Star, X,
@@ -49,6 +48,13 @@ interface Order {
   tableId?: string | null;
   outlet: { id: string; name: string };
   items: Array<{ id: string; quantity: number; item: { name: string }; review?: { id: string; rating: number } | null }>;
+  clusterOrderId?: string | null;
+  clusterOrder?: {
+    id: string;
+    clusterOrderNumber: string;
+    paymentStatus: string;
+    clusterBusiness: { id: string; name: string; logoUrl?: string | null; publicCode?: string | null };
+  } | null;
 }
 
 export default function HomePage() {
@@ -63,7 +69,7 @@ export default function HomePage() {
       const { data } = await api.get('/users/orders/history?page=1&limit=20');
       setOrders(data.data.orders || []);
     } catch {
-      toast.error('Failed to load orders');
+      // Silent — banner/toasts intentionally suppressed on the home screen.
     } finally {
       setLoading(false);
     }
@@ -73,6 +79,33 @@ export default function HomePage() {
 
   const active = orders.filter(o => ACTIVE_STATUSES.includes(o.status));
   const past   = orders.filter(o => !ACTIVE_STATUSES.includes(o.status));
+
+  // Group active orders so that the N child orders from a single cluster
+  // checkout render under one shared header — visually they belong together
+  // because the customer paid once. Standalone orders stay individual.
+  const activeGroups: Array<{
+    clusterOrderId: string | null;
+    clusterName?: string;
+    clusterLogo?: string | null;
+    clusterPublicCode?: string | null;
+    orders: Order[];
+  }> = [];
+  const seenClusters = new Set<string>();
+  for (const o of active) {
+    if (o.clusterOrderId && o.clusterOrder) {
+      if (seenClusters.has(o.clusterOrderId)) continue;
+      seenClusters.add(o.clusterOrderId);
+      activeGroups.push({
+        clusterOrderId: o.clusterOrderId,
+        clusterName: o.clusterOrder.clusterBusiness.name,
+        clusterLogo: o.clusterOrder.clusterBusiness.logoUrl,
+        clusterPublicCode: o.clusterOrder.clusterBusiness.publicCode,
+        orders: active.filter((x) => x.clusterOrderId === o.clusterOrderId),
+      });
+    } else {
+      activeGroups.push({ clusterOrderId: null, orders: [o] });
+    }
+  }
 
   return (
     <div className="max-w-md mx-auto">
@@ -112,23 +145,58 @@ export default function HomePage() {
               <p className="text-xs text-slate-400 mt-0.5">Scan a QR to place one</p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {active.map(o => (
-                <OrderCard
-                  key={o.id}
-                  order={o}
-                  active
-                  onTrack={() => navigate(`/track/${o.id}`)}
-                  onPay={() => navigate('/pay', {
-                    state: {
-                      outletId: o.outlet.id,
-                      tableId: o.tableId,
-                      billOrderId: o.id,
-                      total: Number(o.totalAmount),
-                      outletName: o.outlet.name,
-                    },
-                  })}
-                />
+            <div className="space-y-3">
+              {activeGroups.map((g, gi) => g.clusterOrderId ? (
+                /* Cluster group — N child orders under one header */
+                <div key={g.clusterOrderId} className="bg-white rounded-2xl border border-indigo-100 overflow-hidden">
+                  <div
+                    className="px-3 py-2 bg-gradient-to-r from-indigo-50 to-purple-50 border-b border-indigo-100 flex items-center gap-2 cursor-pointer"
+                    onClick={() => g.clusterPublicCode && navigate(`/cluster/${g.clusterPublicCode}`)}
+                  >
+                    {g.clusterLogo ? (
+                      <img src={g.clusterLogo} alt="" className="w-7 h-7 rounded-lg object-cover" />
+                    ) : (
+                      <div className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-black">FC</div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Food court order</p>
+                      <p className="text-sm font-bold text-slate-900 truncate">{g.clusterName}</p>
+                    </div>
+                    <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                      {g.orders.length} outlet{g.orders.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {g.orders.map(o => (
+                      <OrderCard
+                        key={o.id}
+                        order={o}
+                        active
+                        compactGroup
+                        onTrack={() => navigate(`/track/${o.id}`)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                /* Standalone — original look */
+                g.orders.map(o => (
+                  <OrderCard
+                    key={o.id}
+                    order={o}
+                    active
+                    onTrack={() => navigate(`/track/${o.id}`)}
+                    onPay={() => navigate('/pay', {
+                      state: {
+                        outletId: o.outlet.id,
+                        tableId: o.tableId,
+                        billOrderId: o.id,
+                        total: Number(o.totalAmount),
+                        outletName: o.outlet.name,
+                      },
+                    })}
+                  />
+                ))
               ))}
             </div>
           )}
@@ -163,12 +231,44 @@ export default function HomePage() {
   );
 }
 
-function OrderCard({ order, active, onTrack, onPay }: { order: Order; active?: boolean; onTrack: () => void; onPay?: () => void }) {
+function OrderCard({ order, active, compactGroup, onTrack, onPay }: { order: Order; active?: boolean; compactGroup?: boolean; onTrack: () => void; onPay?: () => void }) {
   const s = STATUS[order.status] || STATUS.SERVED;
   const items = order.items.map(i => `${i.item.name}${i.quantity > 1 ? ` ×${i.quantity}` : ''}`).join(', ');
   // Bill requested but not yet paid → swap the Track button for Pay now so
   // the customer doesn't have to drill into the tracking page first.
   const billReady = !!(order.isPostpaid && order.billRequestedAt && !['SERVED','CANCELLED','REFUND_COMPLETE'].includes(order.status));
+  // compactGroup: this card is being rendered INSIDE a cluster group header,
+  // so we strip the outer border/shadow + the top brand strip (the group
+  // header carries the cluster branding instead).
+  if (compactGroup) {
+    return (
+      <div className="p-3">
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-bold text-slate-900">{order.outlet.name}</p>
+              {order.tokenNumber != null && (
+                <span className="text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full">
+                  #{order.tokenNumber}
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">{order.orderNumber} · {homeElapsed(order.createdAt)} ago</p>
+          </div>
+          <span className={clsx('inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full', s.cls)}>
+            <s.icon size={9} /> {s.label}
+          </span>
+        </div>
+        <p className="text-[11px] text-slate-500 line-clamp-1">{items}</p>
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <span className="text-sm font-black text-slate-900">₹{Number(order.totalAmount).toFixed(0)}</span>
+          <button onClick={onTrack} className="text-[11px] font-bold text-brand-600 inline-flex items-center gap-1 hover:text-brand-700">
+            Track <ChevronRight size={11} />
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={clsx('bg-white rounded-2xl border shadow-sm overflow-hidden',
       active ? 'border-brand-200' : 'border-slate-100')}>

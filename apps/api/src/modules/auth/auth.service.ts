@@ -44,7 +44,12 @@ export class AuthService {
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({
       where: { phone: dto.phone },
-      include: { role: { include: { responsibilities: { include: { responsibility: true } } } } },
+      include: {
+        role: { include: { responsibilities: { include: { responsibility: true } } } },
+        // Cluster context so the client can route Cluster Owners straight
+        // to their cluster admin instead of /dashboard.
+        business: { select: { id: true, name: true, isCluster: true } },
+      },
     });
 
     if (!user || !user.passwordHash) throw new UnauthorizedException('Invalid credentials');
@@ -156,6 +161,10 @@ export class AuthService {
         mustChangePassword: true,
         businessId: true,
         outletId: true,
+        // Surface enough business context for the client to decide the
+        // landing page. Cluster Owners go straight to the cluster admin
+        // page instead of the standard /dashboard.
+        business: { select: { id: true, name: true, isCluster: true } },
         role: {
           include: { responsibilities: { include: { responsibility: true } } },
         },

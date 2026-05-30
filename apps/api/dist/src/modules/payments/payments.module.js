@@ -21,6 +21,7 @@ exports.PaymentsModule = PaymentsModule = __decorate([
         imports: [orders_module_1.OrdersModule, customer_alerts_module_1.CustomerAlertsModule],
         controllers: [payments_controller_1.PaymentsController],
         providers: [payments_service_1.PaymentsService, razorpay_service_1.RazorpayService],
+        exports: [razorpay_service_1.RazorpayService],
     })
 ], PaymentsModule);
 //# sourceMappingURL=payments.module.js.map

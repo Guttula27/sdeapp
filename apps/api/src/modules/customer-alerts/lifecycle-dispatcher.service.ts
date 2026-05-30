@@ -15,6 +15,7 @@ export type LifecycleTrigger =
   | 'PAYMENT_RECEIVED'
   | 'ITEM_READY'
   | 'ORDER_READY'
+  | 'PICKUP_READY'
   | 'ORDER_SERVED';
 
 const FALLBACK_BODIES: Record<LifecycleTrigger, string> = {
@@ -26,6 +27,7 @@ const FALLBACK_BODIES: Record<LifecycleTrigger, string> = {
   PAYMENT_RECEIVED: 'Payment of ₹{{amount}} received for order {{order_number}}.',
   ITEM_READY: 'Your {{item}} is ready (order {{order_number}}).',
   ORDER_READY: 'Your order {{order_number}} is ready.',
+  PICKUP_READY: 'Your parcel order {{order_number}} is packed and ready for pickup at {{outlet_name}}.',
   ORDER_SERVED: 'Order {{order_number}} has been served. Enjoy!',
 };
 
@@ -34,6 +36,7 @@ const TITLES: Record<LifecycleTrigger, string> = {
   PAYMENT_RECEIVED: 'Payment received',
   ITEM_READY: 'Item ready',
   ORDER_READY: 'Order ready',
+  PICKUP_READY: 'Ready for pickup',
   ORDER_SERVED: 'Order served',
 };
 

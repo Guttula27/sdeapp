@@ -1,0 +1,389 @@
+import { useEffect, useState, useCallback } from 'react';
+import { useSelector } from 'react-redux';
+import toast from 'react-hot-toast';
+import { Plus, Edit2, Trash2, Ticket } from 'lucide-react';
+import { RootState } from '../../store';
+import api from '../../services/api';
+import Modal from '../../components/common/Modal';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
+
+type Coupon = {
+  id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  outletId?: string | null;
+  discountType: 'PERCENT' | 'FIXED';
+  discountValue: string | number;
+  minBillAmount?: string | number | null;
+  maxDiscountAmount?: string | number | null;
+  validFrom: string;
+  validUntil: string;
+  maxUsesPerCustomer: number;
+  maxTotalUses?: number | null;
+  usesCount: number;
+  targetType: 'ALL' | 'SPECIFIC';
+  isActive: boolean;
+  targetCustomers?: { user: { id: string; name: string; phone: string } }[];
+  _count?: { usages: number };
+};
+
+const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
+  <div>
+    <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">{label}</label>
+    {children}
+  </div>
+);
+
+const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+
+export default function CouponsPage() {
+  const user = useSelector((s: RootState) => s.auth.user);
+  const businessId = user?.businessId;
+
+  const [outlets, setOutlets] = useState<any[]>([]);
+  const [scope, setScope] = useState<'BUSINESS' | string>('BUSINESS');
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [modal, setModal] = useState<{ open: boolean; editing?: Coupon }>({ open: false });
+  const [form, setForm] = useState({
+    code: '',
+    name: '',
+    description: '',
+    discountType: 'PERCENT' as 'PERCENT' | 'FIXED',
+    discountValue: '10',
+    minBillAmount: '',
+    maxDiscountAmount: '',
+    validFrom: isoDate(new Date()),
+    validUntil: isoDate(new Date(Date.now() + 30 * 86400000)),
+    maxUsesPerCustomer: '1',
+    maxTotalUses: '',
+    targetType: 'ALL' as 'ALL' | 'SPECIFIC',
+    isActive: true,
+    targetPhones: '',  // comma-separated phones; UI shortcut
+  });
+  const [saving, setSaving] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState<Coupon | null>(null);
+
+  useEffect(() => {
+    if (!businessId) return;
+    api.get(`/outlets/business/${businessId}`)
+      .then(({ data }) => setOutlets(data.data || []))
+      .catch(() => {});
+  }, [businessId]);
+
+  const fetch = useCallback(async () => {
+    if (!businessId) { setLoading(false); return; }
+    setLoading(true);
+    try {
+      const params = scope !== 'BUSINESS' ? `?outletId=${scope}` : '';
+      const { data } = await api.get(`/businesses/${businessId}/coupons${params}`);
+      setCoupons(data.data || data || []);
+    } finally {
+      setLoading(false);
+    }
+  }, [businessId, scope]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+
+  const openCreate = () => {
+    setForm({
+      code: '',
+      name: '',
+      description: '',
+      discountType: 'PERCENT',
+      discountValue: '10',
+      minBillAmount: '',
+      maxDiscountAmount: '',
+      validFrom: isoDate(new Date()),
+      validUntil: isoDate(new Date(Date.now() + 30 * 86400000)),
+      maxUsesPerCustomer: '1',
+      maxTotalUses: '',
+      targetType: 'ALL',
+      isActive: true,
+      targetPhones: '',
+    });
+    setModal({ open: true });
+  };
+
+  const openEdit = (c: Coupon) => {
+    setForm({
+      code: c.code,
+      name: c.name,
+      description: c.description ?? '',
+      discountType: c.discountType,
+      discountValue: String(c.discountValue),
+      minBillAmount: c.minBillAmount != null ? String(c.minBillAmount) : '',
+      maxDiscountAmount: c.maxDiscountAmount != null ? String(c.maxDiscountAmount) : '',
+      validFrom: c.validFrom.slice(0, 10),
+      validUntil: c.validUntil.slice(0, 10),
+      maxUsesPerCustomer: String(c.maxUsesPerCustomer),
+      maxTotalUses: c.maxTotalUses != null ? String(c.maxTotalUses) : '',
+      targetType: c.targetType,
+      isActive: c.isActive,
+      targetPhones: (c.targetCustomers || []).map(t => t.user.phone).join(', '),
+    });
+    setModal({ open: true, editing: c });
+  };
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.code.trim() || !form.name.trim()) return;
+    setSaving(true);
+    try {
+      let targetUserIds: string[] | undefined;
+      if (form.targetType === 'SPECIFIC') {
+        const phones = form.targetPhones.split(',').map(p => p.trim()).filter(Boolean);
+        if (phones.length) {
+          const { data } = await api.post('/coupons/lookup-customers', { phones });
+          targetUserIds = (data.data || data || []).map((u: any) => u.id);
+        } else {
+          targetUserIds = [];
+        }
+      }
+      const body: any = {
+        code: form.code.trim().toUpperCase(),
+        name: form.name.trim(),
+        description: form.description.trim() || undefined,
+        outletId: scope !== 'BUSINESS' ? scope : null,
+        discountType: form.discountType,
+        discountValue: Number(form.discountValue),
+        minBillAmount: form.minBillAmount ? Number(form.minBillAmount) : null,
+        maxDiscountAmount: form.maxDiscountAmount ? Number(form.maxDiscountAmount) : null,
+        validFrom: form.validFrom,
+        validUntil: form.validUntil,
+        maxUsesPerCustomer: Number(form.maxUsesPerCustomer) || 1,
+        maxTotalUses: form.maxTotalUses ? Number(form.maxTotalUses) : null,
+        targetType: form.targetType,
+        targetUserIds,
+        isActive: form.isActive,
+      };
+      if (modal.editing) {
+        await api.patch(`/coupons/${modal.editing.id}`, body);
+        toast.success('Coupon updated');
+      } else {
+        await api.post(`/businesses/${businessId}/coupons`, body);
+        toast.success('Coupon created');
+      }
+      setModal({ open: false });
+      fetch();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!deleteTarget) return;
+    try {
+      await api.delete(`/coupons/${deleteTarget.id}`);
+      toast.success('Coupon deleted');
+      setDeleteTarget(null);
+      fetch();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Failed to delete');
+    }
+  };
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <Ticket className="w-6 h-6 text-orange-500" /> Coupons
+          </h1>
+          <p className="text-sm text-slate-500 mt-1">Promo codes customers can apply at checkout.</p>
+        </div>
+        <button
+          onClick={openCreate}
+          className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-semibold inline-flex items-center gap-2"
+        >
+          <Plus className="w-4 h-4" /> New Coupon
+        </button>
+      </div>
+
+      <div className="bg-white rounded-lg border border-slate-200 mb-4">
+        <div className="px-4 py-3 flex items-center gap-3">
+          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Scope</span>
+          <select
+            value={scope}
+            onChange={(e) => setScope(e.target.value)}
+            className="px-3 py-1.5 border border-slate-300 rounded-md text-sm"
+          >
+            <option value="BUSINESS">Business-wide</option>
+            {outlets.map((o) => <option key={o.id} value={o.id}>Outlet — {o.name}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        {loading ? (
+          <div className="p-8 text-center text-sm text-slate-500">Loading…</div>
+        ) : coupons.length === 0 ? (
+          <div className="p-8 text-center text-sm text-slate-500">No coupons yet.</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-600">
+              <tr>
+                <th className="text-left px-4 py-2">Code</th>
+                <th className="text-left px-4 py-2">Name</th>
+                <th className="text-left px-4 py-2">Discount</th>
+                <th className="text-left px-4 py-2">Validity</th>
+                <th className="text-left px-4 py-2">Target</th>
+                <th className="text-right px-4 py-2">Used</th>
+                <th className="text-center px-4 py-2">Active</th>
+                <th className="text-right px-4 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {coupons.map((c) => (
+                <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50">
+                  <td className="px-4 py-2 font-mono text-xs">{c.code}</td>
+                  <td className="px-4 py-2">{c.name}</td>
+                  <td className="px-4 py-2">
+                    {c.discountType === 'PERCENT' ? `${c.discountValue}%` : `₹${c.discountValue}`}
+                    {c.maxDiscountAmount && <span className="text-xs text-slate-500"> (max ₹{c.maxDiscountAmount})</span>}
+                  </td>
+                  <td className="px-4 py-2 text-xs text-slate-600">
+                    {c.validFrom.slice(0, 10)} → {c.validUntil.slice(0, 10)}
+                  </td>
+                  <td className="px-4 py-2 text-xs">
+                    {c.targetType === 'ALL' ? 'All customers' : `${c.targetCustomers?.length || 0} selected`}
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    {c._count?.usages ?? c.usesCount}
+                    {c.maxTotalUses && <span className="text-xs text-slate-500"> / {c.maxTotalUses}</span>}
+                  </td>
+                  <td className="px-4 py-2 text-center">
+                    <span className={`inline-block w-2 h-2 rounded-full ${c.isActive ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    <button onClick={() => openEdit(c)} className="text-slate-400 hover:text-slate-600 p-1">
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => setDeleteTarget(c)} className="text-slate-400 hover:text-red-500 p-1 ml-1">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <Modal open={modal.open} onClose={() => setModal({ open: false })}
+        title={modal.editing ? 'Edit Coupon' : 'New Coupon'} size="xl">
+        <form onSubmit={save} className="space-y-4 p-6">
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Code">
+              <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-mono" placeholder="WELCOME10" required />
+            </Field>
+            <Field label="Name">
+              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Welcome offer" required />
+            </Field>
+          </div>
+          <Field label="Description">
+            <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
+              className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Optional" />
+          </Field>
+
+          <div className="grid grid-cols-3 gap-4">
+            <Field label="Discount Type">
+              <select value={form.discountType} onChange={(e) => setForm({ ...form, discountType: e.target.value as any })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm">
+                <option value="PERCENT">% Percent</option>
+                <option value="FIXED">₹ Fixed</option>
+              </select>
+            </Field>
+            <Field label="Value">
+              <input type="number" value={form.discountValue} onChange={(e) => setForm({ ...form, discountValue: e.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" min="0" step="0.01" required />
+            </Field>
+            <Field label="Max ₹ Cap (optional)">
+              <input type="number" value={form.maxDiscountAmount} onChange={(e) => setForm({ ...form, maxDiscountAmount: e.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" min="0" step="0.01" />
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Minimum bill (optional)">
+              <input type="number" value={form.minBillAmount} onChange={(e) => setForm({ ...form, minBillAmount: e.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" min="0" step="0.01" />
+            </Field>
+            <Field label="Max total uses (optional)">
+              <input type="number" value={form.maxTotalUses} onChange={(e) => setForm({ ...form, maxTotalUses: e.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" min="1" />
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <Field label="Valid from">
+              <input type="date" value={form.validFrom} onChange={(e) => setForm({ ...form, validFrom: e.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" required />
+            </Field>
+            <Field label="Valid until">
+              <input type="date" value={form.validUntil} onChange={(e) => setForm({ ...form, validUntil: e.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" required />
+            </Field>
+            <Field label="Max uses per customer">
+              <input type="number" value={form.maxUsesPerCustomer} onChange={(e) => setForm({ ...form, maxUsesPerCustomer: e.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" min="1" required />
+            </Field>
+          </div>
+
+          <Field label="Target customers">
+            <div className="flex gap-3 items-center mb-2">
+              <label className="text-sm flex items-center gap-2">
+                <input type="radio" checked={form.targetType === 'ALL'} onChange={() => setForm({ ...form, targetType: 'ALL' })} />
+                All customers
+              </label>
+              <label className="text-sm flex items-center gap-2">
+                <input type="radio" checked={form.targetType === 'SPECIFIC'} onChange={() => setForm({ ...form, targetType: 'SPECIFIC' })} />
+                Specific phone numbers
+              </label>
+            </div>
+            {form.targetType === 'SPECIFIC' && (
+              <textarea
+                value={form.targetPhones}
+                onChange={(e) => setForm({ ...form, targetPhones: e.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+                rows={2}
+                placeholder="Comma-separated phone numbers, e.g. 9876543210, 9123456789"
+              />
+            )}
+          </Field>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
+            Active
+          </label>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button type="button" onClick={() => setModal({ open: false })}
+              className="px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 rounded-md">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="px-4 py-2 text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 rounded-md disabled:opacity-50">
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete coupon"
+        message={`Delete coupon "${deleteTarget?.code}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        onConfirm={remove}
+        onClose={() => setDeleteTarget(null)}
+        danger
+      />
+    </div>
+  );
+}

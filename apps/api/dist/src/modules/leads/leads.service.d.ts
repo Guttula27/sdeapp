@@ -12,9 +12,9 @@ export declare class LeadsService {
         status: import(".prisma/client").$Enums.LeadStatus;
         createdAt: Date;
         updatedAt: Date;
+        businessType: string | null;
         source: string | null;
         notes: string | null;
-        businessType: string | null;
         restaurantName: string;
         outletCount: number | null;
     }, never, import("@prisma/client/runtime/library").DefaultArgs>;
@@ -27,9 +27,9 @@ export declare class LeadsService {
         status: import(".prisma/client").$Enums.LeadStatus;
         createdAt: Date;
         updatedAt: Date;
+        businessType: string | null;
         source: string | null;
         notes: string | null;
-        businessType: string | null;
         restaurantName: string;
         outletCount: number | null;
     }[]>;
@@ -42,9 +42,9 @@ export declare class LeadsService {
         status: import(".prisma/client").$Enums.LeadStatus;
         createdAt: Date;
         updatedAt: Date;
+        businessType: string | null;
         source: string | null;
         notes: string | null;
-        businessType: string | null;
         restaurantName: string;
         outletCount: number | null;
     }>;
@@ -57,9 +57,9 @@ export declare class LeadsService {
         status: import(".prisma/client").$Enums.LeadStatus;
         createdAt: Date;
         updatedAt: Date;
+        businessType: string | null;
         source: string | null;
         notes: string | null;
-        businessType: string | null;
         restaurantName: string;
         outletCount: number | null;
     }>;

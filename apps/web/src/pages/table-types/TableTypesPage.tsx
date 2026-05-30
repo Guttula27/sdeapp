@@ -7,6 +7,7 @@ import { RootState } from '../../store';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
+import { useUserRole } from '../../hooks/useUserRole';
 import { allowsSeating } from '../../utils/outletType';
 
 const SWATCHES = [
@@ -38,6 +39,34 @@ export default function TableTypesPage() {
   const [color, setColor] = useState(SWATCHES[0]);
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
+
+  // Per-section menu availability — only meaningful when editing an existing
+  // section. We fetch on modal open so the toggle list reflects current state.
+  type SectionMenu = { id: string; name: string; isDefault: boolean; isLocked: boolean; isEnabled: boolean };
+  const [sectionMenus, setSectionMenus] = useState<SectionMenu[]>([]);
+  const [menusLoading, setMenusLoading] = useState(false);
+  const loadSectionMenus = useCallback(async (tableTypeId: string) => {
+    setMenusLoading(true);
+    try {
+      const { data } = await api.get(`/outlets/${outletId}/table-types/${tableTypeId}/menus`);
+      setSectionMenus(data.data || []);
+    } catch {
+      setSectionMenus([]);
+    } finally {
+      setMenusLoading(false);
+    }
+  }, [outletId]);
+  const toggleSectionMenu = async (menu: SectionMenu) => {
+    if (!modal.editing || menu.isLocked) return;
+    const next = !menu.isEnabled;
+    setSectionMenus((all) => all.map((m) => (m.id === menu.id ? { ...m, isEnabled: next } : m)));
+    try {
+      await api.patch(`/outlets/${outletId}/table-types/${modal.editing.id}/menus/${menu.id}`, { isEnabled: next });
+    } catch (e: any) {
+      setSectionMenus((all) => all.map((m) => (m.id === menu.id ? { ...m, isEnabled: !next } : m)));
+      toast.error(e.response?.data?.message || 'Failed to update');
+    }
+  };
 
   // Table add modal
   const [tableModal, setTableModal] = useState<{ open: boolean; type?: any }>({ open: false });
@@ -84,12 +113,15 @@ export default function TableTypesPage() {
   const openCreate = () => {
     setName('');
     setColor(SWATCHES[0]);
+    setSectionMenus([]);
     setModal({ open: true });
   };
   const openEdit = (t: any) => {
     setName(t.name);
     setColor(t.color);
+    setSectionMenus([]);
     setModal({ open: true, editing: t });
+    loadSectionMenus(t.id);
   };
 
   const save = async (e: React.FormEvent) => {
@@ -99,10 +131,10 @@ export default function TableTypesPage() {
     try {
       if (modal.editing) {
         await api.patch(`/outlets/${outletId}/table-types/${modal.editing.id}`, { name: name.trim(), color });
-        toast.success('Table type updated');
+        toast.success('Section updated');
       } else {
         await api.post(`/outlets/${outletId}/table-types`, { name: name.trim(), color });
-        toast.success('Table type created');
+        toast.success('Section created');
       }
       setModal({ open: false });
       fetchTypes();
@@ -188,15 +220,17 @@ export default function TableTypesPage() {
     }
   };
 
-  const isMultiOutlet = outlets.length > 1;
+  // Outlet-tier admins are pinned to their own outlet — hide the cross-outlet switcher.
+  const { tier } = useUserRole();
+  const isMultiOutlet = tier !== 'outlet' && outlets.length > 1;
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="page-title">Table Types</h1>
+          <h1 className="page-title">Dine In Sections</h1>
           <p className="page-subtitle">
-            Define service contexts (AC / Non-AC / Outdoor…) — each can carry its own item pricing.
+            Define seating sections (AC / Non-AC / Outdoor…) — each can carry its own pricing and menu availability.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -215,7 +249,7 @@ export default function TableTypesPage() {
             disabled={!outletId || !allowsSeating(outlet?.outletType)}
             title={!allowsSeating(outlet?.outletType) ? 'Not available for self-service outlets' : undefined}
           >
-            <Plus size={15} /> Add Table Type
+            <Plus size={15} /> Add Section
           </button>
         </div>
       </div>
@@ -223,7 +257,7 @@ export default function TableTypesPage() {
       {!allowsSeating(outlet?.outletType) ? (
         <div className="card flex flex-col items-center py-20 text-center">
           <LayoutGrid size={40} className="text-slate-200 mb-3" />
-          <p className="text-slate-500 font-medium">Table types don't apply here</p>
+          <p className="text-slate-500 font-medium">Dine-in sections don't apply here</p>
           <p className="text-xs text-slate-400 mt-1 max-w-md">
             This outlet is self-service, so guests don't sit. Change the outlet type to Hybrid or Dine-in on the Outlets page to enable seating.
           </p>
@@ -233,9 +267,9 @@ export default function TableTypesPage() {
       ) : types.length === 0 ? (
         <div className="card flex flex-col items-center py-20 text-center">
           <LayoutGrid size={40} className="text-slate-200 mb-3" />
-          <p className="text-slate-500 font-medium">No table types yet</p>
+          <p className="text-slate-500 font-medium">No dine-in sections yet</p>
           <p className="text-xs text-slate-400 mt-1">Add AC, Non-AC, Garden, etc., then assign tables to each.</p>
-          <button className="btn-primary mt-4" onClick={openCreate}><Plus size={14} /> First type</button>
+          <button className="btn-primary mt-4" onClick={openCreate}><Plus size={14} /> First section</button>
         </div>
       ) : (
         <div className="space-y-3">
@@ -293,7 +327,7 @@ export default function TableTypesPage() {
       <Modal
         open={modal.open}
         onClose={() => setModal({ open: false })}
-        title={modal.editing ? 'Edit Table Type' : 'New Table Type'}
+        title={modal.editing ? 'Edit Dine In Section' : 'New Dine In Section'}
         footer={
           <>
             <button className="btn-secondary" onClick={() => setModal({ open: false })}>Cancel</button>
@@ -321,6 +355,49 @@ export default function TableTypesPage() {
               ))}
             </div>
           </Field>
+
+          {/* Per-section menu availability. Only shown when editing — for a
+              new section, the toggles appear after the section is created
+              (re-open to manage). The default menu is always listed but its
+              toggle is locked on, since hiding it would leave the section
+              with no fallback menu. */}
+          {modal.editing && (
+            <Field label="Available menus">
+              {menusLoading ? (
+                <p className="text-xs text-slate-400 italic">Loading menus…</p>
+              ) : sectionMenus.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">No menus defined for this business.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {sectionMenus.map((m) => (
+                    <div key={m.id} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm font-semibold text-slate-800 truncate">{m.name}</span>
+                        {m.isDefault && (
+                          <span className="text-[10px] uppercase tracking-wide font-bold text-slate-400">always on</span>
+                        )}
+                      </div>
+                      <label className={`inline-flex items-center ${m.isLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                        <input
+                          type="checkbox"
+                          checked={m.isEnabled}
+                          onChange={() => toggleSectionMenu(m)}
+                          disabled={m.isLocked}
+                          className="sr-only peer"
+                        />
+                        <span className="w-9 h-5 bg-slate-200 rounded-full peer-checked:bg-brand-500 relative transition-colors">
+                          <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${m.isEnabled ? 'translate-x-4' : ''}`} />
+                        </span>
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                Disabled menus stay hidden from customers seated in this section. Changes save instantly.
+              </p>
+            </Field>
+          )}
         </form>
       </Modal>
 
@@ -328,7 +405,7 @@ export default function TableTypesPage() {
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={confirmDelete}
-        title="Delete table type"
+        title="Delete dine-in section"
         message={`Delete "${deleteTarget?.name}"? Linked tables will lose this assignment and their special prices will be removed.`}
         confirmLabel="Delete"
         danger
