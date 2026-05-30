@@ -842,9 +842,18 @@ export class MenuService {
         if (itemFilter && !hasItemsInScope) continue;
 
         // Look for an existing same-name category at the outlet so re-import
-        // is additive instead of duplicating top-level groups.
+        // is additive instead of duplicating top-level groups. Must scope by
+        // menuId — with multi-menu, the same name can legitimately exist in
+        // different menus (e.g. "Specials" in Breakfast vs Lunch), and we
+        // must not merge them. menuId can be null on legacy rows; Prisma
+        // turns `menuId: null` into `IS NULL`, which is the behaviour we want.
         let outletCat = await tx.category.findFirst({
-          where: { outletId: targetOutletId, name: cat.name, isActive: true },
+          where: {
+            outletId: targetOutletId,
+            name: cat.name,
+            menuId: cat.menuId ?? null,
+            isActive: true,
+          },
         });
         if (!outletCat) {
           outletCat = await tx.category.create({

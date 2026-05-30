@@ -721,7 +721,12 @@ let MenuService = class MenuService {
                 if (itemFilter && !hasItemsInScope)
                     continue;
                 let outletCat = await tx.category.findFirst({
-                    where: { outletId: targetOutletId, name: cat.name, isActive: true },
+                    where: {
+                        outletId: targetOutletId,
+                        name: cat.name,
+                        menuId: cat.menuId ?? null,
+                        isActive: true,
+                    },
                 });
                 if (!outletCat) {
                     outletCat = await tx.category.create({
