@@ -1054,10 +1054,13 @@ export default function MenuPage() {
         </div>
       )}
 
-      {/* Menu tab strip — only when the flag is on and we have menus loaded.
-          Each tab represents one menu; clicking switches the active context so
-          category list, add-category, and edit operations all scope to it. */}
-      {multipleMenusEnabled && menus.length > 0 && (
+      {/* Menu tab strip — only when the flag is on. Each tab represents one
+          menu; clicking switches the active context so category list,
+          add-category, and edit operations all scope to it. The strip also
+          hosts the "New menu" button, so it must render even when the menu
+          list is empty (fresh business / outlet, or /menus fetch returned
+          nothing) — otherwise the user has no way to create the first menu. */}
+      {multipleMenusEnabled && (
         <div className="card p-2 flex items-center gap-1 overflow-x-auto">
           {menus.map((m) => {
             const isActive = m.id === activeMenuId;
