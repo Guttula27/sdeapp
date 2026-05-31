@@ -1,7 +1,26 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, ForbiddenException, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { ReportsService } from './reports.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { scopeFor } from '../../common/permissions/scope';
+
+function parseDate(raw?: string): Date | null {
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// Default range: last 30 days inclusive of today. Either bound is overridable.
+function defaultRange(from?: string, to?: string): { from: Date; to: Date } {
+  const now = new Date();
+  const start = new Date(now);
+  start.setDate(start.getDate() - 30);
+  return {
+    from: parseDate(from) ?? start,
+    to: parseDate(to) ?? now,
+  };
+}
 
 @ApiTags('Reports')
 @ApiBearerAuth()
@@ -13,42 +32,58 @@ export class ReportsController {
   @Get('revenue')
   revenue(
     @Query('outletId') outletId: string,
-    @Query('from') from: string,
-    @Query('to') to: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
-    return this.service.getRevenueReport(outletId, new Date(from), new Date(to));
+    if (!outletId) throw new BadRequestException('outletId is required');
+    const r = defaultRange(from, to);
+    return this.service.getRevenueReport(outletId, r.from, r.to);
   }
 
   @Get('item-sales')
   itemSales(
     @Query('outletId') outletId: string,
-    @Query('from') from: string,
-    @Query('to') to: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
-    return this.service.getItemSalesReport(outletId, new Date(from), new Date(to));
+    if (!outletId) throw new BadRequestException('outletId is required');
+    const r = defaultRange(from, to);
+    return this.service.getItemSalesReport(outletId, r.from, r.to);
   }
 
   @Get('kitchen')
   kitchen(
     @Query('outletId') outletId: string,
-    @Query('from') from: string,
-    @Query('to') to: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
-    return this.service.getKitchenReport(outletId, new Date(from), new Date(to));
+    if (!outletId) throw new BadRequestException('outletId is required');
+    const r = defaultRange(from, to);
+    return this.service.getKitchenReport(outletId, r.from, r.to);
   }
 
   @Get('hourly')
-  hourly(@Query('outletId') outletId: string, @Query('date') date: string) {
-    return this.service.getHourlyOrders(outletId, new Date(date));
+  hourly(@Query('outletId') outletId: string, @Query('date') date?: string) {
+    if (!outletId) throw new BadRequestException('outletId is required');
+    return this.service.getHourlyOrders(outletId, parseDate(date) ?? new Date());
   }
 
+  // Platform-wide reports must not leak through to business/outlet/kitchen
+  // tokens. A full responsibility-check layer isn't built yet; gate on
+  // JWT scope (the seed defines VIEW_PLATFORM_REPORTS as platform-only).
   @Get('platform-summary')
-  platformSummary(@Query('date') date?: string) {
-    return this.service.getPlatformSummary(date ? new Date(date) : new Date());
+  platformSummary(@CurrentUser() user: any, @Query('date') date?: string) {
+    if (scopeFor(user).kind !== 'platform') {
+      throw new ForbiddenException('Platform reports are restricted to platform admins');
+    }
+    return this.service.getPlatformSummary(parseDate(date) ?? new Date());
   }
 
   @Get('platform-hourly')
-  platformHourly(@Query('date') date?: string) {
-    return this.service.getPlatformHourly(date ? new Date(date) : new Date());
+  platformHourly(@CurrentUser() user: any, @Query('date') date?: string) {
+    if (scopeFor(user).kind !== 'platform') {
+      throw new ForbiddenException('Platform reports are restricted to platform admins');
+    }
+    return this.service.getPlatformHourly(parseDate(date) ?? new Date());
   }
 }

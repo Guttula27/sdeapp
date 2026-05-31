@@ -83,7 +83,7 @@ export declare class SubscriptionsController {
         autoRenew: boolean;
         planId: string;
     }) | null | undefined>;
-    getInvoices(businessId: string): Promise<{
+    getInvoices(user: any, businessId?: string): Promise<{
         id: string;
         status: string;
         createdAt: Date;

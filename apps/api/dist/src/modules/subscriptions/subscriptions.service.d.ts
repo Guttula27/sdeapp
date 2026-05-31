@@ -79,7 +79,7 @@ export declare class SubscriptionsService {
         autoRenew: boolean;
         planId: string;
     }) | null | undefined>;
-    getInvoices(businessId: string): Promise<{
+    getInvoices(businessId?: string): Promise<{
         id: string;
         status: string;
         createdAt: Date;

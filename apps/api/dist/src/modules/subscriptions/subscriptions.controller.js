@@ -19,6 +19,7 @@ const swagger_1 = require("@nestjs/swagger");
 const subscriptions_service_1 = require("./subscriptions.service");
 const jwt_auth_guard_1 = require("../../common/guards/jwt-auth.guard");
 const public_decorator_1 = require("../../common/decorators/public.decorator");
+const current_user_decorator_1 = require("../../common/decorators/current-user.decorator");
 let SubscriptionsController = class SubscriptionsController {
     constructor(service) {
         this.service = service;
@@ -35,8 +36,8 @@ let SubscriptionsController = class SubscriptionsController {
     getSubscription(businessId) {
         return this.service.getBusinessSubscription(businessId);
     }
-    getInvoices(businessId) {
-        return this.service.getInvoices(businessId);
+    getInvoices(user, businessId) {
+        return this.service.getInvoices(businessId || user?.businessId);
     }
 };
 exports.SubscriptionsController = SubscriptionsController;
@@ -83,9 +84,10 @@ __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Get)('invoices'),
     openapi.ApiResponse({ status: 200 }),
-    __param(0, (0, common_1.Query)('businessId')),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)('businessId')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], SubscriptionsController.prototype, "getInvoices", null);
 exports.SubscriptionsController = SubscriptionsController = __decorate([

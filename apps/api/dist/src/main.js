@@ -8,6 +8,7 @@ const http_exception_filter_1 = require("./common/filters/http-exception.filter"
 const transform_interceptor_1 = require("./common/interceptors/transform.interceptor");
 async function bootstrap() {
     const app = await core_1.NestFactory.create(app_module_1.AppModule);
+    app.getHttpAdapter().getInstance().disable('x-powered-by');
     app.enableCors({
         origin: [
             process.env.FRONTEND_URL || 'http://localhost:5173',

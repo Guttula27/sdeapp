@@ -2,7 +2,7 @@ import { ReportsService } from './reports.service';
 export declare class ReportsController {
     private service;
     constructor(service: ReportsService);
-    revenue(outletId: string, from: string, to: string): Promise<{
+    revenue(outletId: string, from?: string, to?: string): Promise<{
         orders: (import(".prisma/client").Prisma.PickEnumerable<import(".prisma/client").Prisma.OrderGroupByOutputType, "createdAt"[]> & {
             _count: {
                 id: number;
@@ -24,22 +24,22 @@ export declare class ReportsController {
             }>;
         };
     }>;
-    itemSales(outletId: string, from: string, to: string): Promise<(import(".prisma/client").Prisma.PickEnumerable<import(".prisma/client").Prisma.OrderItemGroupByOutputType, "itemId"[]> & {
+    itemSales(outletId: string, from?: string, to?: string): Promise<(import(".prisma/client").Prisma.PickEnumerable<import(".prisma/client").Prisma.OrderItemGroupByOutputType, "itemId"[]> & {
         _sum: {
             quantity: number | null;
             totalPrice: import("@prisma/client/runtime/library").Decimal | null;
         };
     })[]>;
-    kitchen(outletId: string, from: string, to: string): Promise<{
+    kitchen(outletId: string, from?: string, to?: string): Promise<{
         avgPreparationMinutes: number;
         sampleSize: number;
     }>;
-    hourly(outletId: string, date: string): Promise<{
+    hourly(outletId: string, date?: string): Promise<{
         hour: number;
         orders: number;
         revenue: number;
     }[]>;
-    platformSummary(date?: string): Promise<{
+    platformSummary(user: any, date?: string): Promise<{
         totalBusinesses: number;
         activeBusinesses: number;
         totalOutlets: number;
@@ -56,7 +56,7 @@ export declare class ReportsController {
             orders: number;
         }[];
     }>;
-    platformHourly(date?: string): Promise<{
+    platformHourly(user: any, date?: string): Promise<{
         hour: number;
         orders: number;
         revenue: number;

@@ -121,6 +121,8 @@ export default function DashboardPage() {
     business: 'Business Dashboard',
     counter:  'Counter Dashboard',
     outlet:   'Operations Dashboard',
+    kitchen:  'Kitchen Dashboard',
+    store:    'Store Dashboard',
   }[tier] ?? 'Dashboard';
 
   const liveCount = tier === 'platform' ? (platformData?.activeOrders ?? 0) : (data?.activeOrders ?? 0);

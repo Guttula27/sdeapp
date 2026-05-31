@@ -21,13 +21,15 @@ let LeadsService = class LeadsService {
             data: { ...data, source: data.source || 'landing-page' },
         });
     }
-    findAll(status, take = 50, skip = 0) {
+    findAll(status, take, skip) {
+        const t = Number.isFinite(Number(take)) ? Number(take) : 50;
+        const s = Number.isFinite(Number(skip)) ? Number(skip) : 0;
         const where = status ? { status: status } : {};
         return this.prisma.lead.findMany({
             where,
             orderBy: { createdAt: 'desc' },
-            take,
-            skip,
+            take: t,
+            skip: s,
         });
     }
     async findOne(id) {

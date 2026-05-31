@@ -325,8 +325,10 @@ export class OrdersService {
           orderNumber,
           tokenNumber,
           outletId,
-          tableId: dto.tableId,
-          sectionId: dto.sectionId,
+          // Coerce empty strings to null so an FK lookup isn't attempted
+          // against id=""; Razorpay/UI flows sometimes send "" for unset ids.
+          tableId: dto.tableId || null,
+          sectionId: dto.sectionId || null,
           customerId: resolvedCustomerId,
           staffId: resolvedStaffId,
           isParcel: dto.isParcel || false,

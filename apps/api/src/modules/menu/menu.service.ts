@@ -353,6 +353,17 @@ export class MenuService {
     // Pull bundleChildren off the payload — they're stored in a separate
     // join table after the item is created.
     const { bundleChildren, ...itemData } = data || {};
+    // Frontend forms historically post `price` (UI label) and `type`
+    // (vegetarian classification). The Item schema names these basePrice
+    // and foodGrade. Normalize so either spelling works on the wire.
+    if (itemData.basePrice == null && itemData.price != null) {
+      itemData.basePrice = itemData.price;
+    }
+    delete itemData.price;
+    if (itemData.foodGrade == null && itemData.type != null) {
+      itemData.foodGrade = itemData.type;
+    }
+    delete itemData.type;
     const item = await this.prisma.item.create({
       data: { ...itemData, subcategoryId },
       include: { variants: true, options: true },

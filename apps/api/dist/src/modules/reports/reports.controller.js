@@ -18,27 +18,61 @@ const common_1 = require("@nestjs/common");
 const swagger_1 = require("@nestjs/swagger");
 const reports_service_1 = require("./reports.service");
 const jwt_auth_guard_1 = require("../../common/guards/jwt-auth.guard");
+const current_user_decorator_1 = require("../../common/decorators/current-user.decorator");
+const scope_1 = require("../../common/permissions/scope");
+function parseDate(raw) {
+    if (!raw)
+        return null;
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? null : d;
+}
+function defaultRange(from, to) {
+    const now = new Date();
+    const start = new Date(now);
+    start.setDate(start.getDate() - 30);
+    return {
+        from: parseDate(from) ?? start,
+        to: parseDate(to) ?? now,
+    };
+}
 let ReportsController = class ReportsController {
     constructor(service) {
         this.service = service;
     }
     revenue(outletId, from, to) {
-        return this.service.getRevenueReport(outletId, new Date(from), new Date(to));
+        if (!outletId)
+            throw new common_1.BadRequestException('outletId is required');
+        const r = defaultRange(from, to);
+        return this.service.getRevenueReport(outletId, r.from, r.to);
     }
     itemSales(outletId, from, to) {
-        return this.service.getItemSalesReport(outletId, new Date(from), new Date(to));
+        if (!outletId)
+            throw new common_1.BadRequestException('outletId is required');
+        const r = defaultRange(from, to);
+        return this.service.getItemSalesReport(outletId, r.from, r.to);
     }
     kitchen(outletId, from, to) {
-        return this.service.getKitchenReport(outletId, new Date(from), new Date(to));
+        if (!outletId)
+            throw new common_1.BadRequestException('outletId is required');
+        const r = defaultRange(from, to);
+        return this.service.getKitchenReport(outletId, r.from, r.to);
     }
     hourly(outletId, date) {
-        return this.service.getHourlyOrders(outletId, new Date(date));
+        if (!outletId)
+            throw new common_1.BadRequestException('outletId is required');
+        return this.service.getHourlyOrders(outletId, parseDate(date) ?? new Date());
     }
-    platformSummary(date) {
-        return this.service.getPlatformSummary(date ? new Date(date) : new Date());
+    platformSummary(user, date) {
+        if ((0, scope_1.scopeFor)(user).kind !== 'platform') {
+            throw new common_1.ForbiddenException('Platform reports are restricted to platform admins');
+        }
+        return this.service.getPlatformSummary(parseDate(date) ?? new Date());
     }
-    platformHourly(date) {
-        return this.service.getPlatformHourly(date ? new Date(date) : new Date());
+    platformHourly(user, date) {
+        if ((0, scope_1.scopeFor)(user).kind !== 'platform') {
+            throw new common_1.ForbiddenException('Platform reports are restricted to platform admins');
+        }
+        return this.service.getPlatformHourly(parseDate(date) ?? new Date());
     }
 };
 exports.ReportsController = ReportsController;
@@ -84,17 +118,19 @@ __decorate([
 __decorate([
     (0, common_1.Get)('platform-summary'),
     openapi.ApiResponse({ status: 200 }),
-    __param(0, (0, common_1.Query)('date')),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)('date')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], ReportsController.prototype, "platformSummary", null);
 __decorate([
     (0, common_1.Get)('platform-hourly'),
     openapi.ApiResponse({ status: 200 }),
-    __param(0, (0, common_1.Query)('date')),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)('date')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], ReportsController.prototype, "platformHourly", null);
 exports.ReportsController = ReportsController = __decorate([

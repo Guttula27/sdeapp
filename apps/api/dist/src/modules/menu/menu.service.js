@@ -303,6 +303,14 @@ let MenuService = class MenuService {
             }
         }
         const { bundleChildren, ...itemData } = data || {};
+        if (itemData.basePrice == null && itemData.price != null) {
+            itemData.basePrice = itemData.price;
+        }
+        delete itemData.price;
+        if (itemData.foodGrade == null && itemData.type != null) {
+            itemData.foodGrade = itemData.type;
+        }
+        delete itemData.type;
         const item = await this.prisma.item.create({
             data: { ...itemData, subcategoryId },
             include: { variants: true, options: true },

@@ -12,13 +12,17 @@ export class LeadsService {
     });
   }
 
-  findAll(status?: string, take = 50, skip = 0) {
+  findAll(status?: string, take?: number, skip?: number) {
+    // ValidationPipe's implicit number conversion can produce NaN for
+    // missing query params, which Prisma rejects. Coerce defensively.
+    const t = Number.isFinite(Number(take)) ? Number(take) : 50;
+    const s = Number.isFinite(Number(skip)) ? Number(skip) : 0;
     const where = status ? { status: status as any } : {};
     return this.prisma.lead.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      take,
-      skip,
+      take: t,
+      skip: s,
     });
   }
 

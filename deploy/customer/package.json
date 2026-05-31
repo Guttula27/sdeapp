@@ -1,0 +1,13 @@
+{
+  "name": "paynpik-customer-deploy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone static-server bundle for the paynpik customer PWA.",
+  "main": "server.cjs",
+  "scripts": {
+    "start": "node server.cjs"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
