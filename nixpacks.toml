@@ -1,0 +1,27 @@
+# Nixpacks build config for the paynpik API.
+#
+# Used by Dokploy when paynpik-api is configured with:
+#   Build Type   = Nixpacks
+#   Build Path   = / (repo root)
+#
+# The admin and customer SPAs should NOT use this — configure them as
+# Build Type = Static with their own per-app build command instead.
+
+[phases.setup]
+# openssl is required at runtime for the Prisma query engine binary;
+# without it the API crashes on first DB call with a libssl error.
+nixPkgs = ["nodejs_20", "openssl"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = [
+  "npm run build --workspace=apps/api",
+  "cd apps/api && npx prisma generate",
+]
+
+[start]
+# prisma migrate deploy is idempotent — safe to run on every boot.
+# If a deploy ships a new migration, it applies it before the API listens.
+cmd = "cd apps/api && npx prisma migrate deploy && node dist/src/main.js"
