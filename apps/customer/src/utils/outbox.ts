@@ -80,29 +80,39 @@ export function update(idempotencyKey: string, patch: Partial<OutboxEntry>) {
   write(cur);
 }
 
-// Replay every queued write through the supplied dispatcher. The
-// dispatcher is the page-bound axios instance — passed in instead of
-// imported here so the outbox stays UI-app-agnostic.
-//
-// Returns the count of entries that successfully drained.
+// Auto-purge thresholds — see apps/web/src/utils/outbox.ts for rationale.
+const MAX_ATTEMPTS_BEFORE_PURGE = 10;
+const MAX_AGE_MS_BEFORE_PURGE = 24 * 60 * 60 * 1000;
+
+export function clearAll() {
+  write([]);
+}
+
 export async function drain(
   dispatch: (entry: OutboxEntry) => Promise<{ ok: boolean; status?: number; error?: string }>,
-): Promise<{ succeeded: number; failed: number }> {
+): Promise<{ succeeded: number; failed: number; purged: number }> {
   const entries = read();
   let succeeded = 0;
   let failed = 0;
+  let purged = 0;
+  const now = Date.now();
   for (const entry of entries) {
+    if (entry.attempts >= MAX_ATTEMPTS_BEFORE_PURGE || (now - entry.enqueuedAt) > MAX_AGE_MS_BEFORE_PURGE) {
+      remove(entry.idempotencyKey);
+      purged += 1;
+      continue;
+    }
     update(entry.idempotencyKey, { attempts: entry.attempts + 1 });
     try {
       const result = await dispatch(entry);
       if (result.ok) {
         remove(entry.idempotencyKey);
         succeeded += 1;
+      } else if (result.status && result.status >= 400 && result.status < 500 && result.status !== 408 && result.status !== 429) {
+        // Server permanently rejected → drop to stop banner clutter.
+        remove(entry.idempotencyKey);
+        purged += 1;
       } else {
-        // Non-network failure → the request actually reached the server
-        // and got a 4xx/5xx that isn't safe to silently retry. Surface
-        // the error so the toast can show it; leave the entry queued for
-        // a manual retry.
         update(entry.idempotencyKey, { lastError: result.error || `HTTP ${result.status}` });
         failed += 1;
       }
@@ -111,7 +121,7 @@ export async function drain(
       failed += 1;
     }
   }
-  return { succeeded, failed };
+  return { succeeded, failed, purged };
 }
 
 // Generate a UUID-ish key without pulling a dependency. crypto.randomUUID

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { WifiOff, RefreshCw, CloudOff } from 'lucide-react';
+import { WifiOff, RefreshCw, CloudOff, X } from 'lucide-react';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
-import { subscribe, drain, getEntries, OutboxEntry } from '../../utils/outbox';
+import { subscribe, drain, getEntries, clearAll, OutboxEntry } from '../../utils/outbox';
 import { replayEntry } from '../../services/api';
 
 // Top-of-app banner. Two signals:
@@ -43,6 +43,7 @@ export default function OfflineBanner() {
       if (result.succeeded > 0) {
         toast.success(`${result.succeeded} action${result.succeeded === 1 ? '' : 's'} synced`);
       }
+      // Purged zombies are silent — they were already lost causes.
       if (result.failed > 0) {
         // Each persistent entry gets its own toast so the user can retry
         // them individually. duration:Infinity keeps the toast around
@@ -109,6 +110,14 @@ export default function OfflineBanner() {
           >
             <RefreshCw size={10} className={draining ? 'animate-spin' : ''} />
             {draining ? 'Syncing…' : 'Retry now'}
+          </button>
+          <button
+            onClick={() => { clearAll(); toast.success('Sync queue cleared'); }}
+            title="Discard queued actions"
+            aria-label="Discard queued actions"
+            className="ml-1 bg-white/15 hover:bg-white/25 px-1.5 py-0.5 rounded-md inline-flex items-center text-[11px]"
+          >
+            <X size={11} />
           </button>
         </>
       )}

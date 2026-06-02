@@ -80,6 +80,19 @@ export function update(idempotencyKey: string, patch: Partial<OutboxEntry>) {
   write(cur);
 }
 
+// Entries older than this OR with this many failed attempts are
+// considered zombies and quietly purged on the next drain. Keeps the
+// banner from sticking forever on writes the server has permanently
+// rejected (e.g. validation errors that won't fix themselves).
+const MAX_ATTEMPTS_BEFORE_PURGE = 10;
+const MAX_AGE_MS_BEFORE_PURGE = 24 * 60 * 60 * 1000; // 24h
+
+// Drop everything from the queue. User-triggered from the banner's
+// Dismiss button — useful when entries are stale beyond hope.
+export function clearAll() {
+  write([]);
+}
+
 // Replay every queued write through the supplied dispatcher. The
 // dispatcher is the page-bound axios instance — passed in instead of
 // imported here so the outbox stays UI-app-agnostic.
@@ -87,22 +100,32 @@ export function update(idempotencyKey: string, patch: Partial<OutboxEntry>) {
 // Returns the count of entries that successfully drained.
 export async function drain(
   dispatch: (entry: OutboxEntry) => Promise<{ ok: boolean; status?: number; error?: string }>,
-): Promise<{ succeeded: number; failed: number }> {
+): Promise<{ succeeded: number; failed: number; purged: number }> {
   const entries = read();
   let succeeded = 0;
   let failed = 0;
+  let purged = 0;
+  const now = Date.now();
   for (const entry of entries) {
+    // Purge zombies before attempting — saves a doomed network call.
+    if (entry.attempts >= MAX_ATTEMPTS_BEFORE_PURGE || (now - entry.enqueuedAt) > MAX_AGE_MS_BEFORE_PURGE) {
+      remove(entry.idempotencyKey);
+      purged += 1;
+      continue;
+    }
     update(entry.idempotencyKey, { attempts: entry.attempts + 1 });
     try {
       const result = await dispatch(entry);
       if (result.ok) {
         remove(entry.idempotencyKey);
         succeeded += 1;
+      } else if (result.status && result.status >= 400 && result.status < 500 && result.status !== 408 && result.status !== 429) {
+        // 4xx (except 408/429 which are transient) means the server
+        // permanently rejected the request — replaying won't help.
+        // Drop the entry so it stops cluttering the banner.
+        remove(entry.idempotencyKey);
+        purged += 1;
       } else {
-        // Non-network failure → the request actually reached the server
-        // and got a 4xx/5xx that isn't safe to silently retry. Surface
-        // the error so the toast can show it; leave the entry queued for
-        // a manual retry.
         update(entry.idempotencyKey, { lastError: result.error || `HTTP ${result.status}` });
         failed += 1;
       }
@@ -111,7 +134,7 @@ export async function drain(
       failed += 1;
     }
   }
-  return { succeeded, failed };
+  return { succeeded, failed, purged };
 }
 
 // Generate a UUID-ish key without pulling a dependency. crypto.randomUUID

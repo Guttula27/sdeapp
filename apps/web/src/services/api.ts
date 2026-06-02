@@ -99,7 +99,12 @@ api.interceptors.response.use(
     // still sees the error so it can surface a "queued for retry"
     // toast and avoid optimistic UI updates that the server didn't OK.
     if (isNetworkError) markApiOffline();
-    if (isMutating && isNetworkError && !config.__skipOutbox) {
+    // Auth endpoints are unsafe to queue: a login replay after the user
+    // has already moved past that state is meaningless, and a stale
+    // attempt re-firing on every reconnect just clutters the banner.
+    const url = (config.url || '').toLowerCase();
+    const isAuthEndpoint = url.includes('/auth/login') || url.includes('/auth/logout') || url.includes('/auth/register') || url.includes('/auth/refresh');
+    if (isMutating && isNetworkError && !config.__skipOutbox && !isAuthEndpoint) {
       const idemKey = (config.headers?.['Idempotency-Key']
         || config.headers?.['idempotency-key']
         || newIdempotencyKey()) as string;
