@@ -32,15 +32,25 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new TransformInterceptor());
 
-  const config = new DocumentBuilder()
-    .setTitle('PayNPik API')
-    .setDescription('Multi-tenant restaurant SaaS platform API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
+  // Swagger UI exposes the full API surface (endpoints, schemas, auth
+  // requirements) — fine for local dev, but a recon gift for an attacker
+  // in production. Default to OFF in production; opt in by setting
+  // ENABLE_SWAGGER=true (e.g. behind an IP allowlist or temporarily for
+  // a debugging session).
+  const swaggerEnabled = process.env.ENABLE_SWAGGER === 'true'
+    || (process.env.ENABLE_SWAGGER !== 'false' && process.env.NODE_ENV !== 'production');
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  if (swaggerEnabled) {
+    const config = new DocumentBuilder()
+      .setTitle('PayNPik API')
+      .setDescription('Multi-tenant restaurant SaaS platform API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   // Health check
   const expressApp = app.getHttpAdapter().getInstance();
@@ -49,7 +59,11 @@ async function bootstrap() {
   const port = process.env.API_PORT || 3001;
   await app.listen(port);
   console.log(`PayNPik API running on: http://localhost:${port}/api/v1`);
-  console.log(`Swagger docs: http://localhost:${port}/api/docs`);
+  if (swaggerEnabled) {
+    console.log(`Swagger docs: http://localhost:${port}/api/docs`);
+  } else {
+    console.log('Swagger docs: disabled (set ENABLE_SWAGGER=true to enable)');
+  }
 }
 
 bootstrap();
