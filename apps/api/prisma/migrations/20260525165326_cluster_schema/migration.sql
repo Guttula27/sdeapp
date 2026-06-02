@@ -41,7 +41,7 @@ CREATE TABLE `paynpik_cluster_members` (
   CONSTRAINT `paynpik_cluster_members_outletId_fkey`
     FOREIGN KEY (`outletId`) REFERENCES `paynpik_outlets`(`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- ─── ClusterOrder (parent record for cluster checkout) ───────
 CREATE TABLE `paynpik_cluster_orders` (
@@ -72,7 +72,7 @@ CREATE TABLE `paynpik_cluster_orders` (
   CONSTRAINT `paynpik_cluster_orders_customerId_fkey`
     FOREIGN KEY (`customerId`) REFERENCES `paynpik_users`(`id`)
     ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- ─── Order → ClusterOrder FK (added after both tables exist) ──
 ALTER TABLE `paynpik_orders`

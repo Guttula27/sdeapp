@@ -10,4 +10,4 @@ CREATE TABLE `paynpik_idempotency_keys` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `paynpik_idempotency_keys_key_key` (`key`),
   INDEX `paynpik_idempotency_keys_expiresAt_idx` (`expiresAt`)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
