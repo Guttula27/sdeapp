@@ -10,10 +10,10 @@ services:
     container_name: paynpik_mysql
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: paynpik_db
-      MYSQL_USER: paynpik
-      MYSQL_PASSWORD: paynpik_pass
-      MYSQL_ROOT_PASSWORD: paynpik_root
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-paynpik_db}
+      MYSQL_USER: ${MYSQL_USER:-paynpik}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-paynpik_pass}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-paynpik_root}
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
@@ -23,7 +23,7 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u paynpik -ppaynpik_pass"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u ${MYSQL_USER:-paynpik} -p${MYSQL_PASSWORD:-paynpik_pass}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -33,9 +33,9 @@ services:
     container_name: paynpik_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: paynpik
-      POSTGRES_PASSWORD: paynpik_pass
-      POSTGRES_DB: paynpik_db
+      POSTGRES_USER: ${POSTGRES_USER:-paynpik}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-paynpik_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-paynpik_db}
     ports:
       - "5433:5432"
     volumes:
@@ -88,9 +88,9 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: mysql://paynpik:paynpik_pass@mysql:3306/paynpik_db
+      DATABASE_URL: mysql://${MYSQL_USER:-paynpik}:${MYSQL_PASSWORD:-paynpik_pass}@mysql:3306/${MYSQL_DATABASE:-paynpik_db}
       # Kept for one-shot data migration scripts that read the legacy DB.
-      DATABASE_URL_PG: postgresql://paynpik:paynpik_pass@postgres:5432/paynpik_db
+      DATABASE_URL_PG: postgresql://${POSTGRES_USER:-paynpik}:${POSTGRES_PASSWORD:-paynpik_pass}@postgres:5432/${POSTGRES_DB:-paynpik_db}
       REDIS_URL: redis://redis:6379
       ELASTICSEARCH_URL: http://elasticsearch:9200
     ports:
