@@ -591,11 +591,12 @@ function ItemProgressRow({ item, onReviewSaved }: { item: any; onReviewSaved?: (
   const badge = ITEM_BADGE[status];
   const idx = ITEM_STEPS.findIndex(s => s.key === status);
   const canReview = status === 'SERVED';
-  // Blink the row while this specific item has an unread ITEM_READY
-  // alert. Once the customer dismisses the loud modal (OK tap) the
-  // alert is marked read → blinking stops automatically.
+  // Blink the row while this specific item has a fresh unread
+  // ITEM_READY alert AND the item itself is still in an active state.
+  // Once status moves to SERVED or CANCELLED, blinking stops regardless
+  // of whether the customer tapped OK.
   const { hasReadyAlertForOrderItem } = useCustomerAlerts();
-  const isBlinking = hasReadyAlertForOrderItem(item.id);
+  const isBlinking = hasReadyAlertForOrderItem(item.id, status);
 
   return (
     <div className={clsx(

@@ -10,6 +10,31 @@ import { playRingtone, setupAudioUnlock, isVibrateEnabled, startLoudAlert } from
 // else stays a quiet toast.
 const LOUD_TRIGGERS = new Set(['ORDER_READY', 'PICKUP_READY', 'ITEM_READY']);
 
+// Don't blink for alerts older than this — protects against stale
+// unread alerts when the customer ignored the popup hours ago.
+// Anything older than 30 min is considered "stale" and stops blinking
+// even if it's still marked unread in the DB.
+const BLINK_MAX_AGE_MS = 30 * 60 * 1000;
+
+// Same window for retroactively raising the loud popup. If the customer
+// opens the PWA shortly after an alert fired (and they missed the socket
+// push because they were offline / backgrounded / had the app closed),
+// we still want them to hear it.
+const POPUP_REPLAY_MAX_AGE_MS = 5 * 60 * 1000;
+
+// Order statuses where blinking still makes sense. Once the kitchen
+// marks the order SERVED or it's CANCELLED/REFUNDED, blinking stops
+// regardless of whether the customer ever tapped OK on the alert.
+const BLINKABLE_ORDER_STATUSES = new Set([
+  'CREATED', 'QUEUED', 'PREPARING', 'READY', 'OUT_FOR_SERVICE',
+]);
+
+// Item statuses where blinking still makes sense. Once an item is
+// SERVED (delivered to the customer) or CANCELLED, no need to flag.
+const BLINKABLE_ITEM_STATUSES = new Set([
+  'PENDING', 'PREPARING', 'READY',
+]);
+
 export type CustomerAlert = {
   id: string;
   customerId: string;
@@ -33,13 +58,16 @@ type Ctx = {
   markRead: (id: string) => void;
   markAllRead: () => void;
   refresh: () => void;
-  // True while there's an unread "ready"-class alert for this order.
-  // HomePage uses this to blink the order card until the customer
-  // acknowledges (which marks the alert read).
-  hasReadyAlertForOrder: (orderId: string | null | undefined) => boolean;
-  // Same but per order-item. OrderTrackingPage uses this to blink
-  // an individual item row when its ITEM_READY alert is unread.
-  hasReadyAlertForOrderItem: (orderItemId: string | null | undefined) => boolean;
+  // True while there's a fresh unread "ready"-class alert for this
+  // order AND the order is still in an active state. Returns false if:
+  //   - the order is SERVED / CANCELLED / etc. (no point blinking)
+  //   - the alert is older than 30 min (stale)
+  //   - the alert is already marked read
+  // HomePage uses this to blink the order card.
+  hasReadyAlertForOrder: (orderId: string | null | undefined, orderStatus?: string | null) => boolean;
+  // Same but per order-item. Pass the current item status so a SERVED
+  // item stops blinking even if its ITEM_READY alert is still unread.
+  hasReadyAlertForOrderItem: (orderItemId: string | null | undefined, itemStatus?: string | null) => boolean;
 };
 
 const CustomerAlertsContext = createContext<Ctx>({
@@ -102,6 +130,29 @@ export function CustomerAlertsProvider({ children }: { children: ReactNode }) {
   // user-initiated). Runs once per app mount.
   useEffect(() => { setupAudioUnlock(); }, []);
 
+  // Replay missed loud alerts. If the customer wasn't connected when
+  // the kitchen marked something ready (PWA closed, network blip,
+  // backgrounded tab), the socket push goes to nobody. But the alert
+  // row is still created in the DB — so when refresh() pulls it into
+  // the list, we promote the freshest unread loud alert to a popup
+  // here, mirroring what the socket handler would have done.
+  useEffect(() => {
+    if (loudAlert) return; // already showing one
+    const now = Date.now();
+    const candidate = alerts.find((a) =>
+      !a.isRead
+      && LOUD_TRIGGERS.has(a.trigger)
+      && (now - new Date(a.createdAt).getTime()) < POPUP_REPLAY_MAX_AGE_MS,
+    );
+    if (!candidate) return;
+    loudStopRef.current?.stop();
+    loudStopRef.current = startLoudAlert(candidate.ringtone, {
+      volume: (user as any)?.alertVolume ?? 100,
+      vibrate: isVibrateEnabled(),
+    });
+    setLoudAlert(candidate);
+  }, [alerts, loudAlert, user]);
+
   // Socket: join customer room, ring + toast on incoming alerts.
   useEffect(() => {
     if (!isLoggedIn || !user?.id || !token) return;
@@ -161,21 +212,35 @@ export function CustomerAlertsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const hasReadyAlertForOrder = useCallback(
-    (orderId: string | null | undefined) => {
+    (orderId: string | null | undefined, orderStatus?: string | null) => {
       if (!orderId) return false;
-      return alerts.some(
-        (a) => !a.isRead && a.orderId === orderId && LOUD_TRIGGERS.has(a.trigger),
-      );
+      // If we know the order moved past the ready phase, stop blinking
+      // immediately regardless of alert state.
+      if (orderStatus && !BLINKABLE_ORDER_STATUSES.has(orderStatus)) return false;
+      const now = Date.now();
+      return alerts.some((a) => {
+        if (a.isRead) return false;
+        if (a.orderId !== orderId) return false;
+        if (!LOUD_TRIGGERS.has(a.trigger)) return false;
+        const ageMs = now - new Date(a.createdAt).getTime();
+        return ageMs >= 0 && ageMs < BLINK_MAX_AGE_MS;
+      });
     },
     [alerts],
   );
 
   const hasReadyAlertForOrderItem = useCallback(
-    (orderItemId: string | null | undefined) => {
+    (orderItemId: string | null | undefined, itemStatus?: string | null) => {
       if (!orderItemId) return false;
-      return alerts.some(
-        (a) => !a.isRead && a.orderItemId === orderItemId && a.trigger === 'ITEM_READY',
-      );
+      if (itemStatus && !BLINKABLE_ITEM_STATUSES.has(itemStatus)) return false;
+      const now = Date.now();
+      return alerts.some((a) => {
+        if (a.isRead) return false;
+        if (a.orderItemId !== orderItemId) return false;
+        if (a.trigger !== 'ITEM_READY') return false;
+        const ageMs = now - new Date(a.createdAt).getTime();
+        return ageMs >= 0 && ageMs < BLINK_MAX_AGE_MS;
+      });
     },
     [alerts],
   );

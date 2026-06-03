@@ -234,11 +234,11 @@ export default function HomePage() {
 function OrderCard({ order, active, compactGroup, onTrack, onPay }: { order: Order; active?: boolean; compactGroup?: boolean; onTrack: () => void; onPay?: () => void }) {
   const s = STATUS[order.status] || STATUS.SERVED;
   const items = order.items.map(i => `${i.item.name}${i.quantity > 1 ? ` ×${i.quantity}` : ''}`).join(', ');
-  // Blink while there's an unread "ready"-class alert for this order
-  // (ITEM_READY, ORDER_READY, PICKUP_READY). Acknowledging the loud modal
-  // marks the alert read → blink stops on the next render.
+  // Blink while there's a fresh unread "ready"-class alert for this
+  // order AND the order is still in an active phase. Past/served
+  // orders never blink even if they had unread alerts.
   const { hasReadyAlertForOrder } = useCustomerAlerts();
-  const isBlinking = hasReadyAlertForOrder(order.id);
+  const isBlinking = hasReadyAlertForOrder(order.id, order.status);
   // Bill requested but not yet paid → swap the Track button for Pay now so
   // the customer doesn't have to drill into the tracking page first.
   const billReady = !!(order.isPostpaid && order.billRequestedAt && !['SERVED','CANCELLED','REFUND_COMPLETE'].includes(order.status));
