@@ -924,6 +924,13 @@ export default function OrderPage() {
         <ItemDetailModal
           item={detailItem}
           onClose={() => setDetailItem(null)}
+          onToggleFavorite={async () => {
+            await toggleFavorite(detailItem);
+            // Reflect the new state inside the open sheet so the heart fills
+            // immediately. toggleFavorite already updates the menu list
+            // optimistically; we mirror that single field on the open item.
+            setDetailItem((it: any) => (it ? { ...it, isFavorite: !it.isFavorite } : it));
+          }}
           onAdd={(variant, toppings, qty, bundlePicks) => {
             for (let i = 0; i < qty; i++) addToCart(detailItem, variant, toppings, bundlePicks);
             setDetailItem(null);
@@ -1051,10 +1058,11 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
 
 /* ── Item detail half-screen modal ────────────────────────── */
 function ItemDetailModal({
-  item, onClose, onAdd,
+  item, onClose, onAdd, onToggleFavorite,
 }: {
   item: any;
   onClose: () => void;
+  onToggleFavorite?: () => void;
   onAdd: (
     variant: any | undefined,
     toppings: CartTopping[],
@@ -1123,6 +1131,20 @@ function ItemDetailModal({
             <div className="h-32 bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center rounded-t-3xl">
               <span className="text-5xl">🍽️</span>
             </div>
+          )}
+          {onToggleFavorite && (
+            <button
+              onClick={onToggleFavorite}
+              aria-label={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+              title={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+              className="absolute top-3 right-14 w-9 h-9 bg-white/90 rounded-full flex items-center justify-center shadow"
+            >
+              <Heart
+                size={16}
+                className={item.isFavorite ? 'text-red-500' : 'text-slate-400'}
+                fill={item.isFavorite ? 'currentColor' : 'none'}
+              />
+            </button>
           )}
           <button onClick={onClose} className="absolute top-3 right-3 w-9 h-9 bg-white/90 rounded-full flex items-center justify-center shadow">
             <X size={16} />

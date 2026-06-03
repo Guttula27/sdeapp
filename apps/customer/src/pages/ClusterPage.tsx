@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { ChevronLeft, ShoppingCart, X, Plus, Minus, Network, Store, Trash2, Loader2, ShieldCheck, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ShoppingCart, X, Plus, Minus, Network, Store, Trash2, Loader2, ShieldCheck, ChevronRight, Heart, Clock } from 'lucide-react';
 import api from '../services/api';
 import { cachedGet } from '../utils/cachedGet';
 import { useRefreshOnFocus } from '../hooks/useRefreshOnFocus';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 import {
-  ClusterCartLine, readClusterCart, writeClusterCart,
+  ClusterCartLine, ClusterCartTopping, readClusterCart, writeClusterCart,
   makeClusterLineId, upsertLine as upsertCartLine,
 } from '../utils/clusterCart';
 
@@ -197,11 +197,33 @@ export default function ClusterPage() {
   };
 
   // Item row tap — always routes to the detail page. Even items without
-  // variants or toppings benefit from the detail screen (gallery, full
+  // variants or toppings benefit from the detail sheet (gallery, full
   // description, prep time, etc.). The cluster shell stays a quick browse
-  // surface; commitment-to-add happens on the detail page.
+  // surface; commitment-to-add happens in the half-screen modal.
+  const [detailContext, setDetailContext] = useState<{ item: any; outlet: ClusterOutlet } | null>(null);
   const onOpenItem = (outlet: ClusterOutlet, item: ClusterItem) => {
-    navigate(`/cluster/${cluster!.publicCode}/item/${item.id}?outletId=${outlet.id}`);
+    setDetailContext({ item, outlet });
+  };
+
+  // Favorites toggle for the modal heart button. Cluster items don't carry
+  // `isFavorite` from the bundle; the toggle calls the API and the UI
+  // reflects optimistic state inside the open sheet.
+  const toggleFavoriteInModal = async () => {
+    if (!detailContext) return;
+    if (!isLoggedIn) {
+      toast('Sign in to save favourites', { icon: '🔐' });
+      return;
+    }
+    const item = detailContext.item;
+    const next = !item.isFavorite;
+    setDetailContext((d) => (d ? { ...d, item: { ...d.item, isFavorite: next } } : d));
+    try {
+      if (next) await api.post(`/users/me/favorites/${item.id}`);
+      else      await api.delete(`/users/me/favorites/${item.id}`);
+    } catch {
+      setDetailContext((d) => (d ? { ...d, item: { ...d.item, isFavorite: !next } } : d));
+      toast.error('Failed to update favourite');
+    }
   };
 
   // ── Checkout ─────────────────────────────────────────────
@@ -679,6 +701,260 @@ export default function ClusterPage() {
           </div>
         </div>
       )}
+
+      {/* Item detail bottom-sheet (half-screen) */}
+      {detailContext && cluster && (
+        <ClusterItemDetailModal
+          clusterId={cluster.id}
+          outlet={detailContext.outlet}
+          item={detailContext.item}
+          onClose={() => setDetailContext(null)}
+          onToggleFavorite={toggleFavoriteInModal}
+          onAdded={(qty, line) => {
+            const prev = readClusterCart(cluster.id);
+            const next = upsertCartLine(prev, line, qty);
+            writeClusterCart(cluster.id, next);
+            setCart(next);
+            toast.success(`Added ${qty} × ${line.itemName}`);
+            setDetailContext(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Cluster item detail half-screen sheet ────────────────────────────
+ * Mirrors OrderPage.ItemDetailModal but adapts to the cluster cart shape
+ * (an item belongs to a specific outlet; the cart spans outlets). The
+ * cluster bundle items already include full topping + variant payloads
+ * — no extra fetch needed when opening the sheet.
+ */
+const CLUSTER_FOOD_GRADE_COLOR: Record<string, string> = { VEG: '#16a34a', NON_VEG: '#dc2626', VEGAN: '#0d9488' };
+function ClusterFoodGradeDot({ grade }: { grade?: string }) {
+  const color = CLUSTER_FOOD_GRADE_COLOR[grade || 'VEG'];
+  return (
+    <span
+      title={(grade || 'VEG').replace('_', '-')}
+      className="inline-flex items-center justify-center shrink-0"
+      style={{ width: 12, height: 12, border: `1.5px solid ${color}`, borderRadius: 2 }}
+    >
+      <span style={{ width: 6, height: 6, background: color, borderRadius: '50%' }} />
+    </span>
+  );
+}
+
+function ClusterItemDetailModal({
+  clusterId, item, outlet, onClose, onToggleFavorite, onAdded,
+}: {
+  clusterId: string;
+  item: any;
+  outlet: ClusterOutlet;
+  onClose: () => void;
+  onToggleFavorite?: () => void;
+  onAdded: (qty: number, line: ClusterCartLine) => void;
+}) {
+  void clusterId; // unused locally — parent persists; keep param for clarity
+  const [variantId, setVariantId] = useState<string>(item.variants?.[0]?.id || '');
+  const [qty, setQty] = useState(1);
+  const [topSel, setTopSel] = useState<Record<string, { selected: boolean; optionId?: string }>>(() => {
+    const init: Record<string, { selected: boolean; optionId?: string }> = {};
+    (item.itemToppings || []).forEach((l: any) => {
+      if (l.topping?.options?.length) {
+        init[l.toppingId] = { selected: !!l.isRequired, optionId: l.isRequired ? l.topping.options[0].id : undefined };
+      } else {
+        init[l.toppingId] = { selected: !!l.isRequired };
+      }
+    });
+    return init;
+  });
+
+  const variant = item.variants?.find((v: any) => v.id === variantId);
+  const basePrice = variant ? Number(variant.price) : Number(item.basePrice);
+  const toppings: ClusterCartTopping[] = [];
+  for (const link of item.itemToppings || []) {
+    const sel = topSel[link.toppingId];
+    if (!sel?.selected && !link.isRequired) continue;
+    const linkAdd = link.priceAdd != null ? Number(link.priceAdd) : Number(link.topping?.basePriceAdd ?? 0);
+    if (link.topping?.options?.length) {
+      const optId = sel?.optionId || link.topping.options[0].id;
+      const opt = link.topping.options.find((o: any) => o.id === optId);
+      if (!opt) continue;
+      toppings.push({
+        toppingId: link.toppingId, optionId: opt.id,
+        label: `${link.topping.name}: ${opt.name}`,
+        priceAdd: linkAdd + Number(opt.priceAdd),
+      });
+    } else {
+      toppings.push({ toppingId: link.toppingId, label: link.topping?.name ?? '', priceAdd: linkAdd });
+    }
+  }
+  const unitPrice = basePrice + toppings.reduce((s, t) => s + t.priceAdd, 0);
+  const lineTotal = unitPrice * qty;
+  const galleryImages = [item.imageUrl, ...(item.images?.map((g: any) => g.url) || [])].filter(Boolean);
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-t-3xl flex flex-col max-h-[80%]" onClick={(e) => e.stopPropagation()}>
+        <div className="relative">
+          {galleryImages.length > 0 ? (
+            <div className="flex overflow-x-auto snap-x snap-mandatory rounded-t-3xl">
+              {galleryImages.map((url: string, i: number) => (
+                <img key={i} src={url} alt="" className="w-full snap-center shrink-0 h-48 object-cover" />
+              ))}
+            </div>
+          ) : (
+            <div className="h-32 bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center rounded-t-3xl">
+              <span className="text-5xl">🍽️</span>
+            </div>
+          )}
+          {onToggleFavorite && (
+            <button
+              onClick={onToggleFavorite}
+              aria-label={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+              title={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+              className="absolute top-3 right-14 w-9 h-9 bg-white/90 rounded-full flex items-center justify-center shadow"
+            >
+              <Heart
+                size={16}
+                className={item.isFavorite ? 'text-red-500' : 'text-slate-400'}
+                fill={item.isFavorite ? 'currentColor' : 'none'}
+              />
+            </button>
+          )}
+          <button onClick={onClose} className="absolute top-3 right-3 w-9 h-9 bg-white/90 rounded-full flex items-center justify-center shadow">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          <div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <ClusterFoodGradeDot grade={item.foodGrade} />
+              <h3 className="text-base font-bold text-slate-900">{item.name}</h3>
+              <span className="text-[10px] text-slate-400">· {outlet.name}</span>
+            </div>
+            {(item.longDescription || item.shortDescription || item.description) && (
+              <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                {item.longDescription || item.shortDescription || item.description}
+              </p>
+            )}
+            {item.preparationTime && (
+              <p className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
+                <Clock size={10} /> {item.preparationTime} min
+              </p>
+            )}
+          </div>
+
+          {item.variants?.length > 0 && (
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Choose size</p>
+              <div className="space-y-1.5">
+                {item.variants.map((v: any) => {
+                  const checked = variantId === v.id;
+                  return (
+                    <label key={v.id} className={
+                      'flex items-center justify-between px-3 py-2.5 rounded-xl border cursor-pointer '
+                      + (checked ? 'border-brand-300 bg-brand-50/40' : 'border-slate-100')
+                    }>
+                      <span className="flex items-center gap-2">
+                        <input type="radio" name="variant" checked={checked} onChange={() => setVariantId(v.id)} className="accent-brand-500" />
+                        <span className="text-sm font-semibold text-slate-800">{v.name}</span>
+                      </span>
+                      <span className="text-sm font-bold text-slate-900">₹{Number(v.price).toFixed(0)}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {item.itemToppings?.length > 0 && (
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Toppings</p>
+              <div className="space-y-2">
+                {item.itemToppings.map((link: any) => {
+                  const sel = topSel[link.toppingId] || { selected: false };
+                  const linkAdd = link.priceAdd != null ? Number(link.priceAdd) : Number(link.topping?.basePriceAdd ?? 0);
+                  const hasOptions = link.topping?.options?.length > 0;
+                  return (
+                    <div key={link.toppingId} className="bg-slate-50 rounded-xl p-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          disabled={link.isRequired}
+                          checked={sel.selected}
+                          onChange={(e) => setTopSel((p) => ({ ...p, [link.toppingId]: { selected: e.target.checked, optionId: p[link.toppingId]?.optionId } }))}
+                          className="w-4 h-4 accent-brand-500"
+                        />
+                        <span className="text-sm font-semibold text-slate-800 flex-1">
+                          {link.topping?.name}
+                          {link.isRequired && <span className="ml-1 text-[10px] text-red-500">required</span>}
+                        </span>
+                        {!hasOptions && <span className="text-xs font-bold text-slate-700">+₹{linkAdd.toFixed(0)}</span>}
+                      </label>
+                      {hasOptions && sel.selected && (
+                        <div className="mt-2 ml-6 space-y-1.5">
+                          {link.topping.options.map((opt: any) => (
+                            <label key={opt.id} className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="radio"
+                                name={`top-${link.toppingId}`}
+                                checked={sel.optionId === opt.id}
+                                onChange={() => setTopSel((p) => ({ ...p, [link.toppingId]: { selected: true, optionId: opt.id } }))}
+                                className="accent-brand-500"
+                              />
+                              <span className="text-xs text-slate-700 flex-1">{opt.name}</span>
+                              <span className="text-[11px] font-semibold text-slate-700">+₹{(linkAdd + Number(opt.priceAdd)).toFixed(0)}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Quantity */}
+          <div className="flex items-center justify-between bg-slate-50 rounded-xl p-3">
+            <p className="text-sm font-semibold text-slate-700">Quantity</p>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setQty((q) => Math.max(1, q - 1))} className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center"><Minus size={14} /></button>
+              <span className="w-6 text-center font-bold text-sm">{qty}</span>
+              <button onClick={() => setQty((q) => q + 1)} className="w-8 h-8 bg-brand-500 text-white rounded-lg flex items-center justify-center"><Plus size={14} /></button>
+            </div>
+          </div>
+        </div>
+
+        {/* Sticky footer CTA — always visible regardless of scroll position */}
+        <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-3">
+          <span className="text-base font-bold text-slate-900">₹{lineTotal.toFixed(0)}</span>
+          <button
+            onClick={() => {
+              const cartLineId = makeClusterLineId(outlet.id, item.id, variant?.id, toppings);
+              const line: ClusterCartLine = {
+                cartLineId,
+                outletId: outlet.id,
+                outletName: outlet.name,
+                itemId: item.id,
+                itemName: item.name,
+                variantId: variant?.id ?? null,
+                variantName: variant?.name ?? null,
+                unitPrice,
+                quantity: 0,
+                toppings: toppings.length ? toppings : undefined,
+              };
+              onAdded(qty, line);
+            }}
+            disabled={!item.isAvailable}
+            className="flex-1 bg-gradient-to-r from-orange-500 to-orange-600 text-white py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Add {qty} to cart · ₹{lineTotal.toFixed(0)}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

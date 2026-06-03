@@ -6,7 +6,6 @@ import ScanPage from './pages/ScanPage';
 import AuthPage from './pages/AuthPage';
 import OrderPage from './pages/OrderPage';
 import ClusterPage from './pages/ClusterPage';
-import ClusterItemDetailPage from './pages/ClusterItemDetailPage';
 import OfflineBanner from './components/OfflineBanner';
 import OrderTrackingPage from './pages/OrderTrackingPage';
 import ProfilePage from './pages/ProfilePage';
@@ -14,7 +13,6 @@ import PaymentPage from './pages/PaymentPage';
 import ReceiptPage from './pages/ReceiptPage';
 import DashboardPage from './pages/DashboardPage';
 import OffersPage from './pages/OffersPage';
-import ItemDetailPage from './pages/ItemDetailPage';
 import AlertsPage from './pages/AlertsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -41,10 +39,14 @@ export default function App() {
           <Route path="/profile"   element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
 
           <Route path="/order"  element={<OrderPage />} />
-          <Route path="/order/item/:itemId" element={<ItemDetailPage />} />
+          {/* /order/item/:itemId retired — item details now open as a
+              half-screen sheet inside OrderPage. Legacy deep links
+              redirect to /order so the visitor can pick the item again. */}
+          <Route path="/order/item/:itemId" element={<Navigate to="/order" replace />} />
           {/* Cluster shell — food-court roof with outlet picker + unified cart */}
           <Route path="/cluster/:publicCode" element={<ClusterPage />} />
-          <Route path="/cluster/:publicCode/item/:itemId" element={<ClusterItemDetailPage />} />
+          {/* /cluster/:publicCode/item/:itemId retired — same sheet pattern in ClusterPage. */}
+          <Route path="/cluster/:publicCode/item/:itemId" element={<Navigate to=".." replace />} />
           <Route path="/pay"    element={<ProtectedRoute><PaymentPage /></ProtectedRoute>} />
           <Route path="/receipt/:orderId" element={<ProtectedRoute><ReceiptPage /></ProtectedRoute>} />
           <Route path="/track/:orderId" element={<OrderTrackingPage />} />
