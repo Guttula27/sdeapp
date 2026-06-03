@@ -234,6 +234,11 @@ export default function HomePage() {
 function OrderCard({ order, active, compactGroup, onTrack, onPay }: { order: Order; active?: boolean; compactGroup?: boolean; onTrack: () => void; onPay?: () => void }) {
   const s = STATUS[order.status] || STATUS.SERVED;
   const items = order.items.map(i => `${i.item.name}${i.quantity > 1 ? ` ×${i.quantity}` : ''}`).join(', ');
+  // Blink while there's an unread "ready"-class alert for this order
+  // (ITEM_READY, ORDER_READY, PICKUP_READY). Acknowledging the loud modal
+  // marks the alert read → blink stops on the next render.
+  const { hasReadyAlertForOrder } = useCustomerAlerts();
+  const isBlinking = hasReadyAlertForOrder(order.id);
   // Bill requested but not yet paid → swap the Track button for Pay now so
   // the customer doesn't have to drill into the tracking page first.
   const billReady = !!(order.isPostpaid && order.billRequestedAt && !['SERVED','CANCELLED','REFUND_COMPLETE'].includes(order.status));
@@ -242,7 +247,10 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay }: { order: Ord
   // header carries the cluster branding instead).
   if (compactGroup) {
     return (
-      <div className="p-3">
+      <div className={clsx(
+        'p-3',
+        isBlinking && 'animate-blink ring-2 ring-orange-400 rounded-xl bg-orange-50/40',
+      )}>
         <div className="flex items-start justify-between gap-2 mb-1">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -271,7 +279,9 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay }: { order: Ord
   }
   return (
     <div className={clsx('bg-white rounded-2xl border shadow-sm overflow-hidden',
-      active ? 'border-brand-200' : 'border-slate-100')}>
+      active ? 'border-brand-200' : 'border-slate-100',
+      isBlinking && 'animate-blink ring-2 ring-orange-400',
+    )}>
       {active && <div className="h-1 bg-gradient-to-r from-brand-500 to-orange-400" />}
       <div className="p-4">
         <div className="flex items-start justify-between gap-2 mb-1.5">

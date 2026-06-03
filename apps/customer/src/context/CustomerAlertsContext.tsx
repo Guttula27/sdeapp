@@ -5,9 +5,10 @@ import { useCustomerAuth } from './CustomerAuthContext';
 import api from '../services/api';
 import { playRingtone, setupAudioUnlock, isVibrateEnabled, startLoudAlert } from '../utils/ringtones';
 
-// Triggers that warrant the "loud" modal — order is ready for pickup
-// and the customer needs to act. Anything else stays a quiet toast.
-const LOUD_TRIGGERS = new Set(['ORDER_READY', 'PICKUP_READY']);
+// Triggers that warrant the "loud" modal — the customer needs to act
+// (food is ready, parcel is packed, individual item is up). Anything
+// else stays a quiet toast.
+const LOUD_TRIGGERS = new Set(['ORDER_READY', 'PICKUP_READY', 'ITEM_READY']);
 
 export type CustomerAlert = {
   id: string;
@@ -32,6 +33,13 @@ type Ctx = {
   markRead: (id: string) => void;
   markAllRead: () => void;
   refresh: () => void;
+  // True while there's an unread "ready"-class alert for this order.
+  // HomePage uses this to blink the order card until the customer
+  // acknowledges (which marks the alert read).
+  hasReadyAlertForOrder: (orderId: string | null | undefined) => boolean;
+  // Same but per order-item. OrderTrackingPage uses this to blink
+  // an individual item row when its ITEM_READY alert is unread.
+  hasReadyAlertForOrderItem: (orderItemId: string | null | undefined) => boolean;
 };
 
 const CustomerAlertsContext = createContext<Ctx>({
@@ -39,6 +47,8 @@ const CustomerAlertsContext = createContext<Ctx>({
   loudAlert: null,
   acknowledgeLoudAlert: () => {},
   markRead: () => {}, markAllRead: () => {}, refresh: () => {},
+  hasReadyAlertForOrder: () => false,
+  hasReadyAlertForOrderItem: () => false,
 });
 
 // Ringtone playback moved to utils/ringtones.ts — shared with the Profile
@@ -150,10 +160,31 @@ export function CustomerAlertsProvider({ children }: { children: ReactNode }) {
     try { await api.patch('/customer-alerts/read-all'); } catch {}
   }, []);
 
+  const hasReadyAlertForOrder = useCallback(
+    (orderId: string | null | undefined) => {
+      if (!orderId) return false;
+      return alerts.some(
+        (a) => !a.isRead && a.orderId === orderId && LOUD_TRIGGERS.has(a.trigger),
+      );
+    },
+    [alerts],
+  );
+
+  const hasReadyAlertForOrderItem = useCallback(
+    (orderItemId: string | null | undefined) => {
+      if (!orderItemId) return false;
+      return alerts.some(
+        (a) => !a.isRead && a.orderItemId === orderItemId && a.trigger === 'ITEM_READY',
+      );
+    },
+    [alerts],
+  );
+
   return (
     <CustomerAlertsContext.Provider value={{
       alerts, unreadCount, loudAlert, acknowledgeLoudAlert,
       markRead, markAllRead, refresh,
+      hasReadyAlertForOrder, hasReadyAlertForOrderItem,
     }}>
       {children}
       {loudAlert && (
@@ -168,10 +199,13 @@ export const useCustomerAlerts = () => useContext(CustomerAlertsContext);
 // Modal overlay shown while a loud alert is active. Cannot be dismissed
 // by tapping outside — the customer must explicitly tap OK to silence.
 function LoudAlertModal({ alert, onAcknowledge }: { alert: CustomerAlert; onAcknowledge: () => void }) {
+  // The backdrop intentionally does not dismiss — only the explicit OK
+  // tap silences the loop. Card itself blinks (opacity) + the bell icon
+  // pulses-ring for an extra attention-grabbing effect.
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm px-6">
-      <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl text-center animate-pulse-slow">
-        <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center text-white text-3xl">
+      <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl text-center animate-blink">
+        <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center text-white text-3xl animate-ring-blink">
           🔔
         </div>
         <h2 className="text-xl font-black text-slate-900">{alert.title || 'Order ready'}</h2>

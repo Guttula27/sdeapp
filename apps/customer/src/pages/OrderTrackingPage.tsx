@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
+import { useCustomerAlerts } from '../context/CustomerAlertsContext';
 
 /* ── constants ───────────────────────────────────────────── */
 const STEPS = [
@@ -590,9 +591,17 @@ function ItemProgressRow({ item, onReviewSaved }: { item: any; onReviewSaved?: (
   const badge = ITEM_BADGE[status];
   const idx = ITEM_STEPS.findIndex(s => s.key === status);
   const canReview = status === 'SERVED';
+  // Blink the row while this specific item has an unread ITEM_READY
+  // alert. Once the customer dismisses the loud modal (OK tap) the
+  // alert is marked read → blinking stops automatically.
+  const { hasReadyAlertForOrderItem } = useCustomerAlerts();
+  const isBlinking = hasReadyAlertForOrderItem(item.id);
 
   return (
-    <div className="border border-slate-100 rounded-2xl p-3">
+    <div className={clsx(
+      'border rounded-2xl p-3',
+      isBlinking ? 'border-orange-400 animate-blink ring-2 ring-orange-300' : 'border-slate-100',
+    )}>
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 bg-brand-50 text-brand-600 rounded-xl flex items-center justify-center font-black text-sm shrink-0">
           {item.quantity}
