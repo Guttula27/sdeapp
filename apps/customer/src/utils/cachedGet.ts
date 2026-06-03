@@ -14,6 +14,17 @@ import api from '../services/api';
 const PREFIX = 'cache-v1:';
 const DEFAULT_TTL_MS = 60 * 60 * 1000; // 1h
 
+// Language-aware cache keys. Without this, switching language hits the
+// same cache slot and the user sees stale translations until the cache
+// entry expires (up to 1h). Reading localStorage on every call is fine
+// — it's synchronous and cheap.
+function languageSuffix(): string {
+  try {
+    const lang = localStorage.getItem('preferredLanguage');
+    return lang ? `:lang=${lang}` : '';
+  } catch { return ''; }
+}
+
 interface CacheEntry<T> {
   data: T;
   cachedAt: number;
@@ -84,14 +95,13 @@ export async function cachedGet<T = any>(
   opts: CachedGetOptions = {},
 ): Promise<CachedGetResult<T>> {
   const ttl = opts.ttlMs ?? DEFAULT_TTL_MS;
-  const cached = read<T>(key);
+  const fullKey = key + languageSuffix();
+  const cached = read<T>(fullKey);
 
   try {
     const res = await api.get(url, { params: opts.params });
-    // The standard API envelope wraps everything in `{ success, data }`.
-    // We cache the unwrapped payload so the consumer sees a clean shape.
     const payload = (res.data?.data ?? res.data) as T;
-    write(key, { data: payload, cachedAt: Date.now(), ttl });
+    write(fullKey, { data: payload, cachedAt: Date.now(), ttl });
     return { data: payload, fromCache: false, cachedAt: Date.now() };
   } catch (err) {
     if (cached) {
@@ -104,11 +114,30 @@ export async function cachedGet<T = any>(
 // Direct cache lookup — useful for "warm boot" code paths that want to
 // paint immediately while the network call runs in parallel.
 export function peekCache<T = any>(key: string): CachedGetResult<T> | null {
-  const entry = read<T>(key);
+  const entry = read<T>(key + languageSuffix());
   if (!entry) return null;
   return { data: entry.data, fromCache: true, cachedAt: entry.cachedAt };
 }
 
 export function invalidateCache(key: string) {
-  localStorage.removeItem(PREFIX + key);
+  // Drop every language-suffixed variant of the key so a language
+  // switch doesn't leave the previous-language entry behind.
+  const target = PREFIX + key;
+  const toDelete: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && (k === target || k.startsWith(target + ':lang='))) toDelete.push(k);
+  }
+  for (const k of toDelete) localStorage.removeItem(k);
+}
+
+// Drop every cache entry under the prefix. Useful when a global
+// invariant (like language) changes and we want a hard reset.
+export function invalidateAllCache() {
+  const toDelete: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith(PREFIX)) toDelete.push(k);
+  }
+  for (const k of toDelete) localStorage.removeItem(k);
 }

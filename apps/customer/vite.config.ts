@@ -34,6 +34,18 @@ export default defineConfig({
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
+          // Liveness endpoints — NEVER cache. open-status drives the
+          // ordering-disabled banner; if we cached "closed" at 7am the
+          // user would still see it at 9am after the outlet opened.
+          // Same for kitchen-stations and other realtime status reads.
+          {
+            urlPattern: ({ url, request }) =>
+              request.method === 'GET'
+              && (url.pathname.includes('/open-status')
+                  || url.pathname.includes('/kitchen-stations/mine')
+                  || url.pathname.includes('/customer-alerts')),
+            handler: 'NetworkOnly',
+          },
           // API GETs — network-first with cache fallback. The in-app
           // cachedGet utility already shadows this for cluster bundle
           // + outlet menu; the SW layer covers the rest of the API

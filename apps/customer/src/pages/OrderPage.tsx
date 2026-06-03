@@ -201,17 +201,27 @@ export default function OrderPage() {
     if (!outletId) return;
     try {
       const menuKey = `outlet-menu:${outletId}:${tableId || ''}`;
-      const result = await cachedGet<any[]>(menuKey, `/outlets/${outletId}/menu`, {
-        params: tableId ? { tableId } : undefined,
-      });
+      const [result, statusRes] = await Promise.all([
+        cachedGet<any[]>(menuKey, `/outlets/${outletId}/menu`, {
+          params: tableId ? { tableId } : undefined,
+        }),
+        // Open-status must NOT be cached — if the outlet opened at 9
+        // and the customer returns at 9:35, the stale "closed" from
+        // an earlier visit would block ordering. Bypass any SW cache.
+        api.get(`/outlets/${outletId}/open-status`, {
+          headers: { 'Cache-Control': 'no-cache' },
+        }).catch(() => null),
+      ]);
       if (!result.fromCache) {
         setMenu(result.data);
         setMenuFromCache(false);
         setMenuCachedAt(result.cachedAt);
       } else if (!menuFromCache) {
-        // Network failed, cache fell back; reflect that in the banner.
         setMenuFromCache(true);
         setMenuCachedAt(result.cachedAt);
+      }
+      if (statusRes?.data?.data) {
+        setOpenStatus(statusRes.data.data);
       }
     } catch { /* silent — banner remains in its current state */ }
   });

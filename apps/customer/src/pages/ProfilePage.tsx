@@ -9,6 +9,7 @@ import {
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 import api from '../services/api';
 import { playRingtone, isVibrateEnabled, setVibrateEnabled } from '../utils/ringtones';
+import { invalidateAllCache } from '../utils/cachedGet';
 
 const UPI_APPS = [
   { id: 'GPAY',    name: 'Google Pay' },
@@ -143,6 +144,10 @@ export default function ProfilePage() {
       await api.patch('/users/me/language', { preferredLanguage: code });
       localStorage.setItem('preferredLanguage', code);
       await i18n.changeLanguage(code);
+      // Menu/cluster responses are cached per-language. Drop everything
+      // so the next visit fetches fresh in the new language; otherwise
+      // the user sees the previous-language menu until the 1h TTL expires.
+      invalidateAllCache();
       toast.success('Language updated');
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to update language');
