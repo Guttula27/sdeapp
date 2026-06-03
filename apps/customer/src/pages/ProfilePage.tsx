@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 import api from '../services/api';
-import { playRingtone, isVibrateEnabled, setVibrateEnabled } from '../utils/ringtones';
+import { playRingtone, isVibrateEnabled, setVibrateEnabled, vibrationSupported, isIOS } from '../utils/ringtones';
 import { invalidateAllCache } from '../utils/cachedGet';
 
 const UPI_APPS = [
@@ -127,7 +127,8 @@ export default function ProfilePage() {
   // hardware support and user expectations) so it lives in localStorage,
   // not on the user record.
   const [vibrate, setVibrate] = useState<boolean>(isVibrateEnabled());
-  const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+  const canVibrate = vibrationSupported();
+  const onIOS = isIOS();
   const [pref, setPref] = useState<string>(user?.preferredUpiApp || 'GPAY');
   const [language, setLanguage] = useState<string>((user as any)?.preferredLanguage || 'en');
   const [languages, setLanguages] = useState<{ code: string; name: string; nativeName: string }[]>([]);
@@ -222,6 +223,31 @@ export default function ProfilePage() {
     const next = !vibrate;
     setVibrate(next);
     setVibrateEnabled(next);
+  };
+
+  // Direct-from-user-gesture vibration test. Helps the customer
+  // confirm hardware works — many "vibration not working" reports
+  // are really "Socket-driven calls are silently blocked because
+  // there hasn't been a user gesture yet". This button removes that
+  // doubt: if it doesn't buzz here, OS or hardware is the problem.
+  const testVibration = () => {
+    if (!canVibrate) {
+      toast.error(onIOS
+        ? 'iOS does not support web vibration'
+        : 'This device or browser does not support vibration');
+      return;
+    }
+    try {
+      // A noticeable pattern: 200ms on, 100ms off, 200ms on.
+      const ok = navigator.vibrate([200, 100, 200]);
+      if (ok === false) {
+        toast.error('Vibration was blocked — check OS sound/vibration settings');
+      } else {
+        toast.success('Buzz! Did you feel it?');
+      }
+    } catch {
+      toast.error('Vibration failed to fire');
+    }
   };
 
   return (
@@ -329,26 +355,45 @@ export default function ProfilePage() {
               <span className="text-sm text-slate-700">Vibrate on alert</span>
             </div>
             {canVibrate ? (
-              <button
-                type="button"
-                onClick={toggleVibrate}
-                aria-pressed={vibrate}
-                className={
-                  'relative inline-flex h-6 w-11 items-center rounded-full transition-colors ' +
-                  (vibrate ? 'bg-brand-500' : 'bg-slate-300')
-                }
-              >
-                <span
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={testVibration}
+                  className="text-[10px] font-bold text-brand-600 px-2 py-1 rounded-md hover:bg-brand-50"
+                  title="Test vibration now"
+                >
+                  Test
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleVibrate}
+                  aria-pressed={vibrate}
                   className={
-                    'inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ' +
-                    (vibrate ? 'translate-x-5' : 'translate-x-1')
+                    'relative inline-flex h-6 w-11 items-center rounded-full transition-colors ' +
+                    (vibrate ? 'bg-brand-500' : 'bg-slate-300')
                   }
-                />
-              </button>
+                >
+                  <span
+                    className={
+                      'inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ' +
+                      (vibrate ? 'translate-x-5' : 'translate-x-1')
+                    }
+                  />
+                </button>
+              </div>
             ) : (
-              <span className="text-[10px] text-slate-400">Not supported on this device</span>
+              <span className="text-[10px] text-slate-400">
+                {onIOS ? 'iOS does not support web vibration' : 'Not supported on this device'}
+              </span>
             )}
           </div>
+          {canVibrate && (
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              If you don't feel the test buzz: check that your phone isn't on silent /
+              Do Not Disturb / power-saving mode, and that vibration is enabled in
+              the system settings.
+            </p>
+          )}
         </div>
 
         {/* Language */}

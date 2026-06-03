@@ -51,6 +51,19 @@ export function setVibrateEnabled(on: boolean): void {
 let ctx: AudioContext | null = null;
 let unlocked = false;
 
+// iOS Safari (including installed PWAs on iOS) does not implement
+// navigator.vibrate at all. We surface this explicitly so the toggle can
+// say "iOS doesn't support vibration" instead of just "Not supported".
+export function isIOS(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1);
+}
+
+export function vibrationSupported(): boolean {
+  return typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+}
+
 function getCtx(): AudioContext | null {
   if (!ctx) {
     try {
@@ -144,4 +157,29 @@ export function playRingtone(kind: string | null | undefined, opts: PlayOptions 
   } catch {
     return false;
   }
+}
+
+/**
+ * Loud-alert loop. Plays the ringtone + vibrates on a recurring interval
+ * and returns a stop() handle. Use for ORDER_READY / PICKUP_READY where
+ * the customer needs to physically come pick up the order — the noise
+ * stops only when they tap acknowledge.
+ *
+ * Intervals around 2.5–3s feel urgent without being unbearable. The
+ * first beat fires immediately so there's no awkward initial silence.
+ */
+export function startLoudAlert(kind: string | null | undefined, opts: PlayOptions = {}): { stop: () => void } {
+  const fire = () => playRingtone(kind, { volume: opts.volume ?? 100, vibrate: opts.vibrate });
+  fire();
+  const id = setInterval(fire, 2800);
+  return {
+    stop() {
+      clearInterval(id);
+      // Cancel any in-flight vibration so the device doesn't keep
+      // buzzing after the user dismisses.
+      if (vibrationSupported()) {
+        try { navigator.vibrate(0); } catch { /* ignore */ }
+      }
+    },
+  };
 }
