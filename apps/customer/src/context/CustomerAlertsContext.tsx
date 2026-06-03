@@ -3,6 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import toast from 'react-hot-toast';
 import { useCustomerAuth } from './CustomerAuthContext';
 import api from '../services/api';
+import { playRingtone, setupAudioUnlock, isVibrateEnabled } from '../utils/ringtones';
 
 export type CustomerAlert = {
   id: string;
@@ -32,41 +33,8 @@ const CustomerAlertsContext = createContext<Ctx>({
   markRead: () => {}, markAllRead: () => {}, refresh: () => {},
 });
 
-// Synthesize a short ring with WebAudio so we don't need to ship an mp3.
-// Different "ringtone" keys pick different pitch envelopes, mirroring the
-// alertRingtone choice on the user record.
-function playRing(kind?: string | null) {
-  try {
-    const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
-    if (!Ctx) return;
-    const ac = new Ctx();
-    const now = ac.currentTime;
-
-    const tones: Record<string, { freq: number; dur: number }[]> = {
-      chime: [{ freq: 880, dur: 0.18 }, { freq: 1320, dur: 0.22 }],
-      bell:  [{ freq: 1568, dur: 0.4 }],
-      ping:  [{ freq: 2093, dur: 0.12 }, { freq: 2093, dur: 0.12 }],
-      buzz:  [{ freq: 200, dur: 0.25 }, { freq: 200, dur: 0.25 }],
-    };
-    const seq = tones[kind || 'chime'] || tones.chime;
-
-    let t = now;
-    seq.forEach(({ freq, dur }) => {
-      const osc = ac.createOscillator();
-      const gain = ac.createGain();
-      osc.frequency.value = freq;
-      osc.type = 'sine';
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.35, t + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      osc.connect(gain).connect(ac.destination);
-      osc.start(t);
-      osc.stop(t + dur + 0.02);
-      t += dur + 0.06;
-    });
-    setTimeout(() => ac.close().catch(() => {}), (t - now + 0.5) * 1000);
-  } catch { /* audio unsupported, silent fallback */ }
-}
+// Ringtone playback moved to utils/ringtones.ts — shared with the Profile
+// preview button so what users hear in settings matches what plays live.
 
 export function CustomerAlertsProvider({ children }: { children: ReactNode }) {
   const { user, token, isLoggedIn } = useCustomerAuth();
@@ -88,6 +56,11 @@ export function CustomerAlertsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // Prime the WebAudio context on first user gesture so Socket-triggered
+  // alerts can actually produce sound (browsers block audio that isn't
+  // user-initiated). Runs once per app mount.
+  useEffect(() => { setupAudioUnlock(); }, []);
+
   // Socket: join customer room, ring + toast on incoming alerts.
   useEffect(() => {
     if (!isLoggedIn || !user?.id || !token) return;
@@ -99,7 +72,12 @@ export function CustomerAlertsProvider({ children }: { children: ReactNode }) {
     socket.on('customerAlert', (alert: CustomerAlert) => {
       setAlerts((prev) => [alert, ...prev.filter((a) => a.id !== alert.id)].slice(0, 50));
       setUnreadCount((c) => c + 1);
-      playRing(alert.ringtone);
+      // Use the user's saved volume + per-device vibrate pref so live
+      // alerts behave the same as the preview.
+      playRingtone(alert.ringtone, {
+        volume: (user as any)?.alertVolume ?? 70,
+        vibrate: isVibrateEnabled(),
+      });
       // The WhatsApp-not-configured fallback is exactly this toast — the body
       // is the rendered message, and it surfaces under the in-app alerts feed.
       toast(

@@ -4,10 +4,11 @@ import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
   LogOut, User, Phone, Mail, Camera, X as XIcon,
-  Volume2, Bell, QrCode, CreditCard, Save, Languages,
+  Volume2, Bell, QrCode, CreditCard, Save, Languages, Vibrate,
 } from 'lucide-react';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 import api from '../services/api';
+import { playRingtone, isVibrateEnabled, setVibrateEnabled } from '../utils/ringtones';
 
 const UPI_APPS = [
   { id: 'GPAY',    name: 'Google Pay' },
@@ -17,11 +18,16 @@ const UPI_APPS = [
   { id: 'OTHER',   name: 'Other UPI' },
 ];
 
+// Keep this list in sync with the catalogue in utils/ringtones.ts —
+// every id here must exist there or preview falls back to "chime".
 const RINGTONES = [
-  { id: 'chime',  name: 'Chime' },
-  { id: 'ding',   name: 'Ding' },
-  { id: 'pop',    name: 'Pop' },
-  { id: 'soft',   name: 'Soft' },
+  { id: 'chime', name: 'Chime' },
+  { id: 'bell',  name: 'Bell' },
+  { id: 'ping',  name: 'Ping' },
+  { id: 'buzz',  name: 'Buzz' },
+  { id: 'ding',  name: 'Ding' },
+  { id: 'pop',   name: 'Pop' },
+  { id: 'soft',  name: 'Soft' },
 ];
 
 async function fileToDataUrl(file: File, maxSize = 512, quality = 0.85): Promise<string> {
@@ -116,6 +122,11 @@ export default function ProfilePage() {
   const [profileImageUrl, setProfileImageUrl] = useState<string | null>((user as any)?.profileImageUrl || null);
   const [ringtone, setRingtone] = useState((user as any)?.alertRingtone || 'chime');
   const [volume, setVolume] = useState<number>((user as any)?.alertVolume ?? 70);
+  // Vibration is a per-device preference (different devices have different
+  // hardware support and user expectations) so it lives in localStorage,
+  // not on the user record.
+  const [vibrate, setVibrate] = useState<boolean>(isVibrateEnabled());
+  const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
   const [pref, setPref] = useState<string>(user?.preferredUpiApp || 'GPAY');
   const [language, setLanguage] = useState<string>((user as any)?.preferredLanguage || 'en');
   const [languages, setLanguages] = useState<{ code: string; name: string; nativeName: string }[]>([]);
@@ -196,21 +207,16 @@ export default function ProfilePage() {
     }
   };
 
+  // Preview uses the shared ringtone util so the user hears exactly what
+  // a real alert will play, including their volume + vibrate preference.
   const playPreview = () => {
-    // Simple beep with WebAudio so we don't need to ship audio files
-    try {
-      const Audio: any = (window as any).AudioContext || (window as any).webkitAudioContext;
-      const ctx = new Audio();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const freq = ringtone === 'chime' ? 880 : ringtone === 'ding' ? 1200 : ringtone === 'pop' ? 600 : 440;
-      osc.frequency.value = freq;
-      osc.type = ringtone === 'soft' ? 'sine' : 'triangle';
-      gain.gain.value = (volume / 100) * 0.25;
-      osc.connect(gain).connect(ctx.destination);
-      osc.start();
-      setTimeout(() => { osc.stop(); ctx.close(); }, 250);
-    } catch { /* silent */ }
+    playRingtone(ringtone, { volume, vibrate });
+  };
+
+  const toggleVibrate = () => {
+    const next = !vibrate;
+    setVibrate(next);
+    setVibrateEnabled(next);
   };
 
   return (
@@ -309,6 +315,35 @@ export default function ProfilePage() {
               className="w-full accent-brand-500"
             />
           </Field>
+          {/* Vibration toggle — only meaningful when the device supports it.
+              On desktop / non-vibrating hardware navigator.vibrate is missing,
+              so we surface a disabled hint instead of a non-functioning toggle. */}
+          <div className="flex items-center justify-between pt-1">
+            <div className="flex items-center gap-2">
+              <Vibrate size={14} className="text-slate-400" />
+              <span className="text-sm text-slate-700">Vibrate on alert</span>
+            </div>
+            {canVibrate ? (
+              <button
+                type="button"
+                onClick={toggleVibrate}
+                aria-pressed={vibrate}
+                className={
+                  'relative inline-flex h-6 w-11 items-center rounded-full transition-colors ' +
+                  (vibrate ? 'bg-brand-500' : 'bg-slate-300')
+                }
+              >
+                <span
+                  className={
+                    'inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ' +
+                    (vibrate ? 'translate-x-5' : 'translate-x-1')
+                  }
+                />
+              </button>
+            ) : (
+              <span className="text-[10px] text-slate-400">Not supported on this device</span>
+            )}
+          </div>
         </div>
 
         {/* Language */}
