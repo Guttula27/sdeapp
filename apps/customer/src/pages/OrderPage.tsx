@@ -680,7 +680,7 @@ export default function OrderPage() {
                   qty={cart.filter(c => c.itemId === item.id).reduce((s, l) => s + l.quantity, 0)}
                   disabled={outletClosed || !item.isAvailable}
                   disabledReason={outletClosed ? 'Outlet closed' : !item.isAvailable ? 'Currently not available' : null}
-                  onOpen={() => navigate(`/order/item/${item.id}?outlet=${outletId}`, { state: { item, outletId } })}
+                  onOpen={() => setDetailItem(item)}
                   onQuickAdd={(e) => {
                     e.stopPropagation();
                     // Customer-choice bundles + variant items both need a
@@ -767,7 +767,7 @@ export default function OrderPage() {
                 qty={cart.filter(c => c.itemId === item.id).reduce((s, l) => s + l.quantity, 0)}
                 disabled={outletClosed || !item.isAvailable}
                 disabledReason={outletClosed ? 'Outlet closed' : !item.isAvailable ? 'Currently not available' : null}
-                onOpen={() => navigate(`/order/item/${item.id}?outlet=${outletId}`, { state: { item, outletId } })}
+                onOpen={() => setDetailItem(item)}
                 onQuickAdd={(e) => {
                   e.stopPropagation();
                   const needsPicker = item.variants?.length
