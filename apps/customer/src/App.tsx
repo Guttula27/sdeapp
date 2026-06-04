@@ -14,6 +14,7 @@ import ReceiptPage from './pages/ReceiptPage';
 import DashboardPage from './pages/DashboardPage';
 import OffersPage from './pages/OffersPage';
 import AlertsPage from './pages/AlertsPage';
+import ScanResolverPage from './pages/ScanResolverPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoggedIn } = useCustomerAuth();
@@ -47,6 +48,20 @@ export default function App() {
           <Route path="/cluster/:publicCode" element={<ClusterPage />} />
           {/* /cluster/:publicCode/item/:itemId retired — same sheet pattern in ClusterPage. */}
           <Route path="/cluster/:publicCode/item/:itemId" element={<Navigate to=".." replace />} />
+
+          {/* ── /s/* scan handlers ────────────────────────────────────
+              QR codes encode short /s/<kind>/<id> URLs; the resolver
+              page below figures out whether the target is in a
+              cluster, whether the user is signed in, and what page
+              to navigate to. Order matters — more specific routes
+              must come before less specific ones (table is unique
+              prefix). */}
+          <Route path="/s/table/:tableId" element={<ScanResolverPage />} />
+          <Route path="/s/cluster/:publicCode/outlet/:outletId/item/:itemId" element={<ScanResolverPage />} />
+          <Route path="/s/cluster/:publicCode/outlet/:outletId" element={<ScanResolverPage />} />
+          <Route path="/s/cluster/:publicCode" element={<ScanResolverPage />} />
+          <Route path="/s/outlet/:outletId/item/:itemId" element={<ScanResolverPage />} />
+          <Route path="/s/outlet/:outletId" element={<ScanResolverPage />} />
           <Route path="/pay"    element={<ProtectedRoute><PaymentPage /></ProtectedRoute>} />
           <Route path="/receipt/:orderId" element={<ProtectedRoute><ReceiptPage /></ProtectedRoute>} />
           <Route path="/track/:orderId" element={<OrderTrackingPage />} />

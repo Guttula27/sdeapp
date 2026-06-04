@@ -65,7 +65,18 @@ export default function AuthPage() {
       const { user, accessToken } = res.data.data;
       login(user, accessToken);
       toast.success(`Welcome${user.name ? `, ${user.name.split(' ')[0]}` : ''}!`);
-      navigate(from, { replace: true });
+      // Prefer the pending-scan target if the customer was sent here
+      // by a QR scan (ScanResolverPage stashes it before redirecting).
+      // Falls back to location.state.from for non-scan auth flows.
+      let dest = from;
+      try {
+        const pending = localStorage.getItem('paynpik-pending-scan');
+        if (pending) {
+          localStorage.removeItem('paynpik-pending-scan');
+          dest = pending;
+        }
+      } catch { /* ignore — private mode etc. */ }
+      navigate(dest, { replace: true });
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Invalid OTP');
       setOtp(Array(OTP_LENGTH).fill(''));

@@ -31,6 +31,22 @@ export class QrController {
     return this.service.validateQR(code);
   }
 
+  // Public scan resolvers — the SPA's /s/table/:id and /s/outlet/:id
+  // routes hit these the moment a QR scan lands (before or after
+  // login). The returned cluster context tells the SPA whether to
+  // route to /cluster/... or /order....
+  @Public()
+  @Get('scan/table/:tableId')
+  scanTable(@Param('tableId') tableId: string) {
+    return this.service.resolveTableScan(tableId);
+  }
+
+  @Public()
+  @Get('scan/outlet/:outletId')
+  scanOutlet(@Param('outletId') outletId: string) {
+    return this.service.resolveOutletScan(outletId);
+  }
+
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @Get('outlet/:outletId')
