@@ -1,0 +1,200 @@
+# VEZEOR Android APK build pipeline.
+#
+# Builds the customer wrapper APK (currently: staging only — duplicate
+# the matrix entry to add production once you have a domain).
+#
+# Triggers:
+#   - push of tag matching `mobile-v*` → release build → attached to a
+#     GitHub Release of the same name
+#   - manual dispatch from the Actions tab → choose debug or release
+#
+# Required GitHub repository secrets (Settings → Secrets and variables
+# → Actions). Without these, only debug builds work:
+#
+#   ANDROID_KEYSTORE_BASE64   — base64 of your release keystore file
+#                               (generate with `base64 -i path/to/file.keystore`)
+#   ANDROID_KEYSTORE_PASSWORD — keystore password set when you ran keytool
+#   ANDROID_KEY_ALIAS         — the key alias (e.g. "vezeor")
+#   ANDROID_KEY_PASSWORD      — the key password
+
+name: Android APK
+
+on:
+  push:
+    tags:
+      - 'mobile-v*'
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'debug (unsigned, for testing) or release (signed)'
+        required: true
+        default: 'debug'
+        type: choice
+        options: [debug, release]
+
+permissions:
+  contents: write   # for attaching APKs to GitHub Releases on tag push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Add `production` here when you have env/production.json:
+        # env_name: [staging, production]
+        env_name: [staging]
+    env:
+      APP_ENV: ${{ matrix.env_name }}
+      # Tag pushes default to release; manual dispatch honours the input.
+      BUILD_TYPE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_type || 'release' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+
+      - name: Install Capacitor + plugins
+        working-directory: mobile/android
+        run: npm install
+
+      - name: Generate native Android project (env=${{ matrix.env_name }})
+        working-directory: mobile/android
+        run: |
+          npx cap add android || echo "android/ already exists, continuing"
+          npx cap sync android
+
+      - name: Decode keystore (release builds only)
+        if: env.BUILD_TYPE == 'release'
+        working-directory: mobile/android/android
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "::error::Release build requested but ANDROID_KEYSTORE_BASE64 secret is missing. Add the signing secrets or pick build_type=debug."
+            exit 1
+          fi
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > release.keystore
+          cat > keystore.properties <<EOF
+          storeFile=$(pwd)/release.keystore
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      - name: Patch app/build.gradle with signing block (release only, idempotent)
+        if: env.BUILD_TYPE == 'release'
+        working-directory: mobile/android/android/app
+        shell: bash
+        run: |
+          if grep -q "release.keystore" build.gradle; then
+            echo "Already patched"; exit 0;
+          fi
+          python3 <<'PY'
+          import re, pathlib
+          p = pathlib.Path("build.gradle")
+          src = p.read_text()
+          # Load keystore.properties at the top of the file.
+          load_block = '''
+          def keystorePropertiesFile = rootProject.file("keystore.properties")
+          def keystoreProperties = new Properties()
+          if (keystorePropertiesFile.exists()) {
+              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+          }
+          '''
+          if "keystorePropertiesFile" not in src:
+              src = re.sub(r'(apply plugin: ["\']com\.android\.application["\'])',
+                           r'\1\n' + load_block, src, count=1)
+          # Insert signingConfigs.release inside the android {} block.
+          if "signingConfigs.release" not in src and "signingConfigs {" not in src:
+              signing = '''
+              signingConfigs {
+                  release {
+                      if (keystorePropertiesFile.exists()) {
+                          storeFile file(keystoreProperties['storeFile'])
+                          storePassword keystoreProperties['storePassword']
+                          keyAlias keystoreProperties['keyAlias']
+                          keyPassword keystoreProperties['keyPassword']
+                      }
+                  }
+              }
+          '''
+              src = re.sub(r'(android\s*\{)', r'\1' + signing, src, count=1)
+          # Make the `release` build type use the signing config.
+          src = re.sub(r'(buildTypes\s*\{[^}]*?release\s*\{)',
+                       r'\1\n            signingConfig signingConfigs.release',
+                       src, count=1, flags=re.DOTALL)
+          p.write_text(src)
+          PY
+
+      - name: Build APK
+        working-directory: mobile/android/android
+        shell: bash
+        run: |
+          if [ "$BUILD_TYPE" = "release" ]; then
+            ./gradlew assembleRelease
+          else
+            ./gradlew assembleDebug
+          fi
+
+      - name: Locate and rename APK
+        id: artifact
+        working-directory: mobile/android/android
+        shell: bash
+        run: |
+          APK_PATH=$(find app/build/outputs/apk -name '*.apk' | head -1)
+          if [ -z "$APK_PATH" ]; then echo "::error::No APK found"; exit 1; fi
+          TAG="${{ github.ref_name }}"
+          if [ "$TAG" = "main" ] || [ "$TAG" = "master" ]; then
+            TAG="manual-$(date -u +%Y%m%d-%H%M%S)"
+          fi
+          OUT="vezeor-${{ matrix.env_name }}-${TAG}-${BUILD_TYPE}.apk"
+          cp "$APK_PATH" "$OUT"
+          echo "apk_path=mobile/android/android/$OUT" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$OUT" >> "$GITHUB_OUTPUT"
+          ls -lh "$OUT"
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.apk_name }}
+          path: ${{ steps.artifact.outputs.apk_path }}
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    # Attach APKs to a GitHub Release only when a tag triggered the run.
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/mobile-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all APK artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: apks
+          merge-multiple: true
+
+      - name: Create / update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: apks/*.apk

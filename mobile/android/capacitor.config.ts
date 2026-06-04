@@ -1,59 +1,60 @@
 import type { CapacitorConfig } from '@capacitor/cli';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 
 /**
- * Capacitor config for the PayNPik customer Android wrapper.
+ * Multi-environment Capacitor config. The build selects an env file
+ * via APP_ENV (default: staging). Each env file has its own appId
+ * + name + server URL, so multiple builds can coexist on one device.
  *
- * Strategy: the APK is a thin shell that loads the deployed PWA at
- * its public URL. No JS is bundled into the APK; web deploys roll
- * out instantly to installed users, no app-store update needed.
+ *   APP_ENV=staging    npm run android:sync    # env/staging.json
  *
- * If you ever want an offline-first APK that ships the built JS,
- * remove the `server.url` block and instead set `webDir` to the
- * built `apps/customer/dist/` path, then run `npx cap copy` before
- * each build.
+ * To add a production target later: copy env/staging.json to
+ * env/production.json, change appId / appName / serverUrl, then
+ * build with APP_ENV=production. No code change needed.
+ *
+ * The APK ships zero JS — server.url points at the live PWA host
+ * so web deploys reach installed users without an app-store update.
  */
-const config: CapacitorConfig = {
-  // Reverse-DNS app identifier. Must be unique across the Play
-  // Store if you ever publish. Changing it later breaks updates
-  // for existing installs — set it once and leave it.
-  appId: 'cloud.vezeor.paynpik.customer',
-  appName: 'PayNPik',
 
-  // webDir is required even when using server.url — Capacitor still
-  // writes a fallback index.html here so the WebView has something
-  // to load if network is unreachable on first launch. Pointing at
-  // a tiny placeholder keeps the APK small.
+type EnvConfig = {
+  appId: string;
+  appName: string;
+  serverUrl: string;
+  allowNavigation: string[];
+};
+
+const APP_ENV = (process.env.APP_ENV || 'staging').toLowerCase();
+const envPath = resolve(__dirname, 'env', `${APP_ENV}.json`);
+let envCfg: EnvConfig;
+try {
+  envCfg = JSON.parse(readFileSync(envPath, 'utf8'));
+} catch (e) {
+  throw new Error(
+    `Capacitor build: could not load env config at ${envPath}. ` +
+    `Set APP_ENV to one of the file names under env/ (e.g. APP_ENV=staging). ` +
+    `Original error: ${(e as Error).message}`,
+  );
+}
+
+console.log(`[capacitor] APP_ENV=${APP_ENV} → ${envCfg.appName} → ${envCfg.serverUrl}`);
+
+const config: CapacitorConfig = {
+  appId: envCfg.appId,
+  appName: envCfg.appName,
   webDir: 'src',
 
-  // Load the production PWA directly. Subsequent navigation, service
-  // worker registration, and caching all happen inside the WebView
-  // exactly as on Chrome.
   server: {
-    url: 'https://order.vezeor.cloud',
-    // androidScheme controls how local files (when webDir is used)
-    // and Capacitor plugin bridges identify themselves. Keep https
-    // so mixed-content rules match the production PWA.
+    url: envCfg.serverUrl,
     androidScheme: 'https',
-    // Domains that are allowed to navigate the WebView. The PWA also
-    // calls api.vezeor.cloud — listed here so external links to
-    // checkout / receipts open in-app rather than bouncing to Chrome.
-    allowNavigation: [
-      'order.vezeor.cloud',
-      'api.vezeor.cloud',
-      // Razorpay checkout SDK iframe origins. Without these,
-      // the payment flow would launch Chrome instead of staying
-      // in-app, breaking the back-to-app return.
-      '*.razorpay.com',
-      'api.razorpay.com',
-    ],
-    // cleartext: false — disallow plain HTTP (matches PWA security).
+    allowNavigation: envCfg.allowNavigation,
     cleartext: false,
   },
 
   plugins: {
     SplashScreen: {
       launchShowDuration: 1500,
-      backgroundColor: '#f97316', // brand orange
+      backgroundColor: '#f97316',
       androidSplashResourceName: 'splash',
       androidScaleType: 'CENTER_CROP',
       showSpinner: false,
@@ -65,12 +66,8 @@ const config: CapacitorConfig = {
   },
 
   android: {
-    // Allow back button to close the activity when there's no
-    // browser history left, instead of becoming a no-op.
     backgroundColor: '#ffffff',
-    // Override the default WebView user agent so analytics can
-    // distinguish APK traffic from chrome.
-    appendUserAgent: 'PayNPikAndroid/1.0',
+    appendUserAgent: `VezeorAndroid/${APP_ENV}-1.0`,
   },
 };
 

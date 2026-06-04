@@ -1,0 +1,11 @@
+{
+  "appId": "cloud.vezeor.paynpik.customer.staging",
+  "appName": "VEZEOR",
+  "serverUrl": "https://order.vezeor.cloud",
+  "allowNavigation": [
+    "order.vezeor.cloud",
+    "api.vezeor.cloud",
+    "*.razorpay.com",
+    "api.razorpay.com"
+  ]
+}

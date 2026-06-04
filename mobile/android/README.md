@@ -1,21 +1,39 @@
-# PayNPik Customer — Android wrapper
+# VEZEOR Customer — Android wrapper
 
-A thin native Android shell that loads `https://order.vezeor.cloud`
-as a Capacitor WebView. The app behaves exactly like the PWA — same
-codebase, same backend, same look — but with proper APK packaging so
-it can be sideloaded, distributed internally, or published to the
-Play Store.
+A thin native Android shell that loads the deployed PWA in a Capacitor
+WebView. The app behaves exactly like the PWA — same codebase, same
+backend, same look — but installable as an APK.
 
-Why this approach (not TWA, not a bundled APK):
+## Environments
+
+The wrapper is **env-driven**. Each environment lives in
+`env/<name>.json` and picks its own app id, app name, and server URL.
+This lets staging and (future) production APKs coexist on a single
+device without colliding.
+
+| Env | App name | App ID | Loads |
+|------|----------|--------|-------|
+| `staging` (default) | `VEZEOR` | `cloud.vezeor.paynpik.customer.staging` | `https://order.vezeor.cloud` |
+| `production` (not yet created) | — | — | — |
+
+When you're ready to ship production:
+
+1. `cp env/staging.json env/production.json`
+2. Edit `env/production.json` — change `appId`, `appName`, `serverUrl`,
+   and the navigation allowlist to your production domain.
+3. In `.github/workflows/android-release.yml`, change the matrix
+   `env_name` line to `env_name: [staging, production]`.
+4. Push a tag (`git tag mobile-v1.0.0 && git push --tags`) — the CI
+   builds both APKs and attaches them to a GitHub Release.
+
+Why this architecture (not TWA, not a bundled APK):
 
 - **Web updates roll out automatically.** The APK contains no JS;
   every launch fetches the latest bundle from the deploy. No app-store
   resubmission for a frontend change.
-- **Full native APIs.** Vibration / audio / camera / clipboard all
-  work through Capacitor plugins — none of the WebView quirks you get
-  with a bare `WebView` activity.
-- **Single signing key.** Unlike TWA you don't have to verify a
-  Digital Asset Links file on the web origin.
+- **Full native APIs.** Vibration / audio / camera all work through
+  Capacitor plugins.
+- **No Digital Asset Links** required (unlike TWA).
 
 ---
 
@@ -48,22 +66,27 @@ After installing Android Studio:
 
 ---
 
-## Build the APK (first time)
-
-From the **repo root**:
+## Build the APK locally (first time)
 
 ```bash
 cd mobile/android
 
-# 1. Install the Capacitor + plugin deps
+# 1. Install Capacitor + plugin deps
 npm install
 
-# 2. Generate the native Android project (creates the android/ folder).
-#    This runs once; afterwards `npx cap sync` keeps it in lockstep.
-npx cap add android
+# 2. Generate the native Android project (creates android/ folder).
+#    Run once; afterwards `npx cap sync` keeps it in lockstep.
+APP_ENV=staging npx cap add android
 
-# 3. Sync the Capacitor config + plugins into the Android project.
-npx cap sync android
+# 3. Sync the env-driven Capacitor config + plugins into the project.
+APP_ENV=staging npx cap sync android
+```
+
+Or use the package-script shortcuts:
+
+```bash
+npm run build:staging:debug    # unsigned APK, fine for sideload tests
+npm run build:staging:release  # signed APK (needs keystore.properties)
 ```
 
 At this point you'll have `mobile/android/android/` — a fully native
@@ -119,19 +142,19 @@ The release APK must be signed before publishing or distributing.
    it means you can never update the app):
 
    ```bash
-   keytool -genkey -v -keystore paynpik-customer.keystore \
-     -alias paynpik -keyalg RSA -keysize 2048 -validity 10000
+   keytool -genkey -v -keystore vezeor-customer.keystore \
+     -alias vezeor -keyalg RSA -keysize 2048 -validity 10000
    ```
 
-   Move the resulting `paynpik-customer.keystore` somewhere safe (NOT
+   Move the resulting `vezeor-customer.keystore` somewhere safe (NOT
    into git). Note down the passwords you set.
 
 2. Create `mobile/android/android/keystore.properties` (gitignored):
 
    ```properties
-   storeFile=/absolute/path/to/paynpik-customer.keystore
+   storeFile=/absolute/path/to/vezeor-customer.keystore
    storePassword=your-keystore-password
-   keyAlias=paynpik
+   keyAlias=vezeor
    keyPassword=your-key-password
    ```
 
@@ -231,7 +254,7 @@ has a previous release — increment `android.defaultConfig.versionCode`
 in `mobile/android/android/app/build.gradle`.
 
 **WebView shows blank / "net::ERR_CACHE_MISS"** — pull-to-refresh OR
-clear the WebView cache (`Settings → Apps → PayNPik → Storage → Clear
+clear the WebView cache (`Settings → Apps → VEZEOR → Storage → Clear
 cache`). The PWA's service worker should self-heal on the next launch.
 
 **Vibration doesn't fire** — check `VIBRATE` is in the manifest AND the
