@@ -107,8 +107,15 @@ jobs:
               "android.permission.MODIFY_AUDIO_SETTINGS",
               "android.permission.VIBRATE",
           ]
+          # Camera is mandatory — the app's primary entry point is the
+          # table QR scan, so a device without a rear camera literally
+          # can't use it. required="true" makes Play Store filter the
+          # listing AND blocks sideload installs on camera-less devices
+          # so users don't end up with a useless installed app.
+          # Autofocus stays optional — older phones without AF can still
+          # frame the QR code by holding the device farther away.
           want_features = [
-              ("android.hardware.camera", "false"),
+              ("android.hardware.camera", "true"),
               ("android.hardware.camera.autofocus", "false"),
           ]
           inject = []
@@ -128,12 +135,10 @@ jobs:
           print(p.read_text())
           PY
 
-      - name: Override MainActivity to request CAMERA + RECORD_AUDIO at launch
+      - name: Override MainActivity — make CAMERA mandatory
         working-directory: mobile/android/android/app/src/main/java
         shell: bash
         run: |
-          # Capacitor placed MainActivity.java under the package path
-          # derived from appId. Find it dynamically.
           MAIN=$(find . -name MainActivity.java | head -1)
           if [ -z "$MAIN" ]; then
             echo "::error::MainActivity.java not found"; exit 1;
@@ -144,8 +149,12 @@ jobs:
           package $PKG;
 
           import android.Manifest;
+          import android.app.AlertDialog;
+          import android.content.Intent;
           import android.content.pm.PackageManager;
+          import android.net.Uri;
           import android.os.Bundle;
+          import android.provider.Settings;
 
           import androidx.core.app.ActivityCompat;
           import androidx.core.content.ContextCompat;
@@ -155,35 +164,92 @@ jobs:
           /**
            * VEZEOR customer wrapper entry point.
            *
-           * On first launch we proactively request CAMERA + RECORD_AUDIO
-           * permissions so the embedded PWA's getUserMedia call (used by
-           * html5-qrcode for table QR scanning) can succeed without
-           * the user having to dig into Settings -> Permissions first.
+           * Camera is treated as mandatory because the entire customer
+           * journey starts with scanning a table QR code. If permission
+           * is denied the app cannot meaningfully function, so we show
+           * a blocking dialog that lets the user either grant via
+           * Settings or exit. We re-check on resume so a permission
+           * change made in Settings immediately unblocks the app.
            */
           public class MainActivity extends BridgeActivity {
-              private static final int REQ_RUNTIME_PERMS = 4242;
+              private static final int REQ_PERMS = 4242;
+              private AlertDialog blockingDialog;
 
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  String[] perms = new String[] {
+                  ensureCameraOrBlock();
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  // User may have toggled permission ON in Settings while
+                  // the blocking dialog was visible — re-evaluate.
+                  if (hasCameraPermission()) {
+                      dismissBlockingDialog();
+                  } else {
+                      ensureCameraOrBlock();
+                  }
+              }
+
+              private boolean hasCameraPermission() {
+                  return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                          == PackageManager.PERMISSION_GRANTED;
+              }
+
+              private void ensureCameraOrBlock() {
+                  if (hasCameraPermission()) {
+                      dismissBlockingDialog();
+                      return;
+                  }
+                  ActivityCompat.requestPermissions(this, new String[] {
                       Manifest.permission.CAMERA,
                       Manifest.permission.RECORD_AUDIO,
-                  };
-                  boolean needRequest = false;
-                  for (String p : perms) {
-                      if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
-                          needRequest = true; break;
-                      }
+                  }, REQ_PERMS);
+              }
+
+              @Override
+              public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+                  if (requestCode != REQ_PERMS) return;
+                  if (!hasCameraPermission()) {
+                      showBlockingDialog();
+                  } else {
+                      dismissBlockingDialog();
                   }
-                  if (needRequest) {
-                      ActivityCompat.requestPermissions(this, perms, REQ_RUNTIME_PERMS);
+              }
+
+              private void showBlockingDialog() {
+                  if (blockingDialog != null && blockingDialog.isShowing()) return;
+                  blockingDialog = new AlertDialog.Builder(this)
+                      .setTitle("Camera access required")
+                      .setMessage(
+                          "VEZEOR needs camera access to scan table QR codes. "
+                          + "Without it the app cannot function. Please enable "
+                          + "Camera in Settings to continue."
+                      )
+                      .setCancelable(false)
+                      .setPositiveButton("Open Settings", (d, w) -> {
+                          Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                          i.setData(Uri.fromParts("package", getPackageName(), null));
+                          startActivity(i);
+                      })
+                      .setNegativeButton("Exit", (d, w) -> { finish(); System.exit(0); })
+                      .create();
+                  blockingDialog.show();
+              }
+
+              private void dismissBlockingDialog() {
+                  if (blockingDialog != null) {
+                      blockingDialog.dismiss();
+                      blockingDialog = null;
                   }
               }
           }
           EOF
           echo "MainActivity rewritten:"
-          head -30 "$MAIN"
+          head -40 "$MAIN"
 
       - name: Decode keystore (release builds only)
         if: env.BUILD_TYPE == 'release'
