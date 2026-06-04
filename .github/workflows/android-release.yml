@@ -191,8 +191,10 @@ jobs:
                   ensureCameraOrBlock();
               }
 
+              // BridgeActivity declares onResume as public, so the override
+              // must match — Java refuses to weaken access (protected) here.
               @Override
-              protected void onResume() {
+              public void onResume() {
                   super.onResume();
                   // User may have toggled permission ON in Settings while
                   // the blocking dialog was visible — re-evaluate.
