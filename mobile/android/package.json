@@ -1,0 +1,30 @@
+{
+  "name": "paynpik-customer-android",
+  "version": "1.0.0",
+  "description": "Capacitor Android wrapper for the PayNPik customer PWA. Loads order.vezeor.cloud in a native shell with vibration/audio/camera access.",
+  "private": true,
+  "scripts": {
+    "android:add": "cap add android",
+    "android:sync": "cap sync android",
+    "android:open": "cap open android",
+    "android:run": "cap run android",
+    "android:build:debug": "cd android && ./gradlew assembleDebug",
+    "android:build:release": "cd android && ./gradlew assembleRelease",
+    "icons": "capacitor-assets generate --android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/app": "^6.0.1",
+    "@capacitor/camera": "^6.0.2",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/device": "^6.0.1",
+    "@capacitor/haptics": "^6.0.1",
+    "@capacitor/network": "^6.0.2",
+    "@capacitor/splash-screen": "^6.0.2",
+    "@capacitor/status-bar": "^6.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^6.1.2"
+  }
+}

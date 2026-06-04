@@ -1,0 +1,11 @@
+# Drop these files here before running `npm run icons`:
+#
+#   icon.png       — 1024×1024 (round corners drawn by Android)
+#   splash.png     — 2732×2732 (centered logo on background)
+#
+# Then:
+#   npm run icons
+#   npx cap sync android
+#
+# Capacitor Assets will generate the mdpi → xxxhdpi mipmap variants
+# and place them under android/app/src/main/res/.
