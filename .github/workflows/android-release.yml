@@ -35,6 +35,16 @@ on:
 permissions:
   contents: write   # for attaching APKs to GitHub Releases on tag push
 
+# Opt every JavaScript action (checkout, setup-node, setup-java,
+# setup-android, upload-artifact, action-gh-release, etc.) into the
+# Node.js 24 runtime on the runner. Suppresses the Node 20
+# deprecation warning and survives the cutover scheduled for
+# 2026-06-16 when GitHub flips the default. Has no effect on the
+# Node version we use to build with `npm install` — that's
+# controlled by `actions/setup-node` separately.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build:
     runs-on: ubuntu-latest
