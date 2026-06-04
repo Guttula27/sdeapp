@@ -79,6 +79,112 @@ jobs:
           npx cap add android || echo "android/ already exists, continuing"
           npx cap sync android
 
+      # ---------------------------------------------------------------
+      # AndroidManifest.xml + MainActivity patches.
+      #
+      # Capacitor's freshly-generated manifest ships with only the
+      # INTERNET permission. The PWA we load uses html5-qrcode (table
+      # QR scan) which calls navigator.mediaDevices.getUserMedia inside
+      # the WebView — that fails silently if CAMERA / RECORD_AUDIO
+      # aren't declared in the manifest. Same for navigator.vibrate
+      # (needs VIBRATE). We inject them here so the OS knows what to
+      # ask for, and override MainActivity to actually request the
+      # runtime grant on first launch so the customer sees a prompt.
+      # ---------------------------------------------------------------
+      - name: Inject required permissions into AndroidManifest.xml
+        working-directory: mobile/android/android/app/src/main
+        shell: bash
+        run: |
+          python3 <<'PY'
+          import re, pathlib
+          p = pathlib.Path("AndroidManifest.xml")
+          src = p.read_text()
+          want_perms = [
+              "android.permission.INTERNET",
+              "android.permission.ACCESS_NETWORK_STATE",
+              "android.permission.CAMERA",
+              "android.permission.RECORD_AUDIO",
+              "android.permission.MODIFY_AUDIO_SETTINGS",
+              "android.permission.VIBRATE",
+          ]
+          want_features = [
+              ("android.hardware.camera", "false"),
+              ("android.hardware.camera.autofocus", "false"),
+          ]
+          inject = []
+          for perm in want_perms:
+              if perm not in src:
+                  inject.append(f'    <uses-permission android:name="{perm}" />')
+          for feat, required in want_features:
+              if feat not in src:
+                  inject.append(f'    <uses-feature android:name="{feat}" android:required="{required}" />')
+          if inject:
+              block = "\n" + "\n".join(inject) + "\n"
+              src = re.sub(r'(\n\s*<application )', block + r'\1', src, count=1)
+              p.write_text(src)
+              print(f"Added {len(inject)} entries to AndroidManifest.xml")
+          else:
+              print("Manifest already has all required entries — no change")
+          print(p.read_text())
+          PY
+
+      - name: Override MainActivity to request CAMERA + RECORD_AUDIO at launch
+        working-directory: mobile/android/android/app/src/main/java
+        shell: bash
+        run: |
+          # Capacitor placed MainActivity.java under the package path
+          # derived from appId. Find it dynamically.
+          MAIN=$(find . -name MainActivity.java | head -1)
+          if [ -z "$MAIN" ]; then
+            echo "::error::MainActivity.java not found"; exit 1;
+          fi
+          PKG=$(grep -oE 'package [a-zA-Z0-9._]+;' "$MAIN" | head -1 | sed -E 's/package (.*);/\1/')
+          echo "Rewriting $MAIN (package=$PKG)"
+          cat > "$MAIN" <<EOF
+          package $PKG;
+
+          import android.Manifest;
+          import android.content.pm.PackageManager;
+          import android.os.Bundle;
+
+          import androidx.core.app.ActivityCompat;
+          import androidx.core.content.ContextCompat;
+
+          import com.getcapacitor.BridgeActivity;
+
+          /**
+           * VEZEOR customer wrapper entry point.
+           *
+           * On first launch we proactively request CAMERA + RECORD_AUDIO
+           * permissions so the embedded PWA's getUserMedia call (used by
+           * html5-qrcode for table QR scanning) can succeed without
+           * the user having to dig into Settings -> Permissions first.
+           */
+          public class MainActivity extends BridgeActivity {
+              private static final int REQ_RUNTIME_PERMS = 4242;
+
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  String[] perms = new String[] {
+                      Manifest.permission.CAMERA,
+                      Manifest.permission.RECORD_AUDIO,
+                  };
+                  boolean needRequest = false;
+                  for (String p : perms) {
+                      if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
+                          needRequest = true; break;
+                      }
+                  }
+                  if (needRequest) {
+                      ActivityCompat.requestPermissions(this, perms, REQ_RUNTIME_PERMS);
+                  }
+              }
+          }
+          EOF
+          echo "MainActivity rewritten:"
+          head -30 "$MAIN"
+
       - name: Decode keystore (release builds only)
         if: env.BUILD_TYPE == 'release'
         working-directory: mobile/android/android
