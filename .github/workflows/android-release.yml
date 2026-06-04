@@ -106,9 +106,13 @@ jobs:
         shell: bash
         run: |
           python3 <<'PY'
-          import re, pathlib
+          import re, pathlib, sys
           p = pathlib.Path("AndroidManifest.xml")
           src = p.read_text()
+          print("=== Original AndroidManifest.xml ===")
+          print(src)
+          print("=== End original ===\n")
+
           want_perms = [
               "android.permission.INTERNET",
               "android.permission.ACCESS_NETWORK_STATE",
@@ -120,29 +124,45 @@ jobs:
           # Camera is mandatory — the app's primary entry point is the
           # table QR scan, so a device without a rear camera literally
           # can't use it. required="true" makes Play Store filter the
-          # listing AND blocks sideload installs on camera-less devices
-          # so users don't end up with a useless installed app.
-          # Autofocus stays optional — older phones without AF can still
-          # frame the QR code by holding the device farther away.
+          # listing AND blocks sideload installs on camera-less devices.
           want_features = [
               ("android.hardware.camera", "true"),
               ("android.hardware.camera.autofocus", "false"),
           ]
           inject = []
           for perm in want_perms:
-              if perm not in src:
+              if f'android:name="{perm}"' not in src:
                   inject.append(f'    <uses-permission android:name="{perm}" />')
           for feat, required in want_features:
-              if feat not in src:
+              if f'android:name="{feat}"' not in src:
                   inject.append(f'    <uses-feature android:name="{feat}" android:required="{required}" />')
-          if inject:
-              block = "\n" + "\n".join(inject) + "\n"
-              src = re.sub(r'(\n\s*<application )', block + r'\1', src, count=1)
-              p.write_text(src)
-              print(f"Added {len(inject)} entries to AndroidManifest.xml")
-          else:
+
+          if not inject:
               print("Manifest already has all required entries — no change")
+          else:
+              # Find the <application tag using a word boundary so the
+              # regex matches whether the tag is followed by space, newline,
+              # or > (Capacitor 6 generates it with a newline after the
+              # tag name and attributes on separate lines).
+              m = re.search(r'<application\b', src)
+              if not m:
+                  print("::error::Could not find <application tag in manifest")
+                  sys.exit(1)
+              block = "\n".join(inject) + "\n    "
+              src = src[:m.start()] + block + src[m.start():]
+              p.write_text(src)
+              print(f"✓ Injected {len(inject)} entries:")
+              for line in inject:
+                  print(f"  {line.strip()}")
+
+          print("\n=== Final AndroidManifest.xml ===")
           print(p.read_text())
+          print("=== End final ===")
+
+          # Sanity check: confirm CAMERA permission actually landed.
+          if 'android.permission.CAMERA' not in p.read_text():
+              print("::error::CAMERA permission missing from final manifest")
+              sys.exit(1)
           PY
 
       - name: Override MainActivity — make CAMERA mandatory
