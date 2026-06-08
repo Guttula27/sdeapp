@@ -508,16 +508,15 @@ export default function PaymentPage() {
             </button>
           </div>
 
-          {/* Gateway */}
+          {/* Gateway — visible only when the outlet has a Razorpay
+              Linked Account configured AND the platform gateway is
+              active. Either missing → hide the option entirely (per
+              spec: "if route id is not available to outlet do not show
+              razorpay option"). */}
+          {gateway && outlet?.razorpayLinkedAccountId && (
           <button
-            onClick={() => gateway && setStage('GATEWAY')}
-            disabled={!gateway}
-            className={clsx(
-              'w-full rounded-2xl border p-4 flex items-center gap-3 text-left transition-all',
-              gateway
-                ? 'bg-white border-slate-100 hover:border-brand-200 hover:shadow-sm'
-                : 'bg-slate-50 border-slate-100 opacity-60 cursor-not-allowed',
-            )}
+            onClick={() => setStage('GATEWAY')}
+            className="w-full rounded-2xl border p-4 flex items-center gap-3 text-left transition-all bg-white border-slate-100 hover:border-brand-200 hover:shadow-sm"
           >
             <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
               <CreditCard size={20} />
@@ -535,6 +534,7 @@ export default function PaymentPage() {
             </div>
             <ChevronRight size={16} className="text-slate-400 shrink-0" />
           </button>
+          )}
 
           {/* TODO(payments): TESTING BYPASS — remove this entire button once
               the real UPI reconciliation flow lands. SHOW_TESTING_BYPASS at the

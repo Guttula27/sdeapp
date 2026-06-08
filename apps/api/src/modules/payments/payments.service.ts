@@ -100,18 +100,41 @@ export class PaymentsService {
   async createRazorpayOrder(paymentId: string) {
     const payment = await this.prisma.payment.findUnique({
       where: { id: paymentId },
-      include: { order: { include: { outlet: { select: { name: true } } } } },
+      include: {
+        order: {
+          include: {
+            outlet: { select: { name: true, razorpayLinkedAccountId: true } },
+          },
+        },
+      },
     });
     if (!payment) throw new NotFoundException('Payment not found');
     if (payment.status !== 'PENDING') {
       throw new BadRequestException('Payment is not in PENDING state');
     }
 
-    const order = await this.razorpay.createOrder({
-      amountInRupees: Number(payment.amount),
-      receipt: `pay_${payment.id}`,
-      notes: { paymentId: payment.id, orderId: payment.orderId },
-    });
+    // Razorpay Route — when the outlet has a Linked Account configured,
+    // route the full payment to that account on capture (Razorpay
+    // deducts the gateway fee from the source so the LA receives the
+    // gross amount net of fees). When no LA is set we fall back to a
+    // plain order; settlement lands in the platform account.
+    const outletLA = payment.order.outlet?.razorpayLinkedAccountId;
+    const order = outletLA
+      ? await this.razorpay.createRouteOrder({
+          amountInRupees: Number(payment.amount),
+          receipt: `pay_${payment.id}`,
+          notes: { paymentId: payment.id, orderId: payment.orderId },
+          transfers: [{
+            account: outletLA,
+            amountInRupees: Number(payment.amount),
+            notes: { paymentId: payment.id, orderId: payment.orderId },
+          }],
+        })
+      : await this.razorpay.createOrder({
+          amountInRupees: Number(payment.amount),
+          receipt: `pay_${payment.id}`,
+          notes: { paymentId: payment.id, orderId: payment.orderId },
+        });
 
     await this.prisma.payment.update({
       where: { id: paymentId },

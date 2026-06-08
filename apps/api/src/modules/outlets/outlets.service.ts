@@ -46,6 +46,12 @@ export class CreateOutletDto {
   @IsBoolean() @IsOptional() kitchenAllowManualPrint?: boolean;
   @IsString() @IsOptional() adminPhone?: string;
   @IsString() @IsOptional() adminName?: string;
+  // Razorpay Route — Linked Account id (acc_xxxxx). When set, single-
+  // outlet card/UPI payments are routed to this account on capture so
+  // settlement happens directly into the outlet's Razorpay account
+  // (platform retains the gateway fee). Leave blank to disable Razorpay
+  // for this outlet entirely — the customer PWA hides the option.
+  @IsString() @IsOptional() razorpayLinkedAccountId?: string;
 }
 
 export class CreateSectionDto {
@@ -246,8 +252,10 @@ export class OutletsService {
       where: { id: outletId },
       select: {
         id: true, isActive: true, name: true, outletType: true, hours: true,
-        // Cluster membership signals the customer app to redirect a standalone
-        // QR scan into the cluster shell. Public — no PII.
+        // razorpayLinkedAccountId selected only to derive razorpayEnabled
+        // (a boolean) below — we never echo the actual LA id to the
+        // customer PWA; that's an internal Razorpay reference.
+        razorpayLinkedAccountId: true,
         clusterMembership: {
           select: {
             clusterBusiness: { select: { id: true, publicCode: true, name: true } },
@@ -257,11 +265,13 @@ export class OutletsService {
     });
     if (!outlet) throw new NotFoundException('Outlet not found');
 
-    // outletType is included in the response so the customer PWA can decide
-    // whether to use the open-tab postpaid UX without needing an auth'd call
-    // to /outlets/:id.
     const base = {
       outletType: outlet.outletType,
+      // Razorpay routing is enabled for this outlet iff a Linked Account
+      // is configured. The customer PWA uses this to hide the Razorpay
+      // payment option when the outlet hasn't onboarded for Route — no
+      // point letting the customer pick a method that will fail.
+      razorpayEnabled: !!outlet.razorpayLinkedAccountId,
       clusterMembership: outlet.clusterMembership?.clusterBusiness
         ? {
             clusterBusinessId: outlet.clusterMembership.clusterBusiness.id,
