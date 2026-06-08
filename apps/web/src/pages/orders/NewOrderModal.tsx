@@ -213,7 +213,7 @@ export default function NewOrderModal({ open, onClose, outletId, onCreated }: Pr
                                         <button
                                           key={v.id}
                                           onClick={() => addLine(item, v)}
-                                          className="text-[10px] font-semibold px-2 py-1 rounded-md bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100"
+                                          className="text-[10px] font-semibold px-2 py-1 rounded-md bg-brand-50 text-brand-900 border border-brand-200 hover:bg-brand-100"
                                         >
                                           + {v.name} ₹{Number(v.price).toFixed(0)}
                                         </button>
@@ -221,14 +221,14 @@ export default function NewOrderModal({ open, onClose, outletId, onCreated }: Pr
                                   ) : (
                                     <button
                                       onClick={() => addLine(item)}
-                                      className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md bg-orange-500 text-white hover:bg-orange-600"
+                                      className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md bg-brand-700 text-white hover:bg-brand-800"
                                     >
                                       <Plus size={11} />
                                       Add
                                     </button>
                                   )}
                                   {inCartCount > 0 && (
-                                    <span className="text-[10px] font-bold text-orange-700 bg-orange-100 rounded-full w-4 h-4 inline-flex items-center justify-center">
+                                    <span className="text-[10px] font-bold text-brand-900 bg-brand-100 rounded-full w-4 h-4 inline-flex items-center justify-center">
                                       {inCartCount}
                                     </span>
                                   )}
@@ -249,7 +249,7 @@ export default function NewOrderModal({ open, onClose, outletId, onCreated }: Pr
         {/* Cart */}
         <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 flex flex-col">
           <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">
-            Cart {lines.length > 0 && <span className="text-orange-600">({lines.length})</span>}
+            Cart {lines.length > 0 && <span className="text-brand-800">({lines.length})</span>}
           </p>
 
           {lines.length === 0 ? (
@@ -275,7 +275,7 @@ export default function NewOrderModal({ open, onClose, outletId, onCreated }: Pr
                         onClick={() =>
                           setCart((c) => ({ ...c, [key]: { ...l, quantity: l.quantity + 1 } }))
                         }
-                        className="w-5 h-5 rounded-md bg-orange-500 hover:bg-orange-600 text-white inline-flex items-center justify-center"
+                        className="w-5 h-5 rounded-md bg-brand-700 hover:bg-brand-800 text-white inline-flex items-center justify-center"
                       >
                         <Plus size={10} />
                       </button>

@@ -16,7 +16,7 @@ import Modal from '../../components/common/Modal';
 const STATUS: Record<string, { label: string; dot: string; bg: string; text: string; border: string }> = {
   CREATED:          { label: 'Created',          dot: '#3b82f6', bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
   QUEUED:           { label: 'Queued',           dot: '#f59e0b', bg: '#fffbeb', text: '#b45309', border: '#fde68a' },
-  PREPARING:        { label: 'Preparing',        dot: '#f97316', bg: '#fff7ed', text: '#c2410c', border: '#fed7aa' },
+  PREPARING:        { label: 'Preparing',        dot: '#004D4D', bg: '#e6f2f2', text: '#002424', border: '#cce5e5' },
   READY:            { label: 'Ready',            dot: '#10b981', bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0' },
   READY_FOR_PICKUP: { label: 'Ready for Pickup', dot: '#2563eb', bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
   OUT_FOR_SERVICE:  { label: 'Out for Service',  dot: '#14b8a6', bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4' },
@@ -71,7 +71,7 @@ type ItemStatus = 'PENDING' | 'PREPARING' | 'READY' | 'SERVED' | 'CANCELLED';
 
 const ITEM_STATUS: Record<ItemStatus, { label: string; bg: string; text: string; border: string; dot: string }> = {
   PENDING:   { label: 'Pending',   bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', dot: '#94a3b8' },
-  PREPARING: { label: 'Preparing', bg: '#fff7ed', text: '#c2410c', border: '#fed7aa', dot: '#f97316' },
+  PREPARING: { label: 'Preparing', bg: '#e6f2f2', text: '#002424', border: '#cce5e5', dot: '#004D4D' },
   READY:     { label: 'Ready',     bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', dot: '#10b981' },
   SERVED:    { label: 'Served',    bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', dot: '#14b8a6' },
   CANCELLED: { label: 'Cancelled', bg: '#fff1f2', text: '#be123c', border: '#fecdd3', dot: '#ef4444' },
@@ -405,7 +405,7 @@ export default function OrdersPage() {
             {!isReadOnly && commonNext && (
               <button
                 onClick={(e) => { e.stopPropagation(); advanceAll(e as any); }}
-                className="text-[10px] font-bold px-2 py-1 rounded-md bg-gradient-to-r from-orange-500 to-orange-600 text-white"
+                className="text-[10px] font-bold px-2 py-1 rounded-md bg-brand-700 hover:bg-brand-800 text-white"
                 title={`Mark all items as ${commonNext.label}`}
               >
                 All → {commonNext.label}
@@ -759,7 +759,7 @@ export default function OrdersPage() {
                 return (
                   <div key={item.id} className="bg-slate-50 rounded-xl px-3 py-2.5 space-y-2">
                     <div className="flex items-center gap-3">
-                      <span className="w-7 h-7 bg-orange-100 text-orange-700 rounded-lg flex items-center justify-center font-bold text-xs shrink-0">
+                      <span className="w-7 h-7 bg-brand-100 text-brand-900 rounded-lg flex items-center justify-center font-bold text-xs shrink-0">
                         {item.quantity}
                       </span>
                       <div className="flex-1 min-w-0">
@@ -808,7 +808,7 @@ export default function OrdersPage() {
                               background:
                                 itemStatus === 'READY'     ? 'linear-gradient(135deg,#14b8a6,#0d9488)' :
                                 itemStatus === 'PREPARING' ? 'linear-gradient(135deg,#10b981,#059669)' :
-                                                              'linear-gradient(135deg,#f97316,#ea580c)',
+                                                              'linear-gradient(135deg,#004D4D,#003939)',
                             }}
                           >
                             <next.icon size={12} /> {next.label}
@@ -1092,7 +1092,7 @@ function CoursePlanner({
             <div className="flex gap-2">
               <button
                 onClick={() => setCourseCount((n) => n + 1)}
-                className="text-[11px] font-semibold text-orange-600 hover:text-orange-700 inline-flex items-center gap-1"
+                className="text-[11px] font-semibold text-brand-800 hover:text-brand-900 inline-flex items-center gap-1"
               >
                 <Plus size={11} /> Add a course
               </button>

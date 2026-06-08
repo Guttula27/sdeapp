@@ -175,7 +175,7 @@ function OutletCard({
   // Count badges drive the collapsed-header summary so the customer can
   // decide which outlet to drill into without expanding everything.
   const counts: { label: string; n: number; tone: string }[] = [];
-  if (tab === 'OFFERS' && group.coupons.length) counts.push({ label: 'coupons', n: group.coupons.length, tone: 'bg-orange-50 text-orange-700 border-orange-100' });
+  if (tab === 'OFFERS' && group.coupons.length) counts.push({ label: 'coupons', n: group.coupons.length, tone: 'bg-brand-50 text-brand-900 border-brand-100' });
   if (tab === 'OFFERS' && group.offers.length) counts.push({ label: 'offers',   n: group.offers.length,   tone: 'bg-amber-50 text-amber-700 border-amber-100' });
   if (tab === 'DISCOUNTS' && group.discounts.length) counts.push({ label: 'discounts', n: group.discounts.length, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100' });
 
@@ -220,7 +220,7 @@ function OutletCard({
         )}
         {showOffers && group.coupons.map(c => (
           <div key={c.id} className="flex items-start gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-lg bg-brand-50 text-brand-800 flex items-center justify-center shrink-0">
               <Ticket size={13} />
             </div>
             <div className="flex-1 min-w-0">
@@ -295,7 +295,7 @@ function RewardsView({ reward }: { reward: any | null }) {
   return (
     <div className="space-y-3">
       {/* Balance card */}
-      <div className="bg-gradient-to-br from-orange-500 to-orange-400 rounded-2xl p-5 text-white shadow-md">
+      <div className="bg-gradient-to-br from-brand-700 to-brand-400 rounded-2xl p-5 text-white shadow-md">
         <div className="flex items-center justify-between mb-1">
           <span className="text-[11px] uppercase tracking-wide font-bold opacity-90">Available balance</span>
           <Award size={18} className="opacity-80" />

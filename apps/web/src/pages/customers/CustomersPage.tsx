@@ -462,7 +462,7 @@ export default function CustomersPage() {
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Items</p>
               {orderDetail.items?.map((it: any) => (
                 <div key={it.id} className="bg-slate-50 rounded-xl px-3 py-2.5 flex items-center gap-3">
-                  <span className="w-7 h-7 bg-orange-100 text-orange-700 rounded-lg flex items-center justify-center font-bold text-xs shrink-0">
+                  <span className="w-7 h-7 bg-brand-100 text-brand-900 rounded-lg flex items-center justify-center font-bold text-xs shrink-0">
                     {it.quantity}
                   </span>
                   <div className="flex-1 min-w-0">

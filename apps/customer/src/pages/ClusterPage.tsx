@@ -287,7 +287,7 @@ export default function ClusterPage() {
           name: cluster.name, description: `Cluster order ${cart.length} items`,
           prefill: user ? { name: user.name, contact: user.phone, email: user.email || undefined } : undefined,
           notes: { clusterOrderId },
-          theme: { color: '#f97316' },
+          theme: { color: '#004D4D' },
           modal: { ondismiss: () => reject(new Error('Payment cancelled')) },
           handler: async (response: any) => {
             try {
@@ -388,8 +388,8 @@ export default function ClusterPage() {
                     {o.logoUrl ? (
                       <img src={o.logoUrl} alt={o.name} className="w-full h-full object-cover" />
                     ) : (
-                      <div className="w-full h-full bg-gradient-to-br from-orange-100 to-amber-100 flex items-center justify-center">
-                        <Store size={18} className="text-orange-500" />
+                      <div className="w-full h-full bg-gradient-to-br from-brand-100 to-amber-100 flex items-center justify-center">
+                        <Store size={18} className="text-brand-700" />
                       </div>
                     )}
                   </div>
@@ -424,7 +424,7 @@ export default function ClusterPage() {
                   className={
                     'px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap flex-shrink-0 transition-all ' +
                     (active
-                      ? 'bg-gradient-to-r from-brand-500 to-orange-400 text-white shadow-lg ring-1 ring-brand-300/50'
+                      ? 'bg-gradient-to-r from-brand-500 to-brand-400 text-white shadow-lg ring-1 ring-brand-300/50'
                       : 'bg-white/10 text-slate-200 hover:bg-white/20')
                   }
                 >
@@ -505,7 +505,7 @@ export default function ClusterPage() {
                       {thumb ? (
                         <img src={thumb} alt="" className="w-full h-full object-cover" />
                       ) : (
-                        <div className="w-full h-full bg-gradient-to-br from-orange-50 to-amber-50 flex items-center justify-center text-base">🍽️</div>
+                        <div className="w-full h-full bg-gradient-to-br from-brand-50 to-amber-50 flex items-center justify-center text-base">🍽️</div>
                       )}
                     </div>
                     <span
@@ -583,7 +583,7 @@ export default function ClusterPage() {
         <div className="fixed left-3 right-3 bottom-24 z-50">
           <button
             onClick={() => setCartOpen(true)}
-            className="w-full bg-gradient-to-r from-brand-500 to-orange-500 text-white rounded-full shadow-xl flex items-center overflow-hidden border border-orange-400/40"
+            className="w-full bg-gradient-to-r from-brand-500 to-brand-700 text-white rounded-full shadow-xl flex items-center overflow-hidden border border-brand-400/40"
           >
             {/* Left section — a slightly inset capsule with the cart icon
                 and the item count. Visually splits the pill into two. */}
@@ -690,7 +690,7 @@ export default function ClusterPage() {
                 </button>
                 <button
                   onClick={() => checkout(false)}
-                  className="bg-gradient-to-r from-orange-500 to-orange-600 text-white font-bold py-3 rounded-xl text-sm inline-flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="bg-brand-700 hover:bg-brand-800 text-white font-bold py-3 rounded-xl text-sm inline-flex items-center justify-center gap-2 disabled:opacity-50"
                   disabled={paying}
                 >
                   {paying ? <Loader2 size={14} className="animate-spin" /> : null}
@@ -949,7 +949,7 @@ function ClusterItemDetailModal({
               onAdded(qty, line);
             }}
             disabled={!item.isAvailable}
-            className="flex-1 bg-gradient-to-r from-orange-500 to-orange-600 text-white py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 bg-brand-700 hover:bg-brand-800 text-white py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Add {qty} to cart · ₹{lineTotal.toFixed(0)}
           </button>

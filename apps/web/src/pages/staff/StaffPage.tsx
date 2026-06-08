@@ -248,7 +248,7 @@ export default function StaffPage() {
           {filtered.map(member => (
             <div key={member.id} className="card card-hover p-5">
               <div className="flex items-start gap-3 mb-4">
-                <div className="w-10 h-10 bg-gradient-to-br from-brand-500 to-orange-400 rounded-xl flex items-center justify-center text-white font-bold text-base shrink-0">
+                <div className="w-10 h-10 bg-gradient-to-br from-brand-500 to-brand-400 rounded-xl flex items-center justify-center text-white font-bold text-base shrink-0">
                   {member.name?.[0]}
                 </div>
                 <div className="flex-1 min-w-0">

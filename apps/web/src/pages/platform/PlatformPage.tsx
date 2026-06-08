@@ -177,7 +177,7 @@ export default function PlatformPage() {
         {[
           { label: 'Total Businesses', value: stats?.totalBusinesses ?? '—', icon: Building2, cls: 'bg-blue-50 text-blue-600' },
           { label: 'Active Businesses', value: stats?.activeBusinesses ?? '—', icon: CheckCircle2, cls: 'bg-emerald-50 text-emerald-600' },
-          { label: 'Total Outlets',     value: stats?.totalOutlets ?? '—',    icon: Store,       cls: 'bg-orange-50 text-orange-600' },
+          { label: 'Total Outlets',     value: stats?.totalOutlets ?? '—',    icon: Store,       cls: 'bg-brand-50 text-brand-800' },
         ].map(s => (
           <div key={s.label} className="card p-5">
             <div className={`icon-wrap w-9 h-9 ${s.cls} rounded-xl mb-3`}><s.icon size={16} /></div>

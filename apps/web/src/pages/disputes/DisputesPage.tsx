@@ -371,7 +371,7 @@ export default function DisputesPage() {
               {/* Customer */}
               {selected.order.customer && (
                 <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl">
-                  <div className="w-9 h-9 bg-gradient-to-br from-brand-500 to-orange-400 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0">
+                  <div className="w-9 h-9 bg-gradient-to-br from-brand-500 to-brand-400 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0">
                     {selected.order.customer.name[0]}
                   </div>
                   <div>

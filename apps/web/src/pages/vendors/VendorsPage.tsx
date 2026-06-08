@@ -219,7 +219,7 @@ export default function VendorsPage() {
           {[
             { label: 'Total Vendors',  value: stats.totalVendors,  icon: Truck,         cls: 'bg-blue-50 text-blue-600' },
             { label: 'Active Vendors', value: stats.activeVendors, icon: CheckCircle2,  cls: 'bg-emerald-50 text-emerald-600' },
-            { label: 'Total POs',      value: stats.totalPOs,       icon: ShoppingCart,  cls: 'bg-orange-50 text-orange-600' },
+            { label: 'Total POs',      value: stats.totalPOs,       icon: ShoppingCart,  cls: 'bg-brand-50 text-brand-800' },
             { label: 'Total Spend',    value: `₹${Number(stats.totalSpend).toLocaleString('en-IN')}`, icon: IndianRupee, cls: 'bg-purple-50 text-purple-600' },
           ].map(s => (
             <div key={s.label} className="card p-5">
@@ -616,9 +616,9 @@ function VendorDetail({ vendor, loading, onClose, onEdit, onToggle, onDelete }: 
                 <p className="text-xl font-black text-emerald-700">{paidPOs}</p>
                 <p className="text-[10px] text-emerald-600 font-medium mt-0.5">Paid</p>
               </div>
-              <div className="bg-orange-50 rounded-xl p-3 text-center">
-                <p className="text-lg font-black text-orange-700">₹{Number(totalSpend).toLocaleString('en-IN')}</p>
-                <p className="text-[10px] text-orange-600 font-medium mt-0.5">Total Spend</p>
+              <div className="bg-brand-50 rounded-xl p-3 text-center">
+                <p className="text-lg font-black text-brand-900">₹{Number(totalSpend).toLocaleString('en-IN')}</p>
+                <p className="text-[10px] text-brand-800 font-medium mt-0.5">Total Spend</p>
               </div>
             </div>
 

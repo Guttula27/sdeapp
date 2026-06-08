@@ -270,14 +270,14 @@ function LoudAlertModal({ alert, onAcknowledge }: { alert: CustomerAlert; onAckn
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm px-6">
       <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl text-center animate-blink">
-        <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center text-white text-3xl animate-ring-blink">
+        <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-gradient-to-br from-brand-700 to-red-500 flex items-center justify-center text-white text-3xl animate-ring-blink">
           🔔
         </div>
         <h2 className="text-xl font-black text-slate-900">{alert.title || 'Order ready'}</h2>
         <p className="text-sm text-slate-600 mt-2 leading-relaxed whitespace-pre-line">{alert.body}</p>
         <button
           onClick={onAcknowledge}
-          className="mt-6 w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-bold py-3.5 rounded-2xl text-sm"
+          className="mt-6 w-full bg-brand-700 hover:bg-brand-800  text-white font-bold py-3.5 rounded-2xl text-sm"
         >
           OK, on my way
         </button>

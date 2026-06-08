@@ -51,8 +51,8 @@ export default function BottomNav() {
               className={clsx(
                 'absolute -top-6 w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-transform active:scale-95',
                 scanActive
-                  ? 'bg-gradient-to-br from-brand-600 to-orange-600 ring-4 ring-brand-100'
-                  : 'bg-gradient-to-br from-brand-500 to-orange-400',
+                  ? 'bg-gradient-to-br from-brand-600 to-brand-800 ring-4 ring-brand-100'
+                  : 'bg-gradient-to-br from-brand-500 to-brand-400',
               )}
               aria-label="Scan QR"
             >

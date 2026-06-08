@@ -92,7 +92,7 @@ export default function ScanPage() {
     <div className="max-w-md mx-auto bg-slate-900 min-h-dvh flex flex-col">
       {/* Header */}
       <div className="px-5 pt-10 pb-4 flex items-center gap-3">
-        <div className="w-10 h-10 bg-gradient-to-br from-brand-500 to-orange-400 rounded-xl flex items-center justify-center">
+        <div className="w-10 h-10 bg-gradient-to-br from-brand-500 to-brand-400 rounded-xl flex items-center justify-center">
           <QrCodeIcon size={20} className="text-white" />
         </div>
         <div>
@@ -153,7 +153,7 @@ export default function ScanPage() {
                     className="w-10 h-10 rounded-lg object-cover shrink-0 bg-white/5"
                   />
                 ) : (
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-brand-500 to-orange-400 flex items-center justify-center shrink-0">
+                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-brand-500 to-brand-400 flex items-center justify-center shrink-0">
                     <Store size={16} className="text-white" />
                   </div>
                 )}

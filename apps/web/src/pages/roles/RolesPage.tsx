@@ -42,7 +42,7 @@ function scopeLabel(role: Role): string {
 
 function scopeBadgeClass(role: Role): string {
   if (role.isSystem) return 'bg-violet-100 text-violet-700';
-  if (role.outletId) return 'bg-orange-100 text-orange-700';
+  if (role.outletId) return 'bg-brand-100 text-brand-900';
   if (role.businessId) return 'bg-sky-100 text-sky-700';
   return 'bg-slate-200 text-slate-700';
 }
@@ -184,7 +184,7 @@ export default function RolesPage() {
                   <button
                     onClick={() => setSelectedId(r.id)}
                     className={`w-full text-left px-3 py-2 rounded-xl transition-colors flex items-start gap-2 ${
-                      selectedId === r.id ? 'bg-orange-50 ring-1 ring-orange-200' : 'hover:bg-slate-50'
+                      selectedId === r.id ? 'bg-brand-50 ring-1 ring-brand-200' : 'hover:bg-slate-50'
                     }`}
                   >
                     <Shield size={14} className={r.isSystem ? 'text-violet-500 mt-0.5' : 'text-slate-400 mt-0.5'} />
@@ -259,7 +259,7 @@ export default function RolesPage() {
                           <label
                             key={p.id}
                             className={`flex items-start gap-3 px-3 py-2 rounded-xl border ${
-                              enabled ? 'bg-orange-50/50 border-orange-100' : 'bg-white border-slate-100'
+                              enabled ? 'bg-brand-50/50 border-brand-100' : 'bg-white border-slate-100'
                             } ${disabled ? 'opacity-60' : 'cursor-pointer hover:bg-slate-50'}`}
                           >
                             <input

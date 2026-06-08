@@ -284,7 +284,7 @@ export default function StationsPage() {
                     {!station.isMaster && (
                       <button
                         onClick={() => setItemPicker(station)}
-                        className="text-[10px] font-semibold text-orange-600 hover:text-orange-700"
+                        className="text-[10px] font-semibold text-brand-800 hover:text-brand-900"
                       >
                         Manage
                       </button>
@@ -454,7 +454,7 @@ function ItemPickerModal({
                           className={clsx(
                             'flex items-center justify-between gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
                             checked
-                              ? 'border-orange-200 bg-orange-50'
+                              ? 'border-brand-200 bg-brand-50'
                               : 'border-slate-200 bg-white hover:bg-slate-50',
                           )}
                         >

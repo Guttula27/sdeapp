@@ -199,13 +199,13 @@ export default function OffersPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <Gift className="w-6 h-6 text-orange-500" /> Offers
+            <Gift className="w-6 h-6 text-brand-700" /> Offers
           </h1>
           <p className="text-sm text-slate-500 mt-1">
             Conditional freebies — “Spend ₹500, get a sweet” or “Buy 3 beers, get 1 free”.
           </p>
         </div>
-        <button onClick={openCreate} className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-semibold inline-flex items-center gap-2">
+        <button onClick={openCreate} className="px-4 py-2 bg-brand-700 hover:bg-brand-800 text-white rounded-lg text-sm font-semibold inline-flex items-center gap-2">
           <Plus className="w-4 h-4" /> New Offer
         </button>
       </div>
@@ -340,7 +340,7 @@ export default function OffersPage() {
                       : [...form.daysOfWeek, d.v],
                   })}
                   className={`px-3 py-1.5 text-xs rounded-md border ${
-                    form.daysOfWeek.includes(d.v) ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-slate-700 border-slate-300'
+                    form.daysOfWeek.includes(d.v) ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-700 border-slate-300'
                   }`}
                 >{d.l}</button>
               ))}
@@ -367,7 +367,7 @@ export default function OffersPage() {
             <button type="button" onClick={() => setModal({ open: false })}
               className="px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 rounded-md">Cancel</button>
             <button type="submit" disabled={saving}
-              className="px-4 py-2 text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 rounded-md disabled:opacity-50">
+              className="px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-800 rounded-md disabled:opacity-50">
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>

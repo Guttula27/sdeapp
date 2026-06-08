@@ -732,7 +732,7 @@ export default function OutletProfilePage() {
           </div>
           <input type="checkbox" checked={kitchenPrint.auto}
             onChange={(e) => setKitchenPrint(p => ({ ...p, auto: e.target.checked }))}
-            className="w-4 h-4 mt-1 accent-orange-500 rounded" />
+            className="w-4 h-4 mt-1 accent-brand-700 rounded" />
         </label>
 
         <label className="flex items-start justify-between gap-3 cursor-pointer p-3 rounded-xl border border-slate-200 hover:bg-slate-50">
@@ -742,7 +742,7 @@ export default function OutletProfilePage() {
           </div>
           <input type="checkbox" checked={kitchenPrint.allowManual}
             onChange={(e) => setKitchenPrint(p => ({ ...p, allowManual: e.target.checked }))}
-            className="w-4 h-4 mt-1 accent-orange-500 rounded" />
+            className="w-4 h-4 mt-1 accent-brand-700 rounded" />
         </label>
 
         <div className="border-t border-slate-100 pt-4 space-y-3">
@@ -764,7 +764,7 @@ export default function OutletProfilePage() {
                     {p.stations && p.stations.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1.5">
                         {p.stations.map((s) => (
-                          <span key={s.id} className="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-100">{s.name}</span>
+                          <span key={s.id} className="text-[10px] px-1.5 py-0.5 rounded-full bg-brand-50 text-brand-900 border border-brand-100">{s.name}</span>
                         ))}
                       </div>
                     )}

@@ -15,7 +15,7 @@ export default defineConfig({
         name: 'PayNPik',
         short_name: 'PayNPik',
         description: 'Order from your table — scan, choose, pay.',
-        theme_color: '#f97316',
+        theme_color: '#004D4D',
         background_color: '#ffffff',
         display: 'standalone',
         orientation: 'portrait',

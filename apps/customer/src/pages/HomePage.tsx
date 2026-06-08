@@ -12,7 +12,7 @@ import { useCustomerAlerts } from '../context/CustomerAlertsContext';
 const STATUS = {
   CREATED:         { label: 'Placed',          cls: 'bg-blue-100 text-blue-700',      icon: Clock },
   QUEUED:          { label: 'Queued',          cls: 'bg-yellow-100 text-yellow-700',  icon: CheckCircle2 },
-  PREPARING:       { label: 'Preparing',       cls: 'bg-orange-100 text-orange-700',  icon: ChefHat },
+  PREPARING:       { label: 'Preparing',       cls: 'bg-brand-100 text-brand-900',  icon: ChefHat },
   READY:           { label: 'Ready',           cls: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2 },
   OUT_FOR_SERVICE: { label: 'On its way',      cls: 'bg-teal-100 text-teal-700',      icon: Package2 },
   SERVED:          { label: 'Served',          cls: 'bg-slate-100 text-slate-600',    icon: CheckCircle2 },
@@ -249,7 +249,7 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay }: { order: Ord
     return (
       <div className={clsx(
         'p-3',
-        isBlinking && 'animate-blink ring-2 ring-orange-400 rounded-xl bg-orange-50/40',
+        isBlinking && 'animate-blink ring-2 ring-brand-400 rounded-xl bg-brand-50/40',
       )}>
         <div className="flex items-start justify-between gap-2 mb-1">
           <div className="min-w-0">
@@ -280,9 +280,9 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay }: { order: Ord
   return (
     <div className={clsx('bg-white rounded-2xl border shadow-sm overflow-hidden',
       active ? 'border-brand-200' : 'border-slate-100',
-      isBlinking && 'animate-blink ring-2 ring-orange-400',
+      isBlinking && 'animate-blink ring-2 ring-brand-400',
     )}>
-      {active && <div className="h-1 bg-gradient-to-r from-brand-500 to-orange-400" />}
+      {active && <div className="h-1 bg-gradient-to-r from-brand-500 to-brand-400" />}
       <div className="p-4">
         <div className="flex items-start justify-between gap-2 mb-1.5">
           <div className="min-w-0">
@@ -362,7 +362,7 @@ function FeedbackPrompt({ orders }: { orders: Order[] }) {
   const unratedCount = target.items.filter(i => !i.review).length;
   return (
     <section className="mb-3">
-      <div className="rounded-2xl p-4 bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50 border border-amber-100 relative">
+      <div className="rounded-2xl p-4 bg-gradient-to-br from-amber-50 via-brand-50 to-rose-50 border border-amber-100 relative">
         <button
           onClick={() => {
             setDismissed(true);
@@ -386,7 +386,7 @@ function FeedbackPrompt({ orders }: { orders: Order[] }) {
         </div>
         <button
           onClick={() => navigate(`/track/${target.id}`)}
-          className="mt-3 w-full bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold text-xs py-2.5 rounded-xl shadow"
+          className="mt-3 w-full bg-gradient-to-r from-amber-500 to-brand-700 text-white font-bold text-xs py-2.5 rounded-xl shadow"
         >
           Rate {unratedCount === 1 ? 'this item' : `${unratedCount} items`} on {target.outlet.name}
         </button>

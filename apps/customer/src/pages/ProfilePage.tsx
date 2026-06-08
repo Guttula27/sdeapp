@@ -95,7 +95,7 @@ function CustomerQR({ userId, name, profileImageUrl }: { userId: string; name: s
         pic.src = profileImageUrl;
       } else {
         // initial letter circle
-        ctx.fillStyle = '#f97316';
+        ctx.fillStyle = '#004D4D';
         ctx.beginPath();
         ctx.arc(x + lw / 2, y + lw / 2, lw / 2, 0, Math.PI * 2);
         ctx.fill();
@@ -255,13 +255,13 @@ export default function ProfilePage() {
       {/* Hero with avatar */}
       <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 px-5 pt-8 pb-12 relative overflow-hidden">
         <div className="absolute -top-12 -right-12 w-40 h-40 bg-brand-500/20 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 -left-8 w-32 h-32 bg-orange-400/10 rounded-full blur-3xl" />
+        <div className="absolute bottom-0 -left-8 w-32 h-32 bg-brand-400/10 rounded-full blur-3xl" />
         <div className="relative flex items-center gap-4">
           <button onClick={() => picRef.current?.click()} className="relative w-20 h-20 rounded-2xl overflow-hidden shadow-lg ring-4 ring-white/10">
             {profileImageUrl ? (
               <img src={profileImageUrl} alt="" className="w-full h-full object-cover" />
             ) : (
-              <div className="w-full h-full bg-gradient-to-br from-brand-500 to-orange-400 flex items-center justify-center text-white font-black text-3xl">
+              <div className="w-full h-full bg-gradient-to-br from-brand-500 to-brand-400 flex items-center justify-center text-white font-black text-3xl">
                 {name?.[0]?.toUpperCase() || '?'}
               </div>
             )}
@@ -440,7 +440,7 @@ export default function ProfilePage() {
         <button
           onClick={save}
           disabled={saving}
-          className="w-full bg-gradient-to-r from-brand-500 to-orange-400 text-white font-bold py-3.5 rounded-2xl text-sm shadow-lg disabled:opacity-60 flex items-center justify-center gap-2"
+          className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-3.5 rounded-2xl text-sm shadow-lg disabled:opacity-60 flex items-center justify-center gap-2"
         >
           {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
           <Save size={14} /> Save changes

@@ -28,8 +28,8 @@ export async function downloadQrCard(opts: QrCardOptions): Promise<void> {
 
   // Top gradient strip (brand)
   const grad = ctx.createLinearGradient(0, 0, W, 80);
-  grad.addColorStop(0, '#f97316');
-  grad.addColorStop(1, '#ea580c');
+  grad.addColorStop(0, '#004D4D');
+  grad.addColorStop(1, '#003939');
   ctx.fillStyle = grad;
   ctx.fillRect(8, 8, W - 16, 12);
 
@@ -87,7 +87,7 @@ export async function downloadQrCard(opts: QrCardOptions): Promise<void> {
     ctx.fillText(opts.label.toUpperCase(), W / 2, qy + QR_SIZE + 50);
   }
   if (opts.detail) {
-    ctx.fillStyle = '#ea580c';
+    ctx.fillStyle = '#003939';
     ctx.font = 'bold 48px ui-sans-serif, system-ui';
     ctx.fillText(opts.detail, W / 2, qy + QR_SIZE + 105);
   }

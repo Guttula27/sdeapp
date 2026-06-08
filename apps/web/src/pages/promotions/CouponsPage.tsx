@@ -193,13 +193,13 @@ export default function CouponsPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <Ticket className="w-6 h-6 text-orange-500" /> Coupons
+            <Ticket className="w-6 h-6 text-brand-700" /> Coupons
           </h1>
           <p className="text-sm text-slate-500 mt-1">Promo codes customers can apply at checkout.</p>
         </div>
         <button
           onClick={openCreate}
-          className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-semibold inline-flex items-center gap-2"
+          className="px-4 py-2 bg-brand-700 hover:bg-brand-800 text-white rounded-lg text-sm font-semibold inline-flex items-center gap-2"
         >
           <Plus className="w-4 h-4" /> New Coupon
         </button>
@@ -368,7 +368,7 @@ export default function CouponsPage() {
             <button type="button" onClick={() => setModal({ open: false })}
               className="px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 rounded-md">Cancel</button>
             <button type="submit" disabled={saving}
-              className="px-4 py-2 text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 rounded-md disabled:opacity-50">
+              className="px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-800 rounded-md disabled:opacity-50">
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>

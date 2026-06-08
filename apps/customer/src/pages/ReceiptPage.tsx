@@ -114,7 +114,7 @@ export default function ReceiptPage() {
                         <div className="flex justify-between items-start gap-2">
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold text-slate-800">
-                              <span className="text-orange-600 font-bold mr-1">{it.quantity}×</span>
+                              <span className="text-brand-800 font-bold mr-1">{it.quantity}×</span>
                               {it.item?.name}
                               {it.variant && <span className="text-xs text-slate-500"> ({it.variant.name})</span>}
                             </p>
@@ -196,7 +196,7 @@ export default function ReceiptPage() {
           <div className="flex flex-col gap-2 pt-2">
             <button
               onClick={() => navigate(`/track/${order.id}?outlet=${order.outletId}`)}
-              className="w-full bg-gradient-to-r from-brand-500 to-orange-400 text-white font-bold py-3.5 rounded-2xl flex items-center justify-center gap-2"
+              className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-3.5 rounded-2xl flex items-center justify-center gap-2"
             >
               Track order <ChevronRight size={16} />
             </button>

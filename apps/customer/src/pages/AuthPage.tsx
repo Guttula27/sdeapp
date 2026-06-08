@@ -137,7 +137,7 @@ export default function AuthPage() {
           <ArrowLeft size={16} /> Back
         </button>
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-brand-500 to-orange-400 rounded-xl flex items-center justify-center shadow-lg">
+          <div className="w-10 h-10 bg-gradient-to-br from-brand-500 to-brand-400 rounded-xl flex items-center justify-center shadow-lg">
             <UtensilsCrossed size={18} className="text-white" />
           </div>
           <div>
@@ -238,7 +238,7 @@ export default function AuthPage() {
                   type="button"
                   disabled={loading || otp.join('').length !== OTP_LENGTH}
                   onClick={() => handleVerifyOtp(otp.join(''))}
-                  className="w-full bg-gradient-to-r from-brand-500 to-orange-400 text-white font-bold py-4 rounded-2xl shadow-md disabled:opacity-50 transition-all active:scale-[.98] flex items-center justify-center gap-2"
+                  className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-4 rounded-2xl shadow-md disabled:opacity-50 transition-all active:scale-[.98] flex items-center justify-center gap-2"
                 >
                   {loading && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
                   Verify & Sign In
@@ -284,7 +284,7 @@ function SubmitBtn({ loading, label }: { loading: boolean; label: string }) {
     <button
       type="submit"
       disabled={loading}
-      className="w-full bg-gradient-to-r from-brand-500 to-orange-400 text-white font-bold py-4 rounded-2xl shadow-md disabled:opacity-60 transition-all active:scale-[.98] flex items-center justify-center gap-2 mt-2"
+      className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-4 rounded-2xl shadow-md disabled:opacity-60 transition-all active:scale-[.98] flex items-center justify-center gap-2 mt-2"
     >
       {loading && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
       {label}

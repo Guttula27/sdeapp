@@ -90,7 +90,7 @@ export default function ScanResolverPage() {
   return (
     <div className="min-h-dvh flex items-center justify-center bg-slate-50 px-6">
       <div className="text-center">
-        <div className="mx-auto mb-4 w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-500 to-orange-400 flex items-center justify-center shadow-lg">
+        <div className="mx-auto mb-4 w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-400 flex items-center justify-center shadow-lg">
           <QrCode size={28} className="text-white" />
         </div>
         <p className="text-sm font-bold text-slate-800">Opening menu…</p>

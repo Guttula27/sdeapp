@@ -211,9 +211,9 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
               <span className="absolute inset-0 rounded-xl"
                 style={{ background: 'linear-gradient(135deg, rgba(249,115,22,.25) 0%, rgba(234,88,12,.15) 100%)', border: '1px solid rgba(249,115,22,.2)' }} />
             )}
-            <Icon size={17} className={clsx('shrink-0 relative z-10 transition-transform', !isActive && 'group-hover:scale-110', isActive && 'text-orange-400')} />
+            <Icon size={17} className={clsx('shrink-0 relative z-10 transition-transform', !isActive && 'group-hover:scale-110', isActive && 'text-brand-400')} />
             {!compact && <span className="relative z-10 animate-fade-in">{item.label}</span>}
-            {isActive && !compact && <span className="ml-auto relative z-10 w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />}
+            {isActive && !compact && <span className="ml-auto relative z-10 w-1.5 h-1.5 rounded-full bg-brand-400 shrink-0" />}
           </>
         )}
       </NavLink>
@@ -236,7 +236,7 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
                 <span className="absolute inset-0 rounded-xl"
                   style={{ background: 'linear-gradient(135deg, rgba(249,115,22,.25) 0%, rgba(234,88,12,.15) 100%)', border: '1px solid rgba(249,115,22,.2)' }} />
               )}
-              <Icon size={17} className={clsx('shrink-0 relative z-10', (isActive || childActive) && 'text-orange-400')} />
+              <Icon size={17} className={clsx('shrink-0 relative z-10', (isActive || childActive) && 'text-brand-400')} />
             </>
           )}
         </NavLink>
@@ -250,7 +250,7 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
                     <span className="absolute inset-0 rounded-xl"
                       style={{ background: 'linear-gradient(135deg, rgba(249,115,22,.18) 0%, rgba(234,88,12,.1) 100%)', border: '1px solid rgba(249,115,22,.15)' }} />
                   )}
-                  <ChildIcon size={15} className={clsx('shrink-0 relative z-10', isActive && 'text-orange-400')} />
+                  <ChildIcon size={15} className={clsx('shrink-0 relative z-10', isActive && 'text-brand-400')} />
                 </>
               );
             }}
@@ -271,7 +271,7 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
           <span className="absolute inset-0 rounded-xl"
             style={{ background: 'linear-gradient(135deg, rgba(249,115,22,.25) 0%, rgba(234,88,12,.15) 100%)', border: '1px solid rgba(249,115,22,.2)' }} />
         )}
-        <Icon size={17} className={clsx('shrink-0 relative z-10', parentActive && 'text-orange-400')} />
+        <Icon size={17} className={clsx('shrink-0 relative z-10', parentActive && 'text-brand-400')} />
         <span className="relative z-10 flex-1 text-left">{item.label}</span>
         <ChevronRight
           size={13}
@@ -297,7 +297,7 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
               >
                 {({ isActive }) => (
                   <>
-                    <ChildIcon size={14} className={clsx('shrink-0', isActive && 'text-orange-400')} />
+                    <ChildIcon size={14} className={clsx('shrink-0', isActive && 'text-brand-400')} />
                     <span>{c.label}</span>
                   </>
                 )}
@@ -313,7 +313,7 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
 const TIER_BADGE: Record<UserTier, { label: string; bg: string; dot: string }> = {
   platform: { label: 'Platform Admin', bg: 'bg-violet-500/15 text-violet-300',  dot: 'bg-violet-400' },
   business: { label: 'Business Admin', bg: 'bg-sky-500/15 text-sky-300',        dot: 'bg-sky-400' },
-  outlet:   { label: 'Outlet Admin',   bg: 'bg-orange-500/15 text-orange-300',  dot: 'bg-orange-400' },
+  outlet:   { label: 'Outlet Admin',   bg: 'bg-brand-700/15 text-brand-300',  dot: 'bg-brand-400' },
   kitchen:  { label: 'Kitchen Staff',  bg: 'bg-emerald-500/15 text-emerald-300',dot: 'bg-emerald-400' },
   counter:  { label: 'Counter Staff',  bg: 'bg-amber-500/15 text-amber-300',    dot: 'bg-amber-400' },
   store:    { label: 'Store Staff',    bg: 'bg-teal-500/15 text-teal-300',      dot: 'bg-teal-400' },
@@ -359,7 +359,7 @@ export default function Layout() {
       {/* Logo */}
       <div className="flex items-center gap-3 px-5 h-16 border-b border-white/6 shrink-0">
         <div className="w-8 h-8 rounded-xl shrink-0 flex items-center justify-center font-black text-white text-sm shadow-lg"
-          style={{ background: 'linear-gradient(135deg,#f97316 0%,#ea580c 100%)' }}>P</div>
+          style={{ background: 'linear-gradient(135deg,#004D4D 0%,#003939 100%)' }}>P</div>
         {!compact && (
           <div className="animate-fade-in overflow-hidden">
             <p className="text-white font-bold text-sm tracking-tight leading-none">PayNPik</p>
@@ -385,7 +385,7 @@ export default function Layout() {
         {!compact ? (
           <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-white/5 transition-colors cursor-default">
             <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-              style={{ background: 'linear-gradient(135deg,#f97316,#ea580c)' }}>
+              style={{ background: 'linear-gradient(135deg,#004D4D,#003939)' }}>
               {user?.name?.[0]}
             </div>
             <div className="flex-1 min-w-0">
@@ -452,7 +452,7 @@ export default function Layout() {
             {/* Notifications */}
             <button className="relative flex items-center justify-center w-9 h-9 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors">
               <Bell size={17} />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-orange-500 ring-2 ring-white" />
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-brand-700 ring-2 ring-white" />
             </button>
 
             {/* User dropdown */}
@@ -461,11 +461,11 @@ export default function Layout() {
                 className={clsx(
                   'flex items-center gap-2 pl-2 pr-2.5 py-1.5 rounded-xl border-[1.5px] transition-all duration-150',
                   userMenu
-                    ? 'bg-orange-50 border-orange-300 shadow-[0_0_0_3px_rgb(249_115_22_/_0.12)]'
+                    ? 'bg-brand-50 border-brand-300 shadow-[0_0_0_3px_rgb(249_115_22_/_0.12)]'
                     : 'bg-slate-50/80 border-slate-200 hover:bg-white hover:border-slate-300',
                 )}>
                 <div className="w-6.5 h-6.5 rounded-full flex items-center justify-center text-white text-[11px] font-bold shrink-0"
-                  style={{ width: '26px', height: '26px', background: 'linear-gradient(135deg,#f97316,#ea580c)' }}>
+                  style={{ width: '26px', height: '26px', background: 'linear-gradient(135deg,#004D4D,#003939)' }}>
                   {user?.name?.[0]}
                 </div>
                 <div className="hidden sm:block text-left leading-tight">
@@ -477,9 +477,9 @@ export default function Layout() {
 
               {userMenu && (
                 <div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-pop border border-slate-100 overflow-hidden z-50 animate-slide-down">
-                  <div className="px-4 py-3.5" style={{ background: 'linear-gradient(135deg,#f97316,#ea580c)' }}>
+                  <div className="px-4 py-3.5" style={{ background: 'linear-gradient(135deg,#004D4D,#003939)' }}>
                     <p className="text-sm font-bold text-white">{user?.name}</p>
-                    <p className="text-[11px] text-orange-100 mt-0.5">{user?.phone}</p>
+                    <p className="text-[11px] text-brand-100 mt-0.5">{user?.phone}</p>
                     {badge.label && (
                       <span className="inline-block mt-2 text-[10px] bg-white/20 text-white px-2 py-0.5 rounded-full font-semibold">
                         {badge.label}

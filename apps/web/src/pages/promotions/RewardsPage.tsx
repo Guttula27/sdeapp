@@ -143,7 +143,7 @@ export default function RewardsPage() {
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-          <Award className="w-6 h-6 text-orange-500" /> Rewards
+          <Award className="w-6 h-6 text-brand-700" /> Rewards
         </h1>
         <p className="text-sm text-slate-500 mt-1">
           Platform-wide reward points — customers earn at any outlet and can redeem anywhere it's accepted.
@@ -190,7 +190,7 @@ export default function RewardsPage() {
           </Field>
           <div className="col-span-full flex justify-end pt-2">
             <button type="submit" disabled={savingCfg}
-              className="px-4 py-2 text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 rounded-md disabled:opacity-50">
+              className="px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-800 rounded-md disabled:opacity-50">
               {savingCfg ? 'Saving…' : 'Save Config'}
             </button>
           </div>
@@ -236,7 +236,7 @@ export default function RewardsPage() {
             placeholder="Customer phone number"
             className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm" />
           <button onClick={lookupCustomer} disabled={lookingUp}
-            className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-md text-sm font-semibold">
+            className="px-4 py-2 bg-brand-700 hover:bg-brand-800 text-white rounded-md text-sm font-semibold">
             {lookingUp ? 'Searching…' : 'Lookup'}
           </button>
         </div>
@@ -249,7 +249,7 @@ export default function RewardsPage() {
                 <div className="text-xs text-slate-500">{lookupResult.phone}</div>
               </div>
               <div className="text-right">
-                <div className="text-3xl font-bold text-orange-600">{account.balance}</div>
+                <div className="text-3xl font-bold text-brand-800">{account.balance}</div>
                 <div className="text-xs text-slate-500">points</div>
               </div>
             </div>
@@ -323,7 +323,7 @@ export default function RewardsPage() {
             <button type="button" onClick={() => setAdjustOpen(false)}
               className="px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 rounded-md">Cancel</button>
             <button type="submit"
-              className="px-4 py-2 text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 rounded-md">
+              className="px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-800 rounded-md">
               Apply
             </button>
           </div>

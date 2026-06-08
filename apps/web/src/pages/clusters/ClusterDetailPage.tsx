@@ -470,7 +470,7 @@ export default function ClusterDetailPage() {
                         {m.outlet?.logoUrl ? (
                           <img src={m.outlet.logoUrl} alt="" className="w-6 h-6 rounded-md object-cover" />
                         ) : (
-                          <div className="w-6 h-6 rounded-md bg-orange-100 text-orange-600 flex items-center justify-center">
+                          <div className="w-6 h-6 rounded-md bg-brand-100 text-brand-800 flex items-center justify-center">
                             <Store size={12} />
                           </div>
                         )}

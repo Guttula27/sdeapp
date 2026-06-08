@@ -107,11 +107,11 @@ export default function LoginPage() {
         {/* Background mesh */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <div className="absolute -top-32 -left-32 w-96 h-96 rounded-full opacity-30"
-            style={{ background: 'radial-gradient(circle, #f97316 0%, transparent 70%)' }} />
+            style={{ background: 'radial-gradient(circle, #004D4D 0%, transparent 70%)' }} />
           <div className="absolute -bottom-32 -right-32 w-96 h-96 rounded-full opacity-20"
             style={{ background: 'radial-gradient(circle, #6366f1 0%, transparent 70%)' }} />
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 rounded-full opacity-10"
-            style={{ background: 'radial-gradient(circle, #f97316 0%, transparent 70%)' }} />
+            style={{ background: 'radial-gradient(circle, #004D4D 0%, transparent 70%)' }} />
           {/* Grid lines */}
           <div className="absolute inset-0" style={{
             backgroundImage: 'linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px)',
@@ -124,7 +124,7 @@ export default function LoginPage() {
           {/* Logo */}
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl flex items-center justify-center font-black text-white text-base shadow-lg"
-              style={{ background: 'linear-gradient(135deg, #f97316, #ea580c)' }}>P</div>
+              style={{ background: 'linear-gradient(135deg, #004D4D, #003939)' }}>P</div>
             <div>
               <p className="text-white font-bold text-lg leading-none">PayNPik</p>
               <p className="text-slate-500 text-xs mt-0.5">Restaurant Platform</p>
@@ -135,7 +135,7 @@ export default function LoginPage() {
           <div className="mt-16 flex-1">
             <h1 className="text-4xl font-black text-white leading-tight tracking-tight">
               Run your restaurant<br />
-              <span style={{ WebkitTextFillColor: 'transparent', background: 'linear-gradient(135deg,#f97316,#fb923c)', WebkitBackgroundClip: 'text', backgroundClip: 'text' }}>
+              <span style={{ WebkitTextFillColor: 'transparent', background: 'linear-gradient(135deg,#004D4D,#339999)', WebkitBackgroundClip: 'text', backgroundClip: 'text' }}>
                 with confidence.
               </span>
             </h1>
@@ -149,7 +149,7 @@ export default function LoginPage() {
                 <div key={label} className="flex items-start gap-4">
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
                     style={{ background: 'rgba(249,115,22,.15)', border: '1px solid rgba(249,115,22,.2)' }}>
-                    <Icon size={16} className="text-orange-400" />
+                    <Icon size={16} className="text-brand-400" />
                   </div>
                   <div>
                     <p className="text-white text-sm font-semibold">{label}</p>
@@ -180,7 +180,7 @@ export default function LoginPage() {
           {/* Mobile logo */}
           <div className="flex items-center gap-2.5 mb-10 lg:hidden">
             <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-white text-sm"
-              style={{ background: 'linear-gradient(135deg,#f97316,#ea580c)' }}>P</div>
+              style={{ background: 'linear-gradient(135deg,#004D4D,#003939)' }}>P</div>
             <span className="text-slate-900 font-bold text-lg">PayNPik</span>
           </div>
 

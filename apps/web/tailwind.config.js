@@ -4,25 +4,39 @@ export default {
   theme: {
     extend: {
       colors: {
+        // VEZEOR brand — Deep Teal. Primary actions, headers, navigation.
         brand: {
-          25:  '#fffbf5',
-          50:  '#fff7ed',
-          100: '#ffedd5',
-          200: '#fed7aa',
-          300: '#fdba74',
-          400: '#fb923c',
-          500: '#f97316',
-          600: '#ea580c',
-          700: '#c2410c',
-          800: '#9a3412',
-          900: '#7c2d12',
+          25:  '#f2f7f7',
+          50:  '#e6f2f2',
+          100: '#cce5e5',
+          200: '#99cccc',
+          300: '#66b2b2',
+          400: '#339999',
+          500: '#006666',
+          600: '#005757',
+          700: '#004D4D',
+          800: '#003939',
+          900: '#002424',
+        },
+        // Rich Gold accent — CTA highlights, badges, special-offer pills.
+        gold: {
+          50:  '#fdf9ec',
+          100: '#faf0c4',
+          200: '#f5e288',
+          300: '#efd24c',
+          400: '#e7c439',
+          500: '#D4AF37',
+          600: '#b89530',
+          700: '#8c7124',
+          800: '#604e19',
+          900: '#3a2f0f',
         },
         navy: {
           700: '#1e293b',
           800: '#0f172a',
           900: '#080f1e',
         },
-        canvas: '#f0f2f8',  /* page background */
+        canvas: '#F8F9FA',  /* alabaster page background */
       },
       fontFamily: {
         sans:    ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
@@ -41,7 +55,7 @@ export default {
         'md':   '0 4px 12px -1px rgb(0 0 0 / .08), 0 2px 6px -2px rgb(0 0 0 / .06)',
         'lg':   '0 8px 24px -4px rgb(0 0 0 / .10), 0 4px 8px -4px rgb(0 0 0 / .06)',
         'pop':  '0 12px 32px -4px rgb(0 0 0 / .14), 0 4px 8px -2px rgb(0 0 0 / .08)',
-        'glow': '0 0 0 3px rgb(249 115 22 / .18)',
+        'glow': '0 0 0 3px rgb(0 77 77 / .18)',
         'inner-brand': 'inset 0 1px 0 0 rgb(255 255 255 / .12)',
       },
       borderRadius: {

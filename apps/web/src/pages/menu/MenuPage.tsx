@@ -1271,7 +1271,7 @@ export default function MenuPage() {
                                   {item.isPopular && <span className="badge badge-orange text-[10px]"><Star size={8} fill="currentColor" /> Popular</span>}
                                   {!item.isAvailable && <span className="badge badge-red text-[10px]">Unavailable</span>}
                                   {!item.isDisplayed && <span className="badge badge-slate text-[10px] flex items-center gap-0.5"><EyeOff size={9} /> Hidden</span>}
-                                  {item.isBundle && <span className="badge text-[10px] bg-orange-50 text-orange-700 border border-orange-200">Bundle · {item.maxBundleSelections ? `pick ${item.maxBundleSelections}/${(item.bundleChildren || []).length}` : (item.bundleChildren || []).length}</span>}
+                                  {item.isBundle && <span className="badge text-[10px] bg-brand-50 text-brand-900 border border-brand-200">Bundle · {item.maxBundleSelections ? `pick ${item.maxBundleSelections}/${(item.bundleChildren || []).length}` : (item.bundleChildren || []).length}</span>}
                                   {item.hasLimitedStock && (
                                     <span className={clsx(
                                       'badge text-[10px] flex items-center gap-1',
@@ -2564,7 +2564,7 @@ function BundleSection({
           type="checkbox"
           checked={isBundle}
           onChange={(e) => setIsBundle(e.target.checked)}
-          className="w-4 h-4 accent-orange-500 rounded"
+          className="w-4 h-4 accent-brand-700 rounded"
         />
         <span className="text-sm font-bold text-slate-700">This item is a bundle</span>
         <span className="text-[10px] text-slate-400">
@@ -2652,7 +2652,7 @@ function BundleSection({
             })
           )}
 
-          <button type="button" onClick={addRow} className="text-xs font-semibold text-orange-600 hover:text-orange-700 inline-flex items-center gap-1">
+          <button type="button" onClick={addRow} className="text-xs font-semibold text-brand-800 hover:text-brand-900 inline-flex items-center gap-1">
             <Plus size={12} /> Add component
           </button>
         </div>

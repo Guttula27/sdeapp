@@ -181,7 +181,7 @@ export default function SettingsPage() {
       <div className="card overflow-hidden">
         <div className="h-24 bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 relative">
           <div className="absolute -bottom-8 left-6">
-            <div className="w-16 h-16 bg-gradient-to-br from-brand-500 to-orange-400 rounded-2xl border-4 border-white flex items-center justify-center shadow-lg">
+            <div className="w-16 h-16 bg-gradient-to-br from-brand-500 to-brand-400 rounded-2xl border-4 border-white flex items-center justify-center shadow-lg">
               <span className="text-white font-black text-2xl">{user?.name?.[0]}</span>
             </div>
           </div>

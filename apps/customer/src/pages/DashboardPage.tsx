@@ -38,7 +38,7 @@ const STATUS_LABEL: Record<string, string> = {
 const STATUS_TONE: Record<string, string> = {
   CREATED: 'bg-blue-100 text-blue-700',
   QUEUED: 'bg-yellow-100 text-yellow-700',
-  PREPARING: 'bg-orange-100 text-orange-700',
+  PREPARING: 'bg-brand-100 text-brand-900',
   READY: 'bg-emerald-100 text-emerald-700',
   OUT_FOR_SERVICE: 'bg-teal-100 text-teal-700',
   SERVED: 'bg-slate-100 text-slate-600',
@@ -144,7 +144,7 @@ export default function DashboardPage() {
               {stats.daily.map(d => (
                 <div key={d.date} className="flex-1 flex flex-col items-center gap-1">
                   <div
-                    className="w-full bg-gradient-to-t from-brand-500 to-orange-400 rounded-t-md hover:opacity-80 transition-opacity"
+                    className="w-full bg-gradient-to-t from-brand-500 to-brand-400 rounded-t-md hover:opacity-80 transition-opacity"
                     style={{ height: `${(d.orders / maxDaily) * 100}%`, minHeight: d.orders ? 4 : 0 }}
                     title={`${dayjs(d.date).format('DD MMM')} — ${d.orders} orders · ₹${d.value.toFixed(0)}`}
                   />
@@ -257,7 +257,7 @@ export default function DashboardPage() {
 
 function KpiCard({ label, value, icon: Icon, tone }: { label: string; value: number | string; icon: any; tone: 'orange' | 'emerald' }) {
   const tones = {
-    orange:  { iconBg: 'bg-orange-100 text-orange-600' },
+    orange:  { iconBg: 'bg-brand-100 text-brand-800' },
     emerald: { iconBg: 'bg-emerald-100 text-emerald-600' },
   } as const;
   return (

@@ -30,7 +30,7 @@ type ItemStatus = 'PENDING' | 'PREPARING' | 'READY' | 'SERVED' | 'CANCELLED';
 
 const ITEM_STATUS: Record<ItemStatus, { label: string; bg: string; text: string; border: string; dot: string }> = {
   PENDING:   { label: 'Pending',   bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', dot: '#94a3b8' },
-  PREPARING: { label: 'Preparing', bg: '#fff7ed', text: '#c2410c', border: '#fed7aa', dot: '#f97316' },
+  PREPARING: { label: 'Preparing', bg: '#e6f2f2', text: '#002424', border: '#cce5e5', dot: '#004D4D' },
   READY:     { label: 'Ready',     bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', dot: '#10b981' },
   SERVED:    { label: 'Served',    bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', dot: '#14b8a6' },
   CANCELLED: { label: 'Cancelled', bg: '#fff1f2', text: '#be123c', border: '#fecdd3', dot: '#ef4444' },
@@ -52,7 +52,7 @@ const STEP_ORDER: ItemStatus[] = ['PENDING', 'PREPARING', 'READY', 'SERVED'];
 
 function timerColor(mins: number) {
   if (mins < 10) return { card: '#f0fdf4', border: '#86efac', timer: '#15803d', badge: '#dcfce7', badgeText: '#166534' };
-  if (mins < 20) return { card: '#fff7ed', border: '#fdba74', timer: '#c2410c', badge: '#ffedd5', badgeText: '#9a3412' };
+  if (mins < 20) return { card: '#e6f2f2', border: '#66b2b2', timer: '#002424', badge: '#e6f2f2', badgeText: '#002424' };
   return       { card: '#fff1f2', border: '#fca5a5', timer: '#be123c', badge: '#ffe4e6', badgeText: '#9f1239' };
 }
 
@@ -346,7 +346,7 @@ export default function KitchenPage() {
             </p>
           </div>
           {myStation && (
-            <span className="ml-1 text-[10px] font-bold px-2 py-1 rounded-full bg-orange-100 text-orange-700 border border-orange-200">
+            <span className="ml-1 text-[10px] font-bold px-2 py-1 rounded-full bg-brand-100 text-brand-900 border border-brand-200">
               {myStation.name.toUpperCase()}
             </span>
           )}
@@ -358,7 +358,7 @@ export default function KitchenPage() {
         </div>
         <div className="flex items-center gap-3">
           {visibleOrders.length > 0 && (
-            <div className="flex items-center gap-2 bg-orange-50 border border-orange-200 text-orange-700 px-4 py-2 rounded-xl text-sm font-bold">
+            <div className="flex items-center gap-2 bg-brand-50 border border-brand-200 text-brand-900 px-4 py-2 rounded-xl text-sm font-bold">
               <Flame size={14} /> {visibleOrders.length} order{visibleOrders.length === 1 ? '' : 's'} active
             </div>
           )}
@@ -450,13 +450,13 @@ export default function KitchenPage() {
             onClick={() => setSummaryExpanded((v) => !v)}
             className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors text-left"
           >
-            <div className="w-9 h-9 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-brand-100 text-brand-800 flex items-center justify-center shrink-0">
               <Utensils size={16} />
             </div>
             <div className="min-w-0">
               <p className="text-sm font-bold text-slate-800">Items to Prepare</p>
               <p className="text-xs text-slate-500 mt-0.5">
-                <span className="font-bold text-orange-600">{grandTotal}</span>{' '}
+                <span className="font-bold text-brand-800">{grandTotal}</span>{' '}
                 item{grandTotal === 1 ? '' : 's'} across {itemAggregates.length} variant{itemAggregates.length === 1 ? '' : 's'}
               </p>
             </div>
@@ -499,7 +499,7 @@ export default function KitchenPage() {
                         {r.variant && <span className="text-slate-400"> ({r.variant})</span>}
                       </td>
                       <td className="py-1.5 text-right text-slate-500">{r.pending || '—'}</td>
-                      <td className="py-1.5 text-right text-orange-600">{r.preparing || '—'}</td>
+                      <td className="py-1.5 text-right text-brand-800">{r.preparing || '—'}</td>
                       <td className="py-1.5 text-right text-emerald-600">{r.ready || '—'}</td>
                       <td className="py-1.5 text-right font-bold text-slate-900">{r.total}</td>
                     </tr>
@@ -598,7 +598,7 @@ export default function KitchenPage() {
                       >
                         <div className="flex items-start gap-2">
                           <div className="w-8 h-8 rounded-lg flex items-center justify-center font-black text-white text-xs shrink-0"
-                            style={{ background: 'linear-gradient(135deg,#f97316,#ea580c)' }}>
+                            style={{ background: 'linear-gradient(135deg,#004D4D,#003939)' }}>
                             {item.quantity}
                           </div>
                           <div className="flex-1 min-w-0">
@@ -650,7 +650,7 @@ export default function KitchenPage() {
                                         ? 'linear-gradient(135deg,#14b8a6,#0d9488)'
                                         : status === 'PREPARING'
                                           ? 'linear-gradient(135deg,#10b981,#059669)'
-                                          : 'linear-gradient(135deg,#f97316,#ea580c)',
+                                          : 'linear-gradient(135deg,#004D4D,#003939)',
                                       color: '#fff',
                                     }}
                                   >

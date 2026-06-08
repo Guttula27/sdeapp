@@ -253,7 +253,7 @@ export default function ServiceStationsPage() {
                     <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500 flex items-center gap-1">
                       <UsersIcon size={11} /> Service Staff
                     </label>
-                    <button onClick={() => setWorkerPicker(station)} className="text-[10px] font-semibold text-orange-600 hover:text-orange-700">Manage</button>
+                    <button onClick={() => setWorkerPicker(station)} className="text-[10px] font-semibold text-brand-800 hover:text-brand-900">Manage</button>
                   </div>
                   {station.workers.length === 0 ? (
                     <p className="text-xs text-slate-400 italic">No staff assigned.</p>
@@ -278,7 +278,7 @@ export default function ServiceStationsPage() {
                         disabled={!station.tableType}
                         className={clsx(
                           'text-[10px] font-semibold',
-                          station.tableType ? 'text-orange-600 hover:text-orange-700' : 'text-slate-300 cursor-not-allowed',
+                          station.tableType ? 'text-brand-800 hover:text-brand-900' : 'text-slate-300 cursor-not-allowed',
                         )}
                         title={!station.tableType ? 'Pick a section first' : ''}
                       >
@@ -437,7 +437,7 @@ function WorkerPicker({
             return (
               <label key={u.id} className={clsx(
                 'flex items-center justify-between gap-2 px-3 py-2 rounded-lg border cursor-pointer',
-                checked ? 'border-orange-200 bg-orange-50' : 'border-slate-200 bg-white hover:bg-slate-50',
+                checked ? 'border-brand-200 bg-brand-50' : 'border-slate-200 bg-white hover:bg-slate-50',
               )}>
                 <div className="flex flex-col">
                   <span className="text-xs font-semibold text-slate-800">{u.name}</span>
@@ -529,7 +529,7 @@ function TablePicker({
       ) : (
         <>
           <div className="flex gap-2 mb-3 text-[11px] font-semibold">
-            <button onClick={selectAll} className="text-orange-600 hover:text-orange-700">Select all</button>
+            <button onClick={selectAll} className="text-brand-800 hover:text-brand-900">Select all</button>
             <span className="text-slate-300">·</span>
             <button onClick={clearAll} className="text-slate-500 hover:text-red-500">Clear</button>
           </div>
@@ -548,8 +548,8 @@ function TablePicker({
                         className={clsx(
                           'px-3 py-2 rounded-lg border text-xs font-bold transition-colors',
                           checked
-                            ? 'border-orange-300 bg-orange-50 text-orange-700'
-                            : 'border-slate-200 bg-white text-slate-700 hover:border-orange-200',
+                            ? 'border-brand-300 bg-brand-50 text-brand-900'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-brand-200',
                         )}
                       >
                         #{t.number}

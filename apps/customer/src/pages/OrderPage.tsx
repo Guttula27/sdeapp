@@ -547,7 +547,7 @@ export default function OrderPage() {
             {isLoggedIn ? (
               <button
                 onClick={() => navigate('/profile')}
-                className="w-8 h-8 bg-gradient-to-br from-brand-500 to-orange-400 rounded-full flex items-center justify-center text-white font-black text-sm"
+                className="w-8 h-8 bg-gradient-to-br from-brand-500 to-brand-400 rounded-full flex items-center justify-center text-white font-black text-sm"
                 title={`Signed in as ${user?.name}`}
               >
                 {user?.name?.[0]}
@@ -590,7 +590,7 @@ export default function OrderPage() {
                   className={clsx(
                     'px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap flex-shrink-0 transition-all',
                     activeMenuId === m.id
-                      ? 'bg-gradient-to-r from-brand-500 to-orange-400 text-white shadow-lg ring-1 ring-brand-300/50'
+                      ? 'bg-gradient-to-r from-brand-500 to-brand-400 text-white shadow-lg ring-1 ring-brand-300/50'
                       : 'bg-white/10 text-slate-200 hover:bg-white/20',
                   )}
                 >
@@ -650,9 +650,9 @@ export default function OrderPage() {
 
       {/* ── Active offers banner ─────────────────────────────── */}
       {activeOffers.length > 0 && (
-        <div className="bg-gradient-to-r from-orange-50 to-amber-50 border-y border-orange-200 px-4 py-2 flex items-center gap-3 overflow-x-auto">
+        <div className="bg-gradient-to-r from-brand-50 to-amber-50 border-y border-brand-200 px-4 py-2 flex items-center gap-3 overflow-x-auto">
           {activeOffers.map((o: any) => (
-            <div key={o.id} className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold text-orange-800 bg-white/80 rounded-full px-2.5 py-1">
+            <div key={o.id} className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold text-brand-800 bg-white/80 rounded-full px-2.5 py-1">
               🎁 {o.triggerType === 'MIN_BILL'
                 ? `Spend ₹${o.minBillAmount} → get ${o.getItem?.name || 'free item'}`
                 : `Buy ${o.buyQuantity}× ${o.buyItem?.name || 'item'} → ${o.getQuantity}× ${o.getItem?.name || 'item'} free`}
@@ -793,7 +793,7 @@ export default function OrderPage() {
         <div className="fixed bottom-24 inset-x-4 z-40 max-w-[440px] mx-auto">
           <button
             onClick={() => setShowCart(true)}
-            className="w-full bg-gradient-to-r from-brand-500 to-orange-400 text-white font-bold py-4 rounded-2xl shadow-xl flex items-center px-5"
+            className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-4 rounded-2xl shadow-xl flex items-center px-5"
           >
             <span className="bg-white/20 rounded-xl w-7 h-7 flex items-center justify-center text-sm font-black mr-3">
               {cartCount}
@@ -854,7 +854,7 @@ export default function OrderPage() {
                       <p className="text-[11px] text-indigo-600 mt-0.5">+ {item.toppings.map(t => t.label).join(', ')}</p>
                     )}
                     {item.bundleSelectionLabels?.length && (
-                      <p className="text-[11px] text-orange-600 mt-0.5">Picks: {item.bundleSelectionLabels.join(', ')}</p>
+                      <p className="text-[11px] text-brand-800 mt-0.5">Picks: {item.bundleSelectionLabels.join(', ')}</p>
                     )}
                     <p className="text-sm font-bold text-brand-600 mt-0.5">₹{(item.price * item.quantity).toFixed(2)}</p>
                   </div>
@@ -906,7 +906,7 @@ export default function OrderPage() {
               <button
                 onClick={isPostpaidTable ? placePostpaid : goToPay}
                 disabled={placing || (!!openStatus && !openStatus.isOpen)}
-                className="w-full bg-gradient-to-r from-brand-500 to-orange-400 text-white font-bold py-4 rounded-2xl text-base shadow-lg disabled:opacity-60 disabled:cursor-not-allowed transition-all active:scale-[.98]"
+                className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-4 rounded-2xl text-base shadow-lg disabled:opacity-60 disabled:cursor-not-allowed transition-all active:scale-[.98]"
               >
                 {openStatus && !openStatus.isOpen
                   ? 'Outlet closed'
@@ -1337,7 +1337,7 @@ function ItemDetailModal({
               }
             }}
             disabled={maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks}
-            className="flex-1 bg-gradient-to-r from-orange-500 to-orange-600 text-white py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 bg-brand-700 hover:bg-brand-800 text-white py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks
               ? `Pick ${maxBundlePicks - bundleSel.size} more`

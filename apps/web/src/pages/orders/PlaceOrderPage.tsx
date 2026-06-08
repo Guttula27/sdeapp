@@ -490,7 +490,7 @@ export default function PlaceOrderPage() {
                     className={clsx(
                       'px-4 py-1.5 rounded-xl text-sm font-bold whitespace-nowrap shrink-0 transition-all',
                       activeMenuId === m.id
-                        ? 'bg-gradient-to-r from-brand-500 to-orange-400 text-white shadow-lg ring-1 ring-brand-300/50'
+                        ? 'bg-gradient-to-r from-brand-500 to-brand-400 text-white shadow-lg ring-1 ring-brand-300/50'
                         : 'bg-white/10 text-slate-200 hover:bg-white/20',
                     )}
                   >
@@ -877,7 +877,7 @@ export default function PlaceOrderPage() {
                     <button
                       onClick={placePostpaid}
                       disabled={!cart.length || placing || outletClosed || !tableId}
-                      className="w-full bg-gradient-to-r from-brand-500 to-orange-500 text-white py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+                      className="w-full bg-gradient-to-r from-brand-500 to-brand-700 text-white py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50"
                     >
                       {placing && <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
                       <Plus size={14} /> {openOrder ? 'Add to Order' : 'Place Order'}
@@ -1121,7 +1121,7 @@ function ItemDetailDialog({
           </div>
           <button
             onClick={() => onAdd(variant, toppings, qty)}
-            className="flex-1 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-bold py-2.5 rounded-xl text-sm"
+            className="flex-1 bg-brand-700 hover:bg-brand-800  text-white font-bold py-2.5 rounded-xl text-sm"
           >
             Add {qty} for ₹{lineTotal.toFixed(0)}
           </button>

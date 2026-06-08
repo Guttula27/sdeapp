@@ -16,7 +16,7 @@ import { useCustomerAlerts } from '../context/CustomerAlertsContext';
 const STEPS = [
   { status: 'CREATED',         label: 'Placed',          icon: CheckCircle2, color: 'bg-blue-500' },
   { status: 'QUEUED',          label: 'Queued',          icon: Clock,        color: 'bg-yellow-500' },
-  { status: 'PREPARING',       label: 'Preparing',       icon: ChefHat,      color: 'bg-orange-500' },
+  { status: 'PREPARING',       label: 'Preparing',       icon: ChefHat,      color: 'bg-brand-700' },
   { status: 'READY',           label: 'Ready',           icon: Bell,         color: 'bg-emerald-500' },
   { status: 'OUT_FOR_SERVICE', label: 'On its way',      icon: Package2,     color: 'bg-teal-500' },
   { status: 'SERVED',          label: 'Served',          icon: Package2,     color: 'bg-slate-500' },
@@ -25,7 +25,7 @@ const STEPS = [
 const STATUS_MSG: Record<string, { title: string; sub: string; emoji: string; cls: string }> = {
   CREATED:         { title: 'Order placed!',          sub: 'Waiting for confirmation.',         emoji: '🎉', cls: 'bg-blue-50 border-blue-200 text-blue-800' },
   QUEUED:          { title: 'Order queued',           sub: 'Sending to kitchen now.',           emoji: '✅', cls: 'bg-yellow-50 border-yellow-200 text-yellow-800' },
-  PREPARING:       { title: 'Chef is cooking…',       sub: 'Sit tight — almost there!',         emoji: '🍳', cls: 'bg-orange-50 border-orange-200 text-orange-800' },
+  PREPARING:       { title: 'Chef is cooking…',       sub: 'Sit tight — almost there!',         emoji: '🍳', cls: 'bg-brand-50 border-brand-200 text-brand-800' },
   READY:           { title: 'Your food is ready!',    sub: 'Please collect your order.',        emoji: '🔔', cls: 'bg-emerald-50 border-emerald-200 text-emerald-800' },
   OUT_FOR_SERVICE: { title: 'On its way to you',      sub: 'Our staff is bringing it across.',  emoji: '🚶', cls: 'bg-teal-50 border-teal-200 text-teal-800' },
   SERVED:          { title: 'Enjoy your meal!',       sub: 'Hope you love every bite.',         emoji: '😋', cls: 'bg-slate-50 border-slate-200 text-slate-700' },
@@ -151,7 +151,7 @@ export default function OrderTrackingPage() {
 
   /* ── error state ────────────────────────────────────────── */
   if (loadError) return (
-    <div className="h-dvh flex items-center justify-center bg-gradient-to-br from-brand-500 to-orange-400 px-6">
+    <div className="h-dvh flex items-center justify-center bg-gradient-to-br from-brand-500 to-brand-400 px-6">
       <div className="bg-white rounded-3xl shadow-pop p-8 max-w-sm w-full text-center">
         <div className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center mx-auto">
           <AlertTriangle size={22} />
@@ -160,7 +160,7 @@ export default function OrderTrackingPage() {
         <p className="mt-1 text-sm text-slate-500">{loadError}</p>
         <button
           onClick={() => navigate('/')}
-          className="mt-6 w-full bg-gradient-to-r from-brand-500 to-orange-400 text-white font-bold py-3 rounded-2xl text-sm shadow"
+          className="mt-6 w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-3 rounded-2xl text-sm shadow"
         >
           Start over
         </button>
@@ -170,7 +170,7 @@ export default function OrderTrackingPage() {
 
   /* ── loading state ──────────────────────────────────────── */
   if (!order) return (
-    <div className="h-dvh flex items-center justify-center bg-gradient-to-br from-brand-500 to-orange-400">
+    <div className="h-dvh flex items-center justify-center bg-gradient-to-br from-brand-500 to-brand-400">
       <div className="text-center">
         <div className="w-14 h-14 border-4 border-white/40 border-t-white rounded-full animate-spin mx-auto" />
         <p className="text-white/80 text-sm mt-3 font-medium">Loading order…</p>
@@ -504,7 +504,7 @@ export default function OrderTrackingPage() {
           {isDone && (
             <button
               onClick={() => navigate('/')}
-              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-brand-500 to-orange-400 text-white font-bold py-4 rounded-2xl shadow-lg text-base"
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-4 rounded-2xl shadow-lg text-base"
             >
               <RotateCcw size={17} /> Start New Order
             </button>
@@ -573,14 +573,14 @@ type ItemStatus = 'PENDING' | 'PREPARING' | 'READY' | 'SERVED' | 'CANCELLED';
 
 const ITEM_STEPS: { key: ItemStatus; label: string; color: string }[] = [
   { key: 'PENDING',   label: 'Queued',    color: '#94a3b8' },
-  { key: 'PREPARING', label: 'Cooking',   color: '#f97316' },
+  { key: 'PREPARING', label: 'Cooking',   color: '#004D4D' },
   { key: 'READY',     label: 'Ready',     color: '#10b981' },
   { key: 'SERVED',    label: 'Served',    color: '#14b8a6' },
 ];
 
 const ITEM_BADGE: Record<ItemStatus, { bg: string; text: string; border: string; label: string; emoji: string }> = {
   PENDING:   { bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', label: 'Queued',    emoji: '⏳' },
-  PREPARING: { bg: '#fff7ed', text: '#c2410c', border: '#fed7aa', label: 'Cooking',   emoji: '🍳' },
+  PREPARING: { bg: '#e6f2f2', text: '#002424', border: '#cce5e5', label: 'Cooking',   emoji: '🍳' },
   READY:     { bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', label: 'Ready',     emoji: '🔔' },
   SERVED:    { bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', label: 'Served',    emoji: '✓'  },
   CANCELLED: { bg: '#fff1f2', text: '#be123c', border: '#fecdd3', label: 'Cancelled', emoji: '✕'  },
@@ -601,7 +601,7 @@ function ItemProgressRow({ item, onReviewSaved }: { item: any; onReviewSaved?: (
   return (
     <div className={clsx(
       'border rounded-2xl p-3',
-      isBlinking ? 'border-orange-400 animate-blink ring-2 ring-orange-300' : 'border-slate-100',
+      isBlinking ? 'border-brand-400 animate-blink ring-2 ring-brand-300' : 'border-slate-100',
     )}>
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 bg-brand-50 text-brand-600 rounded-xl flex items-center justify-center font-black text-sm shrink-0">

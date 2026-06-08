@@ -225,7 +225,7 @@ export default function ToppingsPage() {
               <button
                 type="button"
                 onClick={() => setOptions(prev => [...prev, { name: '', priceAdd: 0 }])}
-                className="text-[11px] font-semibold text-orange-600 hover:text-orange-700"
+                className="text-[11px] font-semibold text-brand-800 hover:text-brand-900"
               >
                 + Add option
               </button>
