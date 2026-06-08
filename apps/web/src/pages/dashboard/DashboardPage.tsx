@@ -153,7 +153,7 @@ export default function DashboardPage() {
         </div>
         {liveCount > 0 && (
           <div className="flex items-center gap-2 bg-brand-50 border border-brand-200 text-brand-900 px-4 py-2 rounded-xl text-sm font-semibold">
-            <span className="dot-live" style={{ background: '#004D4D', boxShadow: '0 0 0 0 rgb(249 115 22 / .4)' }} />
+            <span className="dot-live" style={{ background: '#0B4245', boxShadow: '0 0 0 0 rgb(249 115 22 / .4)' }} />
             {liveCount} order{liveCount !== 1 ? 's' : ''} in progress
           </div>
         )}
@@ -195,15 +195,15 @@ export default function DashboardPage() {
             <AreaChart data={hourlyForChart} margin={{ left: -20 }}>
               <defs>
                 <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%"   stopColor="#004D4D" stopOpacity={0.2} />
-                  <stop offset="100%" stopColor="#004D4D" stopOpacity={0} />
+                  <stop offset="0%"   stopColor="#0B4245" stopOpacity={0.2} />
+                  <stop offset="100%" stopColor="#0B4245" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="4 4" stroke="#f1f5f9" vertical={false} />
               <XAxis dataKey="hour" tick={{ fontSize: 10, fill: '#94a3b8' }} tickLine={false} axisLine={false} tickFormatter={h => h.slice(0,2)} interval={3} />
               <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} tickLine={false} axisLine={false} tickFormatter={v => `₹${v >= 1000 ? `${(v/1000).toFixed(1)}k` : v}`} />
               <Tooltip content={<ChartTooltip />} />
-              <Area type="monotone" dataKey="revenue" name="Revenue" stroke="#004D4D" fill="url(#revGrad)" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#004D4D', strokeWidth: 2, stroke: '#fff' }} />
+              <Area type="monotone" dataKey="revenue" name="Revenue" stroke="#0B4245" fill="url(#revGrad)" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#0B4245', strokeWidth: 2, stroke: '#fff' }} />
             </AreaChart>
           </ResponsiveContainer>
         </div>

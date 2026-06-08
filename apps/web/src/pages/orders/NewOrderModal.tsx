@@ -275,7 +275,7 @@ export default function NewOrderModal({ open, onClose, outletId, onCreated }: Pr
                         onClick={() =>
                           setCart((c) => ({ ...c, [key]: { ...l, quantity: l.quantity + 1 } }))
                         }
-                        className="w-5 h-5 rounded-md bg-brand-700 hover:bg-brand-800 text-white inline-flex items-center justify-center"
+                        className="w-5 h-5 rounded-md bg-gold-500 hover:bg-gold-600 text-charcoal-900 inline-flex items-center justify-center"
                       >
                         <Plus size={10} />
                       </button>

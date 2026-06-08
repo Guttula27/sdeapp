@@ -277,7 +277,7 @@ function LoudAlertModal({ alert, onAcknowledge }: { alert: CustomerAlert; onAckn
         <p className="text-sm text-slate-600 mt-2 leading-relaxed whitespace-pre-line">{alert.body}</p>
         <button
           onClick={onAcknowledge}
-          className="mt-6 w-full bg-brand-700 hover:bg-brand-800  text-white font-bold py-3.5 rounded-2xl text-sm"
+          className="mt-6 w-full bg-gold-500 hover:bg-gold-600 text-charcoal-900  text-white font-bold py-3.5 rounded-2xl text-sm"
         >
           OK, on my way
         </button>

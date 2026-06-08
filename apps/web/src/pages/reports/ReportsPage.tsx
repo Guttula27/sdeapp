@@ -7,7 +7,7 @@ import { useUserRole } from '../../hooks/useUserRole';
 import api from '../../services/api';
 import dayjs from 'dayjs';
 
-const PIE_COLORS = ['#004D4D','#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6'];
+const PIE_COLORS = ['#0B4245','#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6'];
 
 const Tip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
@@ -220,7 +220,7 @@ export default function ReportsPage() {
               <XAxis dataKey="hour" tick={{ fontSize: 10, fill: '#94a3b8' }} tickLine={false} axisLine={false} interval={3} />
               <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} tickLine={false} axisLine={false} tickFormatter={v => `₹${v >= 1000 ? `${(v/1000).toFixed(1)}k` : v}`} />
               <Tooltip content={<Tip />} />
-              <Line type="monotone" dataKey="revenue" name="Revenue" stroke="#004D4D" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#004D4D', stroke: '#fff', strokeWidth: 2 }} />
+              <Line type="monotone" dataKey="revenue" name="Revenue" stroke="#0B4245" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#0B4245', stroke: '#fff', strokeWidth: 2 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>

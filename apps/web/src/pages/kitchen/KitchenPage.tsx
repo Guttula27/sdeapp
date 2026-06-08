@@ -30,7 +30,7 @@ type ItemStatus = 'PENDING' | 'PREPARING' | 'READY' | 'SERVED' | 'CANCELLED';
 
 const ITEM_STATUS: Record<ItemStatus, { label: string; bg: string; text: string; border: string; dot: string }> = {
   PENDING:   { label: 'Pending',   bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', dot: '#94a3b8' },
-  PREPARING: { label: 'Preparing', bg: '#e6f2f2', text: '#002424', border: '#cce5e5', dot: '#004D4D' },
+  PREPARING: { label: 'Preparing', bg: '#e8efef', text: '#04181a', border: '#D2E5DF', dot: '#0B4245' },
   READY:     { label: 'Ready',     bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', dot: '#10b981' },
   SERVED:    { label: 'Served',    bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', dot: '#14b8a6' },
   CANCELLED: { label: 'Cancelled', bg: '#fff1f2', text: '#be123c', border: '#fecdd3', dot: '#ef4444' },
@@ -52,7 +52,7 @@ const STEP_ORDER: ItemStatus[] = ['PENDING', 'PREPARING', 'READY', 'SERVED'];
 
 function timerColor(mins: number) {
   if (mins < 10) return { card: '#f0fdf4', border: '#86efac', timer: '#15803d', badge: '#dcfce7', badgeText: '#166534' };
-  if (mins < 20) return { card: '#e6f2f2', border: '#66b2b2', timer: '#002424', badge: '#e6f2f2', badgeText: '#002424' };
+  if (mins < 20) return { card: '#e8efef', border: '#759fa1', timer: '#04181a', badge: '#e8efef', badgeText: '#04181a' };
   return       { card: '#fff1f2', border: '#fca5a5', timer: '#be123c', badge: '#ffe4e6', badgeText: '#9f1239' };
 }
 
@@ -598,7 +598,7 @@ export default function KitchenPage() {
                       >
                         <div className="flex items-start gap-2">
                           <div className="w-8 h-8 rounded-lg flex items-center justify-center font-black text-white text-xs shrink-0"
-                            style={{ background: 'linear-gradient(135deg,#004D4D,#003939)' }}>
+                            style={{ background: 'linear-gradient(135deg,#0B4245,#073032)' }}>
                             {item.quantity}
                           </div>
                           <div className="flex-1 min-w-0">
@@ -650,7 +650,7 @@ export default function KitchenPage() {
                                         ? 'linear-gradient(135deg,#14b8a6,#0d9488)'
                                         : status === 'PREPARING'
                                           ? 'linear-gradient(135deg,#10b981,#059669)'
-                                          : 'linear-gradient(135deg,#004D4D,#003939)',
+                                          : 'linear-gradient(135deg,#0B4245,#073032)',
                                       color: '#fff',
                                     }}
                                   >

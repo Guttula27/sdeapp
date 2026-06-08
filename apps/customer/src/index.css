@@ -9,7 +9,7 @@
   html { -webkit-tap-highlight-color: transparent; }
   body {
     font-family: 'Inter', system-ui, sans-serif;
-    background: #F8F9FA;
+    background: #FAFAFA;
     -webkit-font-smoothing: antialiased;
     max-width: 480px;
     margin: 0 auto;

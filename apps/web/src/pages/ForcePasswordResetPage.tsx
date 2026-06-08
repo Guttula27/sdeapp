@@ -43,7 +43,7 @@ export default function ForcePasswordResetPage() {
   return (
     <div className="min-h-dvh flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
-        <div className="bg-brand-700 hover:bg-brand-800 px-6 py-5 text-white">
+        <div className="bg-gold-500 hover:bg-gold-600 text-charcoal-900 px-6 py-5 text-white">
           <Shield size={28} className="mb-2" />
           <p className="text-lg font-black">Set a new password</p>
           <p className="text-xs text-white/80 mt-0.5">

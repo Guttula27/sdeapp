@@ -573,14 +573,14 @@ type ItemStatus = 'PENDING' | 'PREPARING' | 'READY' | 'SERVED' | 'CANCELLED';
 
 const ITEM_STEPS: { key: ItemStatus; label: string; color: string }[] = [
   { key: 'PENDING',   label: 'Queued',    color: '#94a3b8' },
-  { key: 'PREPARING', label: 'Cooking',   color: '#004D4D' },
+  { key: 'PREPARING', label: 'Cooking',   color: '#0B4245' },
   { key: 'READY',     label: 'Ready',     color: '#10b981' },
   { key: 'SERVED',    label: 'Served',    color: '#14b8a6' },
 ];
 
 const ITEM_BADGE: Record<ItemStatus, { bg: string; text: string; border: string; label: string; emoji: string }> = {
   PENDING:   { bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', label: 'Queued',    emoji: '⏳' },
-  PREPARING: { bg: '#e6f2f2', text: '#002424', border: '#cce5e5', label: 'Cooking',   emoji: '🍳' },
+  PREPARING: { bg: '#e8efef', text: '#04181a', border: '#D2E5DF', label: 'Cooking',   emoji: '🍳' },
   READY:     { bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', label: 'Ready',     emoji: '🔔' },
   SERVED:    { bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', label: 'Served',    emoji: '✓'  },
   CANCELLED: { bg: '#fff1f2', text: '#be123c', border: '#fecdd3', label: 'Cancelled', emoji: '✕'  },

@@ -31,7 +31,7 @@
 
   /* Focus ring */
   *:focus-visible {
-    outline: 2px solid #004D4D;
+    outline: 2px solid #0B4245;
     outline-offset: 2px;
     border-radius: 4px;
   }
@@ -99,7 +99,7 @@
   /* ── Inputs ────────────────────────────────────────────── */
   .input {
     width: 100%;
-    background: #F8F9FA;
+    background: #FAFAFA;
     border: 1.5px solid #e2e8f0;
     border-radius: 10px;
     padding: .55rem 1rem;
@@ -112,7 +112,7 @@
   .input::placeholder { color: #94a3b8; }
   .input:hover  { border-color: #cbd5e1; background: #f1f5f9; }
   .input:focus  {
-    border-color: #004D4D;
+    border-color: #0B4245;
     background: #fff;
     box-shadow: 0 0 0 3px rgb(249 115 22 / .12);
   }
@@ -141,14 +141,14 @@
 
   .btn-primary {
     @apply btn;
-    background: linear-gradient(135deg, #004D4D 0%, #003939 100%);
+    background: linear-gradient(135deg, #0B4245 0%, #073032 100%);
     color: #fff;
     padding: .55rem 1.1rem;
     font-size: .875rem;
     box-shadow: 0 1px 3px rgb(234 88 12 / .35), inset 0 1px 0 rgb(255 255 255 / .15);
   }
   .btn-primary:hover:not(:disabled) {
-    background: linear-gradient(135deg, #339999 0%, #004D4D 100%);
+    background: linear-gradient(135deg, #477f82 0%, #0B4245 100%);
     box-shadow: 0 4px 12px rgb(234 88 12 / .35);
     transform: translateY(-1px);
   }
@@ -164,7 +164,7 @@
     box-shadow: 0 1px 2px rgb(0 0 0 / .05);
   }
   .btn-secondary:hover:not(:disabled) {
-    background: #F8F9FA;
+    background: #FAFAFA;
     border-color: #cbd5e1;
     box-shadow: 0 2px 6px rgb(0 0 0 / .07);
   }
@@ -205,13 +205,13 @@
     font-weight: 700;
     letter-spacing: .01em;
   }
-  .badge-orange  { background: #e6f2f2; color: #002424; border: 1px solid #cce5e5; }
+  .badge-orange  { background: #e8efef; color: #04181a; border: 1px solid #D2E5DF; }
   .badge-blue    { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
   .badge-green   { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
   .badge-red     { background: #fff1f2; color: #be123c; border: 1px solid #fecdd3; }
   .badge-yellow  { background: #fefce8; color: #a16207; border: 1px solid #fde68a; }
   .badge-purple  { background: #faf5ff; color: #7e22ce; border: 1px solid #e9d5ff; }
-  .badge-slate   { background: #F8F9FA; color: #475569; border: 1px solid #e2e8f0; }
+  .badge-slate   { background: #FAFAFA; color: #475569; border: 1px solid #e2e8f0; }
   .badge-teal    { background: #f0fdfa; color: #0f766e; border: 1px solid #99f6e4; }
   .badge-indigo  { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; }
 
@@ -221,7 +221,7 @@
   /* ── Data table ────────────────────────────────────────── */
   .data-table { width: 100%; font-size: .8125rem; border-collapse: separate; border-spacing: 0; }
   .data-table thead tr {
-    background: #F8F9FA;
+    background: #FAFAFA;
   }
   .data-table thead th {
     padding: .75rem 1rem;
@@ -289,7 +289,7 @@
     color: #64748b;
     border-color: #e2e8f0;
   }
-  .filter-pill-inactive:hover { border-color: #cbd5e1; color: #1e293b; background: #F8F9FA; }
+  .filter-pill-inactive:hover { border-color: #cbd5e1; color: #1e293b; background: #FAFAFA; }
 
   /* ── Orders page: responsive card grid ───────────────────
      Phones (<640px): a single full-width column scrolls vertically —
@@ -322,7 +322,7 @@
 @layer utilities {
   /* Gradient text */
   .text-gradient-brand {
-    background: linear-gradient(135deg, #004D4D, #339999);
+    background: linear-gradient(135deg, #0B4245, #477f82);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -380,14 +380,14 @@
   .divider { height: 1px; background: #e8eaf0; }
 
   /* Gradient backgrounds for icon containers */
-  .icon-gradient-orange { background: linear-gradient(135deg, #e6f2f2, #cce5e5); color: #002424; }
+  .icon-gradient-orange { background: linear-gradient(135deg, #e8efef, #D2E5DF); color: #04181a; }
   .icon-gradient-blue   { background: linear-gradient(135deg, #eff6ff, #dbeafe); color: #1d4ed8; }
   .icon-gradient-green  { background: linear-gradient(135deg, #f0fdf4, #dcfce7); color: #15803d; }
   .icon-gradient-purple { background: linear-gradient(135deg, #faf5ff, #ede9fe); color: #7e22ce; }
   .icon-gradient-red    { background: linear-gradient(135deg, #fff1f2, #ffe4e6); color: #be123c; }
   .icon-gradient-teal   { background: linear-gradient(135deg, #f0fdfa, #ccfbf1); color: #0f766e; }
   .icon-gradient-indigo { background: linear-gradient(135deg, #eef2ff, #e0e7ff); color: #4338ca; }
-  .icon-gradient-slate  { background: linear-gradient(135deg, #f8fafc, #f1f5f9); color: #475569; }
+  .icon-gradient-slate  { background: linear-gradient(135deg, #FAFAFA, #f1f5f9); color: #475569; }
   .icon-gradient-pink   { background: linear-gradient(135deg, #fdf2f8, #fce7f3); color: #be185d; }
 
   /* Page background with subtle grid */

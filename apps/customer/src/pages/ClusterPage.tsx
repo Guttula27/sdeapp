@@ -287,7 +287,7 @@ export default function ClusterPage() {
           name: cluster.name, description: `Cluster order ${cart.length} items`,
           prefill: user ? { name: user.name, contact: user.phone, email: user.email || undefined } : undefined,
           notes: { clusterOrderId },
-          theme: { color: '#004D4D' },
+          theme: { color: '#0B4245' },
           modal: { ondismiss: () => reject(new Error('Payment cancelled')) },
           handler: async (response: any) => {
             try {
@@ -690,7 +690,7 @@ export default function ClusterPage() {
                 </button>
                 <button
                   onClick={() => checkout(false)}
-                  className="bg-brand-700 hover:bg-brand-800 text-white font-bold py-3 rounded-xl text-sm inline-flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="bg-gold-500 hover:bg-gold-600 text-charcoal-900 font-bold py-3 rounded-xl text-sm inline-flex items-center justify-center gap-2 disabled:opacity-50"
                   disabled={paying}
                 >
                   {paying ? <Loader2 size={14} className="animate-spin" /> : null}
@@ -949,7 +949,7 @@ function ClusterItemDetailModal({
               onAdded(qty, line);
             }}
             disabled={!item.isAvailable}
-            className="flex-1 bg-brand-700 hover:bg-brand-800 text-white py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 bg-gold-500 hover:bg-gold-600 text-charcoal-900 py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Add {qty} to cart · ₹{lineTotal.toFixed(0)}
           </button>

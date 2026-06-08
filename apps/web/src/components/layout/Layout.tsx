@@ -359,7 +359,7 @@ export default function Layout() {
       {/* Logo */}
       <div className="flex items-center gap-3 px-5 h-16 border-b border-white/6 shrink-0">
         <div className="w-8 h-8 rounded-xl shrink-0 flex items-center justify-center font-black text-white text-sm shadow-lg"
-          style={{ background: 'linear-gradient(135deg,#004D4D 0%,#003939 100%)' }}>P</div>
+          style={{ background: 'linear-gradient(135deg,#0B4245 0%,#073032 100%)' }}>P</div>
         {!compact && (
           <div className="animate-fade-in overflow-hidden">
             <p className="text-white font-bold text-sm tracking-tight leading-none">PayNPik</p>
@@ -385,7 +385,7 @@ export default function Layout() {
         {!compact ? (
           <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-white/5 transition-colors cursor-default">
             <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-              style={{ background: 'linear-gradient(135deg,#004D4D,#003939)' }}>
+              style={{ background: 'linear-gradient(135deg,#0B4245,#073032)' }}>
               {user?.name?.[0]}
             </div>
             <div className="flex-1 min-w-0">
@@ -465,7 +465,7 @@ export default function Layout() {
                     : 'bg-slate-50/80 border-slate-200 hover:bg-white hover:border-slate-300',
                 )}>
                 <div className="w-6.5 h-6.5 rounded-full flex items-center justify-center text-white text-[11px] font-bold shrink-0"
-                  style={{ width: '26px', height: '26px', background: 'linear-gradient(135deg,#004D4D,#003939)' }}>
+                  style={{ width: '26px', height: '26px', background: 'linear-gradient(135deg,#0B4245,#073032)' }}>
                   {user?.name?.[0]}
                 </div>
                 <div className="hidden sm:block text-left leading-tight">
@@ -477,7 +477,7 @@ export default function Layout() {
 
               {userMenu && (
                 <div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-pop border border-slate-100 overflow-hidden z-50 animate-slide-down">
-                  <div className="px-4 py-3.5" style={{ background: 'linear-gradient(135deg,#004D4D,#003939)' }}>
+                  <div className="px-4 py-3.5" style={{ background: 'linear-gradient(135deg,#0B4245,#073032)' }}>
                     <p className="text-sm font-bold text-white">{user?.name}</p>
                     <p className="text-[11px] text-brand-100 mt-0.5">{user?.phone}</p>
                     {badge.label && (

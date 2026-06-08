@@ -205,7 +205,7 @@ export default function OffersPage() {
             Conditional freebies — “Spend ₹500, get a sweet” or “Buy 3 beers, get 1 free”.
           </p>
         </div>
-        <button onClick={openCreate} className="px-4 py-2 bg-brand-700 hover:bg-brand-800 text-white rounded-lg text-sm font-semibold inline-flex items-center gap-2">
+        <button onClick={openCreate} className="px-4 py-2 bg-gold-500 hover:bg-gold-600 text-charcoal-900 rounded-lg text-sm font-semibold inline-flex items-center gap-2">
           <Plus className="w-4 h-4" /> New Offer
         </button>
       </div>
@@ -367,7 +367,7 @@ export default function OffersPage() {
             <button type="button" onClick={() => setModal({ open: false })}
               className="px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 rounded-md">Cancel</button>
             <button type="submit" disabled={saving}
-              className="px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-800 rounded-md disabled:opacity-50">
+              className="px-4 py-2 text-sm font-semibold text-white bg-gold-500 hover:bg-gold-600 text-charcoal-900 rounded-md disabled:opacity-50">
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>

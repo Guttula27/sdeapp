@@ -95,7 +95,7 @@ function CustomerQR({ userId, name, profileImageUrl }: { userId: string; name: s
         pic.src = profileImageUrl;
       } else {
         // initial letter circle
-        ctx.fillStyle = '#004D4D';
+        ctx.fillStyle = '#0B4245';
         ctx.beginPath();
         ctx.arc(x + lw / 2, y + lw / 2, lw / 2, 0, Math.PI * 2);
         ctx.fill();

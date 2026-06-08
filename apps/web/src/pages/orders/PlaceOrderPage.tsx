@@ -1121,7 +1121,7 @@ function ItemDetailDialog({
           </div>
           <button
             onClick={() => onAdd(variant, toppings, qty)}
-            className="flex-1 bg-brand-700 hover:bg-brand-800  text-white font-bold py-2.5 rounded-xl text-sm"
+            className="flex-1 bg-gold-500 hover:bg-gold-600 text-charcoal-900  text-white font-bold py-2.5 rounded-xl text-sm"
           >
             Add {qty} for ₹{lineTotal.toFixed(0)}
           </button>

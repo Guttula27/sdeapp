@@ -4,40 +4,62 @@ export default {
   theme: {
     extend: {
       colors: {
-        // VEZEOR brand — Deep Teal. Used for primary actions, headers,
-        // navigation, body typography. Calm and authoritative; pairs
-        // well with the alabaster background and gold accents.
+        // ── VEZEOR brand — Deep Transformative Teal ────────────────
+        // Used for the top bar, navigation, active category tabs, and
+        // any "this is the app chrome" surface. NOT used for primary
+        // CTAs anymore — those moved to gold per the new brief.
         brand: {
-          50:  '#e6f2f2',
-          100: '#cce5e5',
-          200: '#99cccc',
-          300: '#66b2b2',
-          400: '#339999',
-          500: '#006666',
-          600: '#005757',
-          700: '#004D4D',
-          800: '#003939',
-          900: '#002424',
+          50:  '#e8efef',
+          100: '#d1dfdf',
+          200: '#a3bfc0',
+          300: '#759fa1',
+          400: '#477f82',
+          500: '#1f5f63',
+          600: '#144245',
+          700: '#0B4245',  // ← the canonical brand teal
+          800: '#073032',
+          900: '#04181a',
         },
-        // Rich Gold — reserved for accents, CTAs you want the eye drawn
-        // to (Pay Now, primary "Add to cart"), and badges (bestseller,
-        // popular). Use sparingly: too much gold dilutes the signal.
+        // ── Rich Antique Gold — the "money zone" ───────────────────
+        // Add to Cart, Place Order, Pay — anything tied to revenue.
+        // Pairs with charcoal text for contrast; do not use white text
+        // on gold (insufficient contrast on AAA tests).
         gold: {
-          50:  '#fdf9ec',
-          100: '#faf0c4',
-          200: '#f5e288',
-          300: '#efd24c',
-          400: '#e7c439',
-          500: '#D4AF37',
-          600: '#b89530',
-          700: '#8c7124',
-          800: '#604e19',
-          900: '#3a2f0f',
+          50:  '#f9f4e8',
+          100: '#f3e9d1',
+          200: '#e7d3a3',
+          300: '#dbbd75',
+          400: '#d0ac5f',
+          500: '#C5A059',  // ← canonical accent
+          600: '#a8884a',
+          700: '#856b3a',
+          800: '#5e4c29',
+          900: '#382d18',
         },
-        // Soft alabaster surface — replaces the previous slate-50. Less
-        // harsh than pure white in dim restaurant lighting, still feels
-        // premium next to pure-white cards.
-        canvas: '#F8F9FA',
+        // ── Soft Sage Tint ─────────────────────────────────────────
+        // Selected card fill, "you've picked this combo" backgrounds,
+        // success-state pills. Calming next to the teal chrome.
+        sage: {
+          50:  '#f0f7f4',
+          100: '#D2E5DF',  // ← canonical light accent
+          200: '#b6d3ca',
+          300: '#9ac1b5',
+          400: '#7daea0',
+          500: '#5d937e',
+          600: '#477566',
+        },
+        // ── Charcoal — main body text + button text ────────────────
+        // Softer than #000; chosen for long-session readability under
+        // restaurant lighting. Also the "dark text on gold" for CTAs.
+        charcoal: {
+          DEFAULT: '#1E2525',
+          900: '#1E2525',
+          700: '#374040',
+          500: '#4f5a5a',
+        },
+        // Clean Canvas White — main app background. Slightly off-white
+        // so food photography pops on the pure-white menu cards.
+        canvas: '#FAFAFA',
       },
       fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
       boxShadow: {
@@ -50,11 +72,11 @@ export default {
           '0%, 100%': { opacity: '1' },
           '50%':      { opacity: '0.45' },
         },
-        // Ring pulse now uses Rich Gold — pops harder against the new
-        // teal palette than the previous orange did.
+        // Ring pulse uses Rich Antique Gold so the loud-alert modal
+        // matches the CTA family the customer is being asked to act on.
         'ring-blink': {
-          '0%, 100%': { boxShadow: '0 0 0 0 rgba(212, 175, 55, 0.65)' },
-          '50%':      { boxShadow: '0 0 0 6px rgba(212, 175, 55, 0)' },
+          '0%, 100%': { boxShadow: '0 0 0 0 rgba(197, 160, 89, 0.7)' },
+          '50%':      { boxShadow: '0 0 0 6px rgba(197, 160, 89, 0)' },
         },
       },
       animation: {

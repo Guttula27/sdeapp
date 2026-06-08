@@ -9,7 +9,7 @@ import ConfirmDialog from '../../components/common/ConfirmDialog';
 import { useUserRole } from '../../hooks/useUserRole';
 
 const SWATCHES = [
-  '#004D4D', '#ef4444', '#ec4899', '#a855f7',
+  '#0B4245', '#ef4444', '#ec4899', '#a855f7',
   '#6366f1', '#0ea5e9', '#10b981', '#facc15',
   '#64748b', '#84cc16',
 ];

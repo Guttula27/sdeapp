@@ -39,7 +39,7 @@ export default function Footer() {
           <div className="lg:col-span-2">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-white text-sm shadow-md"
-                style={{ background: 'linear-gradient(135deg,#004D4D,#003939)' }}>P</div>
+                style={{ background: 'linear-gradient(135deg,#0B4245,#073032)' }}>P</div>
               <span className="font-black text-slate-900 text-lg tracking-tight">PayNPik</span>
             </div>
             <p className="mt-4 text-sm text-slate-600 max-w-xs leading-relaxed">

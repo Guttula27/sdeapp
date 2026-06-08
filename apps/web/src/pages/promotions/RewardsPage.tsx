@@ -190,7 +190,7 @@ export default function RewardsPage() {
           </Field>
           <div className="col-span-full flex justify-end pt-2">
             <button type="submit" disabled={savingCfg}
-              className="px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-800 rounded-md disabled:opacity-50">
+              className="px-4 py-2 text-sm font-semibold text-white bg-gold-500 hover:bg-gold-600 text-charcoal-900 rounded-md disabled:opacity-50">
               {savingCfg ? 'Saving…' : 'Save Config'}
             </button>
           </div>
@@ -236,7 +236,7 @@ export default function RewardsPage() {
             placeholder="Customer phone number"
             className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm" />
           <button onClick={lookupCustomer} disabled={lookingUp}
-            className="px-4 py-2 bg-brand-700 hover:bg-brand-800 text-white rounded-md text-sm font-semibold">
+            className="px-4 py-2 bg-gold-500 hover:bg-gold-600 text-charcoal-900 rounded-md text-sm font-semibold">
             {lookingUp ? 'Searching…' : 'Lookup'}
           </button>
         </div>
@@ -323,7 +323,7 @@ export default function RewardsPage() {
             <button type="button" onClick={() => setAdjustOpen(false)}
               className="px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 rounded-md">Cancel</button>
             <button type="submit"
-              className="px-4 py-2 text-sm font-semibold text-white bg-brand-700 hover:bg-brand-800 rounded-md">
+              className="px-4 py-2 text-sm font-semibold text-white bg-gold-500 hover:bg-gold-600 text-charcoal-900 rounded-md">
               Apply
             </button>
           </div>

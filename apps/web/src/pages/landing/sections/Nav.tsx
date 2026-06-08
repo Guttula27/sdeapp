@@ -31,7 +31,7 @@ export default function Nav() {
         <Link to="/" className="flex items-center gap-2.5">
           <div
             className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-white text-sm shadow-md"
-            style={{ background: 'linear-gradient(135deg,#004D4D,#003939)' }}
+            style={{ background: 'linear-gradient(135deg,#0B4245,#073032)' }}
           >
             P
           </div>

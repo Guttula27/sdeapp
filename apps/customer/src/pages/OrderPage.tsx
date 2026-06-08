@@ -1337,7 +1337,7 @@ function ItemDetailModal({
               }
             }}
             disabled={maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks}
-            className="flex-1 bg-brand-700 hover:bg-brand-800 text-white py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 bg-gold-500 hover:bg-gold-600 text-charcoal-900 py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks
               ? `Pick ${maxBundlePicks - bundleSel.size} more`

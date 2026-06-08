@@ -289,7 +289,7 @@ export default function PaymentPage() {
           description: `Order ${orderId}`,
           prefill: user ? { name: user.name, contact: user.phone, email: user.email || undefined } : undefined,
           notes: { paymentId, orderId },
-          theme: { color: '#004D4D' },
+          theme: { color: '#0B4245' },
           modal: { ondismiss: () => reject(new Error('Payment cancelled')) },
           handler: async (response: any) => {
             try {
@@ -625,7 +625,7 @@ export default function PaymentPage() {
             <button
               onClick={launchUpi}
               disabled={creating}
-              className="w-full bg-brand-700 hover:bg-brand-800 text-white py-4 rounded-2xl font-bold shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full bg-gold-500 hover:bg-gold-600 text-charcoal-900 py-4 rounded-2xl font-bold shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
             >
               Pay ₹{(TEST_UPI_AMOUNT_RUPEES ?? baseTotal).toFixed(2)} via {defaultUpiApp.name}
             </button>

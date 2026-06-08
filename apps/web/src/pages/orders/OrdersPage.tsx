@@ -16,11 +16,11 @@ import Modal from '../../components/common/Modal';
 const STATUS: Record<string, { label: string; dot: string; bg: string; text: string; border: string }> = {
   CREATED:          { label: 'Created',          dot: '#3b82f6', bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
   QUEUED:           { label: 'Queued',           dot: '#f59e0b', bg: '#fffbeb', text: '#b45309', border: '#fde68a' },
-  PREPARING:        { label: 'Preparing',        dot: '#004D4D', bg: '#e6f2f2', text: '#002424', border: '#cce5e5' },
+  PREPARING:        { label: 'Preparing',        dot: '#0B4245', bg: '#e8efef', text: '#04181a', border: '#D2E5DF' },
   READY:            { label: 'Ready',            dot: '#10b981', bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0' },
   READY_FOR_PICKUP: { label: 'Ready for Pickup', dot: '#2563eb', bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
   OUT_FOR_SERVICE:  { label: 'Out for Service',  dot: '#14b8a6', bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4' },
-  SERVED:          { label: 'Served',          dot: '#64748b', bg: '#f8fafc', text: '#475569', border: '#e2e8f0' },
+  SERVED:          { label: 'Served',          dot: '#64748b', bg: '#FAFAFA', text: '#475569', border: '#e2e8f0' },
   CANCELLED:       { label: 'Cancelled',       dot: '#ef4444', bg: '#fff1f2', text: '#be123c', border: '#fecdd3' },
   DISPUTED:        { label: 'Disputed',        dot: '#8b5cf6', bg: '#faf5ff', text: '#7e22ce', border: '#e9d5ff' },
   RESOLVED:        { label: 'Resolved',        dot: '#0ea5e9', bg: '#f0f9ff', text: '#0369a1', border: '#bae6fd' },
@@ -71,7 +71,7 @@ type ItemStatus = 'PENDING' | 'PREPARING' | 'READY' | 'SERVED' | 'CANCELLED';
 
 const ITEM_STATUS: Record<ItemStatus, { label: string; bg: string; text: string; border: string; dot: string }> = {
   PENDING:   { label: 'Pending',   bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', dot: '#94a3b8' },
-  PREPARING: { label: 'Preparing', bg: '#e6f2f2', text: '#002424', border: '#cce5e5', dot: '#004D4D' },
+  PREPARING: { label: 'Preparing', bg: '#e8efef', text: '#04181a', border: '#D2E5DF', dot: '#0B4245' },
   READY:     { label: 'Ready',     bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', dot: '#10b981' },
   SERVED:    { label: 'Served',    bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', dot: '#14b8a6' },
   CANCELLED: { label: 'Cancelled', bg: '#fff1f2', text: '#be123c', border: '#fecdd3', dot: '#ef4444' },
@@ -405,7 +405,7 @@ export default function OrdersPage() {
             {!isReadOnly && commonNext && (
               <button
                 onClick={(e) => { e.stopPropagation(); advanceAll(e as any); }}
-                className="text-[10px] font-bold px-2 py-1 rounded-md bg-brand-700 hover:bg-brand-800 text-white"
+                className="text-[10px] font-bold px-2 py-1 rounded-md bg-gold-500 hover:bg-gold-600 text-charcoal-900"
                 title={`Mark all items as ${commonNext.label}`}
               >
                 All → {commonNext.label}
@@ -808,7 +808,7 @@ export default function OrdersPage() {
                               background:
                                 itemStatus === 'READY'     ? 'linear-gradient(135deg,#14b8a6,#0d9488)' :
                                 itemStatus === 'PREPARING' ? 'linear-gradient(135deg,#10b981,#059669)' :
-                                                              'linear-gradient(135deg,#004D4D,#003939)',
+                                                              'linear-gradient(135deg,#0B4245,#073032)',
                             }}
                           >
                             <next.icon size={12} /> {next.label}
