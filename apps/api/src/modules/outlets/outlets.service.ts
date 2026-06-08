@@ -399,6 +399,62 @@ export class OutletsService {
     });
   }
 
+  // List every menu available in the section's business and whether it
+  // is currently enabled in this section. Default is "enabled" — only
+  // explicit exclusion rows hide a menu. The outlet's default menu is
+  // always reported as locked-on; an admin can't disable it.
+  async listSectionMenus(sectionId: string) {
+    const section = await this.prisma.section.findUnique({
+      where: { id: sectionId },
+      include: { outlet: { select: { businessId: true } } },
+    });
+    if (!section) throw new NotFoundException('Section not found');
+
+    const [menus, exclusions] = await Promise.all([
+      this.prisma.menu.findMany({
+        where: { businessId: section.outlet.businessId },
+        orderBy: [{ isDefault: 'desc' }, { displayOrder: 'asc' }, { createdAt: 'asc' }],
+      }),
+      this.prisma.menuSectionExclusion.findMany({ where: { sectionId } }),
+    ]);
+    const excluded = new Set(exclusions.map((e) => e.menuId));
+    return menus.map((m) => ({
+      id: m.id,
+      name: m.name,
+      isDefault: m.isDefault,
+      isLocked: m.isDefault,
+      isEnabled: m.isDefault ? true : !excluded.has(m.id),
+    }));
+  }
+
+  async setSectionMenuEnabled(sectionId: string, menuId: string, isEnabled: boolean) {
+    const [section, menu] = await Promise.all([
+      this.prisma.section.findUnique({
+        where: { id: sectionId },
+        include: { outlet: { select: { businessId: true } } },
+      }),
+      this.prisma.menu.findUnique({ where: { id: menuId } }),
+    ]);
+    if (!section) throw new NotFoundException('Section not found');
+    if (!menu) throw new NotFoundException('Menu not found');
+    if (menu.businessId !== section.outlet.businessId) {
+      throw new BadRequestException("Menu does not belong to this section's business");
+    }
+    if (menu.isDefault && !isEnabled) {
+      throw new BadRequestException('The default menu cannot be disabled');
+    }
+    if (isEnabled) {
+      await this.prisma.menuSectionExclusion.deleteMany({ where: { sectionId, menuId } });
+    } else {
+      await this.prisma.menuSectionExclusion.upsert({
+        where: { menuId_sectionId: { menuId, sectionId } },
+        update: {},
+        create: { menuId, sectionId },
+      });
+    }
+    return { sectionId, menuId, isEnabled };
+  }
+
   async createTable(outletId: string, data: CreateTableDto) {
     await this.assertOutletAllowsSeating(outletId);
     return this.prisma.table.create({ data: { ...data, outletId } });

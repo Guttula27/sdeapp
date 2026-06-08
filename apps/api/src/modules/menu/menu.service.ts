@@ -70,20 +70,38 @@ export class MenuService {
         });
         const enabled = new Set<string>(links.map((l) => l.menuId));
         if (defaultMenu) enabled.add(defaultMenu.id);
-        // Section-level disables (when a table QR is scanned)
+        // Table-type-level disables (legacy / "Patio table" style grouping)
+        // AND section-level disables (physical area: "VIP room", "Bar"
+        // etc.). Both apply when a table QR is scanned — section wins
+        // when both reference the same menu (more specific to the
+        // physical location the customer is sitting in).
         if (tableId) {
           const table = await this.prisma.table.findUnique({
             where: { id: tableId },
-            select: { tableTypeId: true, outletId: true },
+            select: { tableTypeId: true, sectionId: true, outletId: true },
           });
-          if (table && table.outletId === outletId && table.tableTypeId) {
-            const sectionDisabled = await this.prisma.tableTypeMenu.findMany({
-              where: { tableTypeId: table.tableTypeId, isEnabled: false },
-              select: { menuId: true },
-            });
-            for (const s of sectionDisabled) {
-              if (defaultMenu && s.menuId === defaultMenu.id) continue;
-              enabled.delete(s.menuId);
+          if (table && table.outletId === outletId) {
+            if (table.tableTypeId) {
+              const sectionDisabled = await this.prisma.tableTypeMenu.findMany({
+                where: { tableTypeId: table.tableTypeId, isEnabled: false },
+                select: { menuId: true },
+              });
+              for (const s of sectionDisabled) {
+                if (defaultMenu && s.menuId === defaultMenu.id) continue;
+                enabled.delete(s.menuId);
+              }
+            }
+            if (table.sectionId) {
+              const sectionDisables = await this.prisma.menuSectionExclusion.findMany({
+                where: { sectionId: table.sectionId },
+                select: { menuId: true },
+              });
+              for (const s of sectionDisables) {
+                // The default menu is the floor — never disabled, even
+                // if an admin accidentally adds an exclusion row for it.
+                if (defaultMenu && s.menuId === defaultMenu.id) continue;
+                enabled.delete(s.menuId);
+              }
             }
           }
         }

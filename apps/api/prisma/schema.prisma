@@ -530,8 +530,13 @@ model Section {
   outletId String
   outlet   Outlet  @relation(fields: [outletId], references: [id])
 
-  tables Table[]
-  orders Order[]
+  tables          Table[]
+  orders          Order[]
+  // Menus that are explicitly DISABLED in this section. Absent row =
+  // menu visible here (default). Used when a customer scans a table QR
+  // and we need to hide certain menus only for that physical area
+  // (e.g. "Bar menu" hidden in the "Kids' room" section).
+  menuExclusions  MenuSectionExclusion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -653,11 +658,12 @@ model Menu {
   // always exactly one isDefault=true per business.
   isDefault    Boolean @default(false)
 
-  timingSlots    MenuTimingSlot[]
-  categories     Category[]
-  outletLinks    OutletMenu[]
-  orderItems     OrderItem[]
-  tableTypeLinks TableTypeMenu[]
+  timingSlots       MenuTimingSlot[]
+  categories        Category[]
+  outletLinks       OutletMenu[]
+  orderItems        OrderItem[]
+  tableTypeLinks    TableTypeMenu[]
+  sectionExclusions MenuSectionExclusion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1024,6 +1030,22 @@ model Order {
 // outletId is UNIQUE so an outlet can be in at most one cluster at any time
 // — the "cluster-exclusive while linked" rule. Removing this row releases
 // the outlet back to standalone operation.
+// Section-level menu disables. A row here means: this menu is NOT
+// available when ordering from this section. Empty default = menu
+// visible everywhere. Used by the customer menu fetch when a table
+// QR is scanned (server resolves table → section → exclusions).
+model MenuSectionExclusion {
+  menuId    String
+  sectionId String
+  menu      Menu    @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  section   Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([menuId, sectionId])
+  @@index([sectionId])
+  @@map("paynpik_menu_section_exclusions")
+}
+
 model ClusterMember {
   id                String   @id @default(cuid())
   clusterBusinessId String

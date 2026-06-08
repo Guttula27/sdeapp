@@ -55,6 +55,20 @@ export class OutletsController {
     return this.service.getSections(outletId);
   }
 
+  @Get('sections/:sectionId/menus')
+  listSectionMenus(@Param('sectionId') sectionId: string) {
+    return this.service.listSectionMenus(sectionId);
+  }
+
+  @Patch('sections/:sectionId/menus/:menuId')
+  setSectionMenuEnabled(
+    @Param('sectionId') sectionId: string,
+    @Param('menuId') menuId: string,
+    @Body() body: { isEnabled: boolean },
+  ) {
+    return this.service.setSectionMenuEnabled(sectionId, menuId, !!body?.isEnabled);
+  }
+
   @Post(':outletId/tables')
   createTable(@Param('outletId') outletId: string, @Body() dto: CreateTableDto) {
     return this.service.createTable(outletId, dto);

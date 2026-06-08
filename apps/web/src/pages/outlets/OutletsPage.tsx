@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import {
   Store, MapPin, ShoppingBag, LayoutGrid, Plus, QrCode,
-  ChevronDown, ChevronRight, Edit2, Table2,
+  ChevronDown, ChevronRight, Edit2, Table2, ListChecks,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import { useUserRole } from '../../hooks/useUserRole';
@@ -47,6 +47,39 @@ export default function OutletsPage() {
   const [tableModal, setTableModal]     = useState<{ open: boolean; outletId?: string; sectionId?: string }>({ open: false });
   const [tableTypes, setTableTypes]     = useState<any[]>([]);
   const [qrModal, setQrModal]           = useState<{ open: boolean; qr?: any }>({ open: false });
+
+  // Section × Menu availability. When the modal opens for a section we
+  // fetch the full menu list with current isEnabled state; toggles patch
+  // immediately and locally rollback on failure (same pattern as the
+  // table-type page).
+  type SectionMenu = { id: string; name: string; isDefault: boolean; isLocked: boolean; isEnabled: boolean };
+  const [sectionMenusModal, setSectionMenusModal] = useState<{ open: boolean; sectionId?: string; sectionName?: string }>({ open: false });
+  const [sectionMenus, setSectionMenus] = useState<SectionMenu[]>([]);
+  const [sectionMenusLoading, setSectionMenusLoading] = useState(false);
+  const openSectionMenus = async (sectionId: string, sectionName: string) => {
+    setSectionMenusModal({ open: true, sectionId, sectionName });
+    setSectionMenus([]);
+    setSectionMenusLoading(true);
+    try {
+      const { data } = await api.get(`/outlets/sections/${sectionId}/menus`);
+      setSectionMenus(data.data || []);
+    } catch {
+      setSectionMenus([]);
+    } finally {
+      setSectionMenusLoading(false);
+    }
+  };
+  const toggleSectionMenu = async (menu: SectionMenu) => {
+    if (menu.isLocked || !sectionMenusModal.sectionId) return;
+    const next = !menu.isEnabled;
+    setSectionMenus((all) => all.map((m) => (m.id === menu.id ? { ...m, isEnabled: next } : m)));
+    try {
+      await api.patch(`/outlets/sections/${sectionMenusModal.sectionId}/menus/${menu.id}`, { isEnabled: next });
+    } catch {
+      setSectionMenus((all) => all.map((m) => (m.id === menu.id ? { ...m, isEnabled: !next } : m)));
+      toast.error('Could not update menu availability');
+    }
+  };
 
   const businessId = user?.businessId || 'demo-business';
 
@@ -317,12 +350,21 @@ export default function OutletsPage() {
                           <p className="text-sm font-semibold text-slate-700">{sec.name}</p>
                           <span className="text-xs text-slate-400">({sec.tables?.length || 0} tables)</span>
                         </div>
-                        <button
-                          onClick={() => setTableModal({ open: true, outletId: outlet.id, sectionId: sec.id })}
-                          className="btn-ghost text-xs py-0.5 px-2 text-brand-600"
-                        >
-                          <Plus size={11} /> Table
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => openSectionMenus(sec.id, sec.name)}
+                            className="btn-ghost text-xs py-0.5 px-2 text-brand-600"
+                            title="Manage which menus are available here"
+                          >
+                            <ListChecks size={11} /> Menus
+                          </button>
+                          <button
+                            onClick={() => setTableModal({ open: true, outletId: outlet.id, sectionId: sec.id })}
+                            className="btn-ghost text-xs py-0.5 px-2 text-brand-600"
+                          >
+                            <Plus size={11} /> Table
+                          </button>
+                        </div>
                       </div>
                       <div className="p-2 flex flex-wrap gap-2">
                         {sec.tables?.map((table: any) => (
@@ -460,6 +502,49 @@ export default function OutletsPage() {
             <p className="text-[11px] text-slate-400 mt-1">Special pricing tied to this type will apply when customers order from this table.</p>
           </Field>
         </form>
+      </Modal>
+
+      {/* ── Section × Menu availability modal ────────────────── */}
+      <Modal
+        open={sectionMenusModal.open}
+        onClose={() => setSectionMenusModal({ open: false })}
+        title={sectionMenusModal.sectionName ? `Menus for ${sectionMenusModal.sectionName}` : 'Menus'}
+        size="sm"
+        footer={<button className="btn-primary" onClick={() => setSectionMenusModal({ open: false })}>Done</button>}
+      >
+        {sectionMenusLoading ? (
+          <p className="text-xs text-slate-400 italic">Loading menus…</p>
+        ) : sectionMenus.length === 0 ? (
+          <p className="text-xs text-slate-400 italic">No menus defined for this business.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {sectionMenus.map((m) => (
+              <div key={m.id} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm font-semibold text-slate-800 truncate">{m.name}</span>
+                  {m.isDefault && (
+                    <span className="text-[10px] uppercase tracking-wide font-bold text-slate-400">always on</span>
+                  )}
+                </div>
+                <label className={`inline-flex items-center ${m.isLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                  <input
+                    type="checkbox"
+                    checked={m.isEnabled}
+                    onChange={() => toggleSectionMenu(m)}
+                    disabled={m.isLocked}
+                    className="sr-only peer"
+                  />
+                  <span className="w-9 h-5 bg-slate-200 rounded-full peer-checked:bg-brand-500 relative transition-colors">
+                    <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${m.isEnabled ? 'translate-x-4' : ''}`} />
+                  </span>
+                </label>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-[11px] text-slate-400 mt-2">
+          Disabled menus stay hidden from customers seated in this section. Changes save instantly.
+        </p>
       </Modal>
 
       {/* ── QR modal ─────────────────────────────────────────── */}
