@@ -44,6 +44,14 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     client.join(`kitchen:${outletId}`);
   }
 
+  // Service desk staff join their outlet's room to receive verify /
+  // release / pickup nudges. Distinct from the kitchen room so a worker
+  // can be in one without polluting the other.
+  @SubscribeMessage('joinServiceDesk')
+  handleJoinServiceDesk(@MessageBody() outletId: string, @ConnectedSocket() client: Socket) {
+    client.join(`service-desk:${outletId}`);
+  }
+
   @SubscribeMessage('joinTable')
   handleJoinTable(
     @MessageBody() data: { outletId: string; tableId: string },
@@ -73,12 +81,23 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection, OnGate
   emitOrderStatusUpdated(outletId: string, order: any) {
     this.server.to(`outlet:${outletId}`).emit('orderStatusUpdated', order);
     this.server.to(`kitchen:${outletId}`).emit('orderStatusUpdated', order);
+    this.server.to(`service-desk:${outletId}`).emit('orderStatusUpdated', order);
     if (order.tableId) {
       this.server.to(`table:${order.tableId}`).emit('orderStatusUpdated', order);
     }
     if (order.id) {
       this.server.to(`order:${order.id}`).emit('orderStatusUpdated', order);
     }
+  }
+
+  // Discrete service-desk nudge. UI cards listen on this to play a chime
+  // and blink for one of three lanes: verify (postpaid), release
+  // (self-service), pickup (dine-in). Payload kind drives lane routing.
+  emitServiceDeskAlert(
+    outletId: string,
+    payload: { kind: 'verify' | 'release' | 'pickup'; orderId: string; orderNumber?: string },
+  ) {
+    this.server.to(`service-desk:${outletId}`).emit('serviceDeskAlert', payload);
   }
 
   emitPaymentConfirmed(outletId: string, payment: any) {

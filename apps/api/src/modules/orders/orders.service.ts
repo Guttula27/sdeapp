@@ -345,6 +345,12 @@ export class OrdersService {
             create: items.map((it: any) => ({
               ...it,
               ...(it.bundleId ? { bundleId: it.bundleId } : {}),
+              // Postpaid: every line starts blocked behind the service-desk
+              // verification gate. Default for prepaid / self-service stays
+              // PENDING so the kitchen sees the order immediately.
+              ...(dto.isPostpaid
+                ? { status: OrderItemStatus.PENDING_VERIFICATION as any }
+                : {}),
             })),
           },
           statusHistory: {
@@ -429,6 +435,16 @@ export class OrdersService {
     });
 
     this.ordersGateway.emitOrderCreated(outletId, order);
+
+    // Postpaid: ping the service desk so a staff member walks over and
+    // confirms the line with the customer before kitchen sees anything.
+    if (dto.isPostpaid) {
+      this.ordersGateway.emitServiceDeskAlert(outletId, {
+        kind: 'verify',
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+      });
+    }
 
     // Lifecycle: ORDER_PLACED — non-blocking, so a notification failure never
     // breaks the order. If the order was paid up-front, also fire
@@ -691,11 +707,34 @@ export class OrdersService {
 
     this.ordersGateway.emitOrderStatusUpdated(order.outletId, updated);
 
-    // Parcel handoff: parcel station marked the bag READY_FOR_PICKUP → ping
-    // the customer so they walk to the counter. Best-effort; doesn't block
-    // the status update.
-    if (dto.status === OrderStatus.READY_FOR_PICKUP && updated.customerId) {
-      this.dispatcher.fire('PICKUP_READY', {
+    // Service-desk lane routing on the new status:
+    //   - self-service: kitchen-done → OUT_FOR_SERVICE → "release" lane.
+    //   - table-service: kitchen-done → READY → "pickup" lane.
+    // (Parcel doesn't hit a service desk — parcel-station has its own UI.)
+    const shape = this.flowShape(order.outlet?.outletType, order.tableId, order.isParcel);
+    if (dto.status === OrderStatus.OUT_FOR_SERVICE && shape === 'self-service') {
+      this.ordersGateway.emitServiceDeskAlert(order.outletId, {
+        kind: 'release',
+        orderId: updated.id,
+        orderNumber: updated.orderNumber,
+      });
+    } else if (dto.status === OrderStatus.READY && shape === 'table-service') {
+      this.ordersGateway.emitServiceDeskAlert(order.outletId, {
+        kind: 'pickup',
+        orderId: updated.id,
+        orderNumber: updated.orderNumber,
+      });
+    }
+
+    // Customer-facing nudges:
+    //   - READY_FOR_PICKUP → "ready, walk over and grab it" (parcel +
+    //     self-service both end here).
+    //   - OUT_FOR_SERVICE on the table-service lane → "your server is
+    //     bringing it now." Self-service uses OUT_FOR_SERVICE for the
+    //     internal pass→counter shuttle, so we don't ping the customer
+    //     there — they only care about READY_FOR_PICKUP.
+    if (updated.customerId) {
+      const baseCtx = {
         customerId: updated.customerId,
         customerName: updated.customer?.name,
         customerPhone: updated.customer?.phone,
@@ -704,7 +743,14 @@ export class OrdersService {
         outletName: order.outlet?.name,
         orderId: updated.id,
         orderNumber: updated.orderNumber,
-      }).catch(() => {});
+      };
+      if (dto.status === OrderStatus.READY_FOR_PICKUP) {
+        this.dispatcher.fire('PICKUP_READY', baseCtx).catch(() => {});
+      } else if (dto.status === OrderStatus.OUT_FOR_SERVICE && shape === 'table-service') {
+        this.dispatcher.fire('ORDER_READY', baseCtx).catch(() => {});
+      } else if (dto.status === OrderStatus.SERVED) {
+        this.dispatcher.fire('ORDER_SERVED', baseCtx).catch(() => {});
+      }
     }
     return updated;
   }
@@ -890,6 +936,7 @@ export class OrdersService {
       include: {
         items:    { include: { item: true, variant: true } },
         table:    true,
+        outlet:   { select: { outletType: true } },
         customer: {
           select: {
             id: true, name: true, phone: true,
@@ -901,6 +948,32 @@ export class OrdersService {
     });
 
     if (updated) this.ordersGateway.emitOrderStatusUpdated(updated.outletId, updated);
+
+    // Fan-out the service-desk "kitchen done" nudge whenever the rollup
+    // pushes the order onto the lane the service desk owns: OUT_FOR_SERVICE
+    // for self-service (release lane) or READY for table-service (pickup
+    // lane). The same status transitions hit a different alert kind so
+    // the UI can lane-route them.
+    if (updated && rolledUp) {
+      const shape = this.flowShape(
+        updated.outlet?.outletType,
+        updated.tableId,
+        updated.isParcel,
+      );
+      if (rolledUp === OrderStatus.OUT_FOR_SERVICE && shape === 'self-service') {
+        this.ordersGateway.emitServiceDeskAlert(updated.outletId, {
+          kind: 'release',
+          orderId: updated.id,
+          orderNumber: updated.orderNumber,
+        });
+      } else if (rolledUp === OrderStatus.READY && shape === 'table-service') {
+        this.ordersGateway.emitServiceDeskAlert(updated.outletId, {
+          kind: 'pickup',
+          orderId: updated.id,
+          orderNumber: updated.orderNumber,
+        });
+      }
+    }
 
     // Lifecycle: ITEM_READY → ping the customer (WhatsApp if configured +
     // in-app alert + ringtone). Fire only on the actual transition into READY,
@@ -942,6 +1015,9 @@ export class OrdersService {
 
   private validateItemTransition(from: OrderItemStatus, to: OrderItemStatus) {
     const allowed: Record<OrderItemStatus, OrderItemStatus[]> = {
+      // Service desk's only moves on an unverified line: confirm (→ PENDING,
+      // which puts it on the kitchen board) or strike (→ CANCELLED).
+      PENDING_VERIFICATION: [OrderItemStatus.PENDING, OrderItemStatus.CANCELLED],
       PENDING:   [OrderItemStatus.PREPARING, OrderItemStatus.CANCELLED],
       PREPARING: [OrderItemStatus.READY, OrderItemStatus.CANCELLED],
       READY:     [OrderItemStatus.SERVED, OrderItemStatus.CANCELLED],
@@ -961,7 +1037,10 @@ export class OrdersService {
   private async rollupOrderStatus(orderId: string, userId?: string): Promise<OrderStatus | null> {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { items: { select: { status: true } } },
+      include: {
+        items: { select: { status: true } },
+        outlet: { select: { outletType: true } },
+      },
     });
     if (!order || order.items.length === 0) return null;
 
@@ -974,19 +1053,37 @@ export class OrdersService {
     ];
     if (frozen.includes(order.status as OrderStatus)) return null;
 
-    const live = order.items.filter(i => i.status !== OrderItemStatus.CANCELLED);
-    if (live.length === 0) return null;  // all items cancelled — leave to manual handling
+    // PENDING_VERIFICATION items don't exist for the kitchen, so they
+    // also don't count toward rollup decisions — they're treated like
+    // CANCELLED here (skipped) until service desk verifies them.
+    const live = order.items.filter(
+      (i) =>
+        i.status !== OrderItemStatus.CANCELLED &&
+        i.status !== OrderItemStatus.PENDING_VERIFICATION,
+    );
+    if (live.length === 0) return null;
+
+    const shape = this.flowShape(order.outlet?.outletType, order.tableId, order.isParcel);
+    // Self-service skips the order-level READY step entirely — when the
+    // kitchen has finished every item, the order goes straight to
+    // OUT_FOR_SERVICE so the service desk can shuttle it.
+    const kitchenDoneTarget =
+      shape === 'self-service' ? OrderStatus.OUT_FOR_SERVICE : OrderStatus.READY;
 
     let derived: OrderStatus | null = null;
-    if (live.every(i => i.status === OrderItemStatus.READY || i.status === OrderItemStatus.SERVED)) derived = OrderStatus.READY;
-    else if (live.some(i => i.status === OrderItemStatus.PREPARING || i.status === OrderItemStatus.READY)) derived = OrderStatus.PREPARING;
-
+    if (live.every(i => i.status === OrderItemStatus.READY || i.status === OrderItemStatus.SERVED)) {
+      derived = kitchenDoneTarget;
+    } else if (live.some(i => i.status === OrderItemStatus.PREPARING || i.status === OrderItemStatus.READY)) {
+      derived = OrderStatus.PREPARING;
+    }
     if (!derived) return null;
 
-    // Only advance forward through the auto-managed prefix of the flow
-    const orderFlow: OrderStatus[] = [
-      OrderStatus.CREATED, OrderStatus.QUEUED, OrderStatus.PREPARING, OrderStatus.READY,
-    ];
+    // Auto-managed prefix differs by lane: self-service goes
+    // CREATED → QUEUED → PREPARING → OUT_FOR_SERVICE (no order-level READY);
+    // everything else goes CREATED → QUEUED → PREPARING → READY.
+    const orderFlow: OrderStatus[] = shape === 'self-service'
+      ? [OrderStatus.CREATED, OrderStatus.QUEUED, OrderStatus.PREPARING, OrderStatus.OUT_FOR_SERVICE]
+      : [OrderStatus.CREATED, OrderStatus.QUEUED, OrderStatus.PREPARING, OrderStatus.READY];
     const currentIdx = orderFlow.indexOf(order.status as OrderStatus);
     const derivedIdx = orderFlow.indexOf(derived);
     if (currentIdx < 0 || derivedIdx <= currentIdx) return null;
@@ -1161,25 +1258,43 @@ export class OrdersService {
   }
 
   /**
-   * Decide whether this order's lifecycle goes through OUT_FOR_SERVICE.
-   * Table service (DINE_IN_*, or HYBRID with a tableId) needs it because a
-   * server walks the dish to the table. Self-service / parcel / counter
-   * collection skip it — the customer picks up from the counter, so READY
-   * goes straight to SERVED.
+   * The three lifecycle shapes the rest of the order code branches on:
+   *   - 'self-service'  — kitchen-done → OUT_FOR_SERVICE → READY_FOR_PICKUP → SERVED
+   *                       Service desk is the shuttle from kitchen pass to the
+   *                       pickup counter and the explicit gate before the
+   *                       customer can collect. No intermediate READY at the
+   *                       order level (the dish does sit on the kitchen pass
+   *                       briefly, but the order rolls past READY into
+   *                       OUT_FOR_SERVICE as soon as the last item is done).
+   *   - 'table-service' — kitchen-done → READY (on the pass) → service desk
+   *                       picks up → OUT_FOR_SERVICE → SERVED.
+   *   - 'parcel'        — kitchen-done → READY → parcel station packs →
+   *                       READY_FOR_PICKUP → SERVED. Parcel mirrors
+   *                       self-service in shape but the lane is owned by the
+   *                       parcel station, not the service desk.
+   *
+   * Parcel orders are detected per-order (isParcel flag) and override outlet
+   * type. HYBRID outlets pick lane by tableId presence.
    */
-  private needsOutForService(outletType: OutletType | null | undefined, tableId: string | null | undefined): boolean {
+  private flowShape(
+    outletType: OutletType | null | undefined,
+    tableId: string | null | undefined,
+    isParcel: boolean | null | undefined,
+  ): 'parcel' | 'self-service' | 'table-service' {
+    if (isParcel) return 'parcel';
     switch (outletType) {
       case OutletType.SELF_SERVICE:
       case OutletType.SELF_SERVICE_PARCEL:
-        return false;
+        return 'self-service';
       case OutletType.DINE_IN_PREPAID:
       case OutletType.DINE_IN_POSTPAID:
-        return true;
+        return 'table-service';
       case OutletType.HYBRID:
-        return !!tableId; // table → table-service path; parcel/counter → skip
+        return tableId ? 'table-service' : 'self-service';
       default:
-        // Unknown / null outlet config: be permissive so legacy orders still close.
-        return true;
+        // Legacy / unknown: treat as table-service so existing orders keep
+        // their READY → OUT_FOR_SERVICE → SERVED progression.
+        return 'table-service';
     }
   }
 
@@ -1188,28 +1303,34 @@ export class OrdersService {
     next: OrderStatus,
     ctx: { outletType?: OutletType | null; tableId?: string | null; isParcel?: boolean } = {},
   ) {
-    // Three READY → … paths:
-    //   parcel orders            → READY_FOR_PICKUP (parcel counter step)
-    //   table-service orders     → OUT_FOR_SERVICE  (server walks to table)
-    //   self-service / counter   → SERVED           (no intermediate step)
-    const parcelPath = !!ctx.isParcel;
-    const skipService = !parcelPath && !this.needsOutForService(ctx.outletType, ctx.tableId);
+    const shape = this.flowShape(ctx.outletType, ctx.tableId, ctx.isParcel);
+
+    // Order-level READY only happens in the table-service and parcel lanes.
+    // Self-service orders skip READY and roll PREPARING → OUT_FOR_SERVICE.
+    let preparingNext: OrderStatus[];
     let readyNext: OrderStatus[];
-    if (parcelPath) {
+    let outForServiceNext: OrderStatus[];
+    if (shape === 'self-service') {
+      preparingNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED];
+      readyNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED]; // legacy in-flight orders
+      outForServiceNext = [OrderStatus.READY_FOR_PICKUP, OrderStatus.CANCELLED];
+    } else if (shape === 'parcel') {
+      preparingNext = [OrderStatus.READY, OrderStatus.CANCELLED];
       readyNext = [OrderStatus.READY_FOR_PICKUP, OrderStatus.SERVED, OrderStatus.CANCELLED];
-    } else if (skipService) {
-      readyNext = [OrderStatus.SERVED, OrderStatus.CANCELLED];               // counter-collect path
+      outForServiceNext = [OrderStatus.SERVED];
     } else {
-      readyNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED];      // table-service path
+      preparingNext = [OrderStatus.READY, OrderStatus.CANCELLED];
+      readyNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED];
+      outForServiceNext = [OrderStatus.SERVED];
     }
 
     const allowed: Record<OrderStatus, OrderStatus[]> = {
       CREATED:          [OrderStatus.QUEUED, OrderStatus.CANCELLED],
       QUEUED:           [OrderStatus.PREPARING, OrderStatus.CANCELLED],
-      PREPARING:        [OrderStatus.READY, OrderStatus.CANCELLED],
+      PREPARING:        preparingNext,
       READY:            readyNext,
       READY_FOR_PICKUP: [OrderStatus.SERVED, OrderStatus.CANCELLED],
-      OUT_FOR_SERVICE:  [OrderStatus.SERVED],
+      OUT_FOR_SERVICE:  outForServiceNext,
       SERVED:           [OrderStatus.DISPUTED],
       CANCELLED:        [],
       DISPUTED:         [OrderStatus.RESOLVED, OrderStatus.FOR_REFUND],
@@ -1219,10 +1340,7 @@ export class OrdersService {
     };
     if (current === next) return;
     if (!allowed[current].includes(next)) {
-      const reason = skipService && next === OrderStatus.OUT_FOR_SERVICE
-        ? 'This outlet is counter-collect — orders go straight from READY to SERVED.'
-        : `Cannot transition from ${current} to ${next}`;
-      throw new BadRequestException(reason);
+      throw new BadRequestException(`Cannot transition from ${current} to ${next}`);
     }
   }
 
@@ -1303,9 +1421,16 @@ export class OrdersService {
     );
 
     // Persist new items, then recompute totals across every line on the order.
+    // Appended lines on a postpaid order — always — start in
+    // PENDING_VERIFICATION so the service desk has a chance to confirm
+    // them with the customer before the kitchen picks them up.
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.orderItem.createMany({
-        data: newItems.map((i) => ({ ...i, orderId })) as any,
+        data: newItems.map((i) => ({
+          ...i,
+          orderId,
+          status: OrderItemStatus.PENDING_VERIFICATION,
+        })) as any,
       });
 
       const allItems = await tx.orderItem.findMany({
@@ -1343,6 +1468,11 @@ export class OrdersService {
     });
 
     this.ordersGateway.emitOrderStatusUpdated(existing.outletId, updated);
+    this.ordersGateway.emitServiceDeskAlert(existing.outletId, {
+      kind: 'verify',
+      orderId: updated.id,
+      orderNumber: updated.orderNumber,
+    });
     return updated;
   }
 
@@ -1373,5 +1503,116 @@ export class OrdersService {
     });
     this.ordersGateway.emitOrderStatusUpdated(order.outletId, updated);
     return updated;
+  }
+
+  // ─── Service desk: postpaid verification gate ──────────────────────────
+  // Service desk confirms (or strikes) lines that the customer added to a
+  // postpaid order. Confirm moves PENDING_VERIFICATION → PENDING so the
+  // kitchen sees them. Strike → CANCELLED. itemIds defaults to "every
+  // unverified line on the order" so a "confirm all" press is one call.
+  async verifyItems(orderId: string, itemIds: string[] | undefined, action: 'confirm' | 'strike', userId?: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true, outletId: true, orderNumber: true,
+        items: { select: { id: true, status: true } },
+      },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    const targetIds = (itemIds && itemIds.length)
+      ? new Set(itemIds)
+      : null; // null = act on every unverified line
+    const eligible = order.items.filter(
+      (i) =>
+        i.status === OrderItemStatus.PENDING_VERIFICATION &&
+        (targetIds === null || targetIds.has(i.id)),
+    );
+    if (eligible.length === 0) {
+      throw new BadRequestException('No items awaiting verification on this order');
+    }
+
+    const nextStatus = action === 'confirm'
+      ? OrderItemStatus.PENDING
+      : OrderItemStatus.CANCELLED;
+
+    await this.prisma.orderItem.updateMany({
+      where: { id: { in: eligible.map((i) => i.id) } },
+      data: { status: nextStatus },
+    });
+
+    const updated = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        items: { include: { item: true, variant: true } },
+        table: true,
+        outlet: { select: { id: true, name: true, outletType: true } },
+        customer: {
+          select: {
+            id: true, name: true, phone: true,
+            customerTagAssignments: { include: { customerTag: true } },
+          },
+        },
+      },
+    });
+    if (updated) this.ordersGateway.emitOrderStatusUpdated(updated.outletId, updated);
+
+    // After confirm, ping the kitchen so they pull the now-PENDING lines.
+    // (emitOrderStatusUpdated already hits the kitchen room — this is the
+    // explicit notification hook for future kitchen-side toast / sound.)
+    return { order: updated, verifiedCount: eligible.length, action };
+  }
+
+  // ─── Service desk: queue read for the dashboard ─────────────────────────
+  // Three lanes:
+  //   verify  — postpaid orders with any PENDING_VERIFICATION lines
+  //   release — self-service orders sitting at OUT_FOR_SERVICE
+  //   pickup  — table-service orders sitting at READY
+  // Parcel orders ride in their own UI (parcel station), not this queue.
+  async getServiceDeskQueue(outletId: string) {
+    const include = {
+      items:    { include: { item: true, variant: true } },
+      table:    { select: { id: true, number: true, sectionId: true } },
+      customer: { select: { id: true, name: true, phone: true } },
+    };
+
+    const outlet = await this.prisma.outlet.findUnique({
+      where: { id: outletId },
+      select: { id: true, outletType: true },
+    });
+    if (!outlet) throw new NotFoundException('Outlet not found');
+
+    const [verifyRows, readyRows, outForServiceRows] = await Promise.all([
+      this.prisma.order.findMany({
+        where: {
+          outletId,
+          items: { some: { status: OrderItemStatus.PENDING_VERIFICATION } },
+        },
+        include,
+        orderBy: { createdAt: 'asc' },
+      }),
+      // table-service "pickup" lane is fed by orders at READY whose
+      // shape resolves to table-service. We pull all READY orders and
+      // partition by shape below to keep the SQL simple.
+      this.prisma.order.findMany({
+        where: { outletId, status: OrderStatus.READY, isParcel: false },
+        include,
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.order.findMany({
+        where: { outletId, status: OrderStatus.OUT_FOR_SERVICE, isParcel: false },
+        include,
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    const partition = (rows: typeof readyRows, want: 'self-service' | 'table-service') =>
+      rows.filter((o) => this.flowShape(outlet.outletType, o.tableId, o.isParcel) === want);
+
+    return {
+      verify: verifyRows,
+      pickup: partition(readyRows, 'table-service'),
+      release: partition(outForServiceRows, 'self-service'),
+    };
   }
 }

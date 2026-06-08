@@ -52,6 +52,10 @@ enum OrderStatus {
 }
 
 enum OrderItemStatus {
+  // Postpaid additions sit here until service desk confirms with the
+  // customer that the line is correct. Kitchen never sees items in
+  // this state. Verifying moves them to PENDING.
+  PENDING_VERIFICATION
   PENDING
   PREPARING
   READY

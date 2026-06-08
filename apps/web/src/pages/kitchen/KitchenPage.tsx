@@ -275,6 +275,10 @@ export default function KitchenPage() {
   // activeSequence are held — they don't show in the kitchen until prior
   // courses are SERVED. Items with sequenceNumber=null are always live.
   const isItemLive = (it: any, order: any) => {
+    // Postpaid lines awaiting service-desk confirmation are not the
+    // kitchen's problem yet — hide them until verifyItems flips them
+    // to PENDING.
+    if (it.status === 'PENDING_VERIFICATION') return false;
     if (it.sequenceNumber == null) return true;
     return it.sequenceNumber <= (order.activeSequence ?? 1);
   };

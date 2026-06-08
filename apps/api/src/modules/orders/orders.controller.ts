@@ -129,6 +129,29 @@ export class OrdersController {
     return this.ordersService.updateItemStatus(id, itemId, status, userId);
   }
 
+  // Service desk: confirm or strike unverified postpaid lines. Body:
+  //   { itemIds?: string[]; action: 'confirm' | 'strike' }
+  // Omitting itemIds acts on every PENDING_VERIFICATION line on the order.
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(IdempotencyInterceptor)
+  @Patch(':id/verify-items')
+  verifyItems(
+    @Param('id') id: string,
+    @Body() body: { itemIds?: string[]; action: 'confirm' | 'strike' },
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.ordersService.verifyItems(id, body.itemIds, body.action || 'confirm', userId);
+  }
+
+  // Service desk dashboard: returns three lanes for this outlet —
+  // postpaid orders awaiting verify, self-service awaiting release,
+  // table-service awaiting pickup. Parcel orders ride in their own UI.
+  @UseGuards(JwtAuthGuard)
+  @Get('service-desk/queue')
+  serviceDeskQueue(@Param('outletId') outletId: string) {
+    return this.ordersService.getServiceDeskQueue(outletId);
+  }
+
   // Course planner: bulk assign items to sequence numbers and rename
   // courses. Body shape:
   //   { items: [{ itemId, sequenceNumber }], labels: { "1": "Starter" } }
