@@ -49,6 +49,7 @@ const RESPONSIBILITY_DEFS: Array<{ name: string; module: string; description: st
   // Kitchen
   { name: 'VIEW_KITCHEN',            module: 'KITCHEN',    description: 'View the kitchen display / KDS queue' },
   { name: 'MANAGE_KITCHEN_STATIONS', module: 'KITCHEN',    description: 'Manage kitchen stations and item routing' },
+  { name: 'VIEW_SERVICE_DESK',       module: 'KITCHEN',    description: 'View the service-desk dashboard (verify / release / pickup lanes)' },
 
   // Inventory & vendors
   { name: 'VIEW_INVENTORY',          module: 'INVENTORY',  description: 'View raw materials and stock levels' },
@@ -133,7 +134,7 @@ async function main() {
     'VIEW_MENU', 'MANAGE_MENU', 'MANAGE_MENU_ITEMS', 'TOGGLE_ITEM_AVAILABILITY', 'IMPORT_MENU', 'MANAGE_TOPPINGS',
     'VIEW_ORDERS', 'CREATE_ORDER', 'UPDATE_ORDER_STATUS', 'CANCEL_ORDER', 'UPDATE_ITEM_STATUS',
     'COLLECT_PAYMENT', 'VIEW_PAYMENTS',
-    'VIEW_KITCHEN', 'MANAGE_KITCHEN_STATIONS',
+    'VIEW_KITCHEN', 'MANAGE_KITCHEN_STATIONS', 'VIEW_SERVICE_DESK',
     'VIEW_INVENTORY', 'MANAGE_INVENTORY', 'MANAGE_PURCHASE_ORDERS', 'VIEW_VENDORS', 'MANAGE_VENDORS',
     'VIEW_REPORTS', 'VIEW_KITCHEN_REPORTS',
     'VIEW_STAFF', 'MANAGE_STAFF', 'MANAGE_ROLES',
@@ -158,10 +159,11 @@ async function main() {
 
   const CASHIER = [
     'VIEW_MENU',
-    'VIEW_ORDERS', 'CREATE_ORDER', 'CANCEL_ORDER',
+    'VIEW_ORDERS', 'CREATE_ORDER', 'CANCEL_ORDER', 'UPDATE_ORDER_STATUS',
     'COLLECT_PAYMENT', 'VIEW_PAYMENTS',
     'VIEW_CUSTOMERS', 'ASSIGN_CUSTOMER_TAGS',
     'VIEW_QR_CODES',
+    'VIEW_SERVICE_DESK',
   ];
 
   const STORE_MANAGER = [

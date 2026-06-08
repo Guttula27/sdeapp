@@ -16,6 +16,7 @@ import ReportsPage from './pages/reports/ReportsPage';
 import KitchenPage from './pages/kitchen/KitchenPage';
 import StationsPage from './pages/stations/StationsPage';
 import ServiceStationsPage from './pages/service-stations/ServiceStationsPage';
+import ServiceDeskPage from './pages/service-desk/ServiceDeskPage';
 import TagsPage from './pages/tags/TagsPage';
 import CustomersPage from './pages/customers/CustomersPage';
 import ToppingsPage from './pages/toppings/ToppingsPage';
@@ -92,6 +93,7 @@ export default function App() {
           <Route path="languages"  element={<LanguagesPage />} />
           <Route path="reports"    element={<ReportsPage />} />
           <Route path="kitchen"    element={<KitchenPage />} />
+          <Route path="service-desk" element={<ServiceDeskPage />} />
           <Route path="stations"   element={<StationsPage />} />
           <Route path="service-stations" element={<ServiceStationsPage />} />
           <Route path="tags"       element={<TagsPage />} />
