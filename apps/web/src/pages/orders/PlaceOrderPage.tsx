@@ -13,6 +13,7 @@ import api from '../../services/api';
 import { allowsSeating } from '../../utils/outletType';
 import { isPrinterConnected, printCustomerReceipt, isBluetoothSupported } from '../../utils/bluetoothPrinter';
 import { buildReceiptPayload } from '../../utils/receiptPayload';
+import { getCachedMenu, setCachedMenu, saveOfflineOrder, type OfflineOrder } from '../../utils/idb';
 
 type BookingMode = 'counter' | 'table';
 
@@ -145,6 +146,18 @@ export default function PlaceOrderPage() {
       const cats = menuRes.data.data || [];
       setMenu(cats);
       if (statusRes) setOpenStatus(statusRes.data.data);
+      // Write-through to IndexedDB so the next visit (or the offline
+      // fallback below) has something to serve. `outlet` / `tableTypes`
+      // get persisted whenever they're known so the receipt header +
+      // table picker work offline too.
+      setCachedMenu({
+        outletId,
+        cachedAt: Date.now(),
+        menu: cats,
+        menus: (menusRes?.data?.data || []),
+        outlet,
+        tableTypes,
+      }).catch(() => {});
 
       // Filter menus to those enabled at this outlet AND with at least one
       // category in the loaded payload (otherwise a stale tab would render
@@ -163,10 +176,28 @@ export default function PlaceOrderPage() {
         setActiveCat(firstCat.id);
         setActiveSub(firstCat.subcategories?.[0]?.id || '');
       }
+    } catch (e: any) {
+      // Network down or API unreachable — try the IndexedDB cache so
+      // staff can still place orders. If even the cache is empty,
+      // surface the original error so the screen isn't a silent blank.
+      const cached = await getCachedMenu(outletId);
+      if (cached) {
+        setMenu(cached.menu || []);
+        const menus: Array<{ id: string; name: string; isEnabled: boolean }> = (cached.menus || []).map((m: any) => ({
+          id: m.id, name: m.name, isEnabled: m.outletMenu?.isEnabled !== false,
+        }));
+        const catMenuIds = new Set<string>((cached.menu || []).map((c: any) => c.menuId).filter(Boolean));
+        setEnabledMenus(menus.filter((m) => m.isEnabled && catMenuIds.has(m.id)));
+        if (cached.outlet)     setOutlet(cached.outlet);
+        if (cached.tableTypes) setTableTypes(cached.tableTypes);
+        toast('Using cached menu — you appear to be offline', { icon: '📡' });
+      } else {
+        toast.error(e?.response?.data?.message || 'Could not load menu and no cache is available');
+      }
     } finally {
       setLoading(false);
     }
-  }, [outletId]);
+  }, [outletId, outlet, tableTypes]);
 
   // When the active menu changes, snap to its first category so the items
   // panel doesn't go blank because the prior category belongs to another menu.
@@ -358,30 +389,33 @@ export default function PlaceOrderPage() {
       return;
     }
     setPlacing(true);
+    const isTableOrder = bookingMode === 'table';
+    const body = {
+      isParcel: isTableOrder ? false : isParcel,
+      tableId: isTableOrder ? tableId : undefined,
+      items: cart.map(c => ({
+        itemId: c.itemId,
+        variantId: c.variantId,
+        quantity: c.quantity,
+        // Toppings forwarded in the canonical { toppingId, optionId? }
+        // shape OrdersService.resolveOrderItems expects.
+        toppings: c.toppings?.length
+          ? c.toppings.map((t) => ({ toppingId: t.toppingId, optionId: t.optionId }))
+          : undefined,
+      })),
+      customerPhone: customerPhone.trim() || undefined,
+      paymentMode: mode,
+    };
     try {
-      const isTableOrder = bookingMode === 'table';
-      const { data } = await api.post(`/outlets/${outletId}/orders`, {
-        isParcel: isTableOrder ? false : isParcel,
-        tableId: isTableOrder ? tableId : undefined,
-        items: cart.map(c => ({
-          itemId: c.itemId,
-          variantId: c.variantId,
-          quantity: c.quantity,
-          // Toppings forwarded in the canonical { toppingId, optionId? }
-          // shape OrdersService.resolveOrderItems expects.
-          toppings: c.toppings?.length
-            ? c.toppings.map((t) => ({ toppingId: t.toppingId, optionId: t.optionId }))
-            : undefined,
-        })),
-        customerPhone: customerPhone.trim() || undefined,
-        paymentMode: mode,
-      });
+      const { data } = await api.post(`/outlets/${outletId}/orders`, body, {
+        // Labelled so the offline banner can show "Place order" if this
+        // ends up in the outbox via the api interceptor's failure path.
+        __outboxLabel: 'Place order',
+      } as any);
       toast.success(`Order ${data.data.orderNumber} placed`);
       // Auto-print receipt if the outlet's receiptAutoPrint flag is
-      // set AND a printer is configured AND it's currently connected
-      // (Web Bluetooth handle held in memory). Failures are toasted
-      // but don't block the navigation — the manual print button on
-      // the order detail page is the fallback path.
+      // set AND a printer is configured AND it's currently connected.
+      // Best-effort: failures toast but don't block navigation.
       try { await maybeAutoPrintReceipt(data.data); }
       catch (e: any) { toast.error(`Receipt print failed: ${e?.message ?? e}`); }
       setCart([]);
@@ -391,9 +425,114 @@ export default function PlaceOrderPage() {
       setTableId('');
       navigate('/orders');
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to place order');
+      // ─── Offline fallback ──────────────────────────────────────
+      // If the failure is a network-level one, the api interceptor has
+      // already queued the request to the outbox for replay. From the
+      // staff's perspective we treat that as success: assign a
+      // provisional orderNumber, snapshot the cart for receipt reprints,
+      // and fire the printer if configured. The drain on reconnect
+      // (OfflineBanner) will replay the original POST so the server
+      // creates the canonical record.
+      const isNetwork = !e?.response;
+      if (isNetwork) {
+        await placeOfflineOrder(isTableOrder, body, mode);
+        setCart([]);
+        setCustomerPhone('');
+        setIsParcel(false);
+        setTableTypeId('');
+        setTableId('');
+        navigate('/orders');
+      } else {
+        toast.error(e.response?.data?.message || 'Failed to place order');
+      }
     } finally {
       setPlacing(false);
+    }
+  };
+
+  // Build the snapshot, persist it locally, and print the receipt with
+  // a provisional orderNumber. Used by the offline branch of submit().
+  const placeOfflineOrder = async (
+    isTableOrder: boolean,
+    body: any,
+    mode: 'CASH' | 'UPI',
+  ) => {
+    const provisional = `OFF-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(-3).toUpperCase()}`;
+    // Expand the cart with full item names so the receipt can render
+    // without re-querying the menu (which would also be offline).
+    const itemMeta = new Map<string, any>();
+    for (const cat of menu) {
+      for (const sub of cat.subcategories || []) {
+        for (const it of sub.items || []) itemMeta.set(it.id, it);
+      }
+    }
+    const items = cart.map((c) => {
+      const meta = itemMeta.get(c.itemId);
+      return {
+        id: `${provisional}-${c.cartLineId}`,
+        quantity: c.quantity,
+        unitPrice: c.unitPrice,
+        totalPrice: c.unitPrice * c.quantity,
+        gstRate: c.gstRate ?? 0,
+        item: { name: meta?.name ?? c.name ?? 'Item' },
+        variant: c.variantId ? { name: c.variantName ?? null } : null,
+      };
+    });
+    const snapshotSubtotal = items.reduce((s, i) => s + i.totalPrice, 0);
+    const snapshotTax = items.reduce((s, i) => s + i.totalPrice * (Number(i.gstRate) / 100), 0);
+    const snapshotTotal = snapshotSubtotal + snapshotTax;
+
+    const snapshot: any = {
+      id: provisional,
+      orderNumber: provisional,
+      tokenNumber: null,
+      isParcel: isTableOrder ? false : isParcel,
+      outletId,
+      outlet: outlet ? {
+        name: outlet.name,
+        addressLine1: outlet.addressLine1,
+        addressLine2: outlet.addressLine2,
+        address: outlet.address,
+        city: outlet.city,
+        state: outlet.state,
+        pincode: outlet.pincode,
+        gstNumber: outlet.gstNumber,
+        phone: outlet.phone,
+      } : null,
+      table: isTableOrder
+        ? { number: tableTypes.flatMap((t: any) => t.tables || []).find((t: any) => t.id === tableId)?.number ?? null }
+        : null,
+      customer: body.customerPhone ? { name: null, phone: body.customerPhone } : null,
+      items,
+      subtotal: snapshotSubtotal,
+      taxAmount: snapshotTax,
+      sgstAmount: snapshotTax / 2,
+      cgstAmount: snapshotTax / 2,
+      parcelAmount: 0,
+      discountAmount: 0,
+      totalAmount: snapshotTotal,
+      payments: [{ mode, amount: snapshotTotal, status: 'SUCCESS' }],
+      couponUsages: [],
+      rewardTransactions: [],
+    };
+    const record: OfflineOrder = {
+      id: provisional,
+      outletId,
+      createdAt: Date.now(),
+      syncState: 'pending',
+      snapshot,
+    };
+    await saveOfflineOrder(record);
+    toast.success(`Offline · order saved as ${provisional}`, { duration: 6000 });
+
+    // Best-effort print: printer is bluetooth, so it works without
+    // network. Auto-print + manual rules still apply.
+    if (outlet?.receiptAutoPrint && outlet?.receiptPrinterId && isBluetoothSupported() && isPrinterConnected(outlet.receiptPrinterId)) {
+      try {
+        await printCustomerReceipt(outlet.receiptPrinterId, buildReceiptPayload(snapshot));
+      } catch (err: any) {
+        toast.error(`Receipt print failed: ${err?.message ?? err}`);
+      }
     }
   };
 
