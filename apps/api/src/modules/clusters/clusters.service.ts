@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { IsInt, IsOptional, IsString } from 'class-validator';
 import * as QRCode from 'qrcode';
 import { PrismaService } from '../../config/prisma/prisma.service';
+import { EncryptionService } from '../../config/crypto/encryption.service';
 
 export class AddClusterMemberDto {
   // The outlet's cryptic publicCode (e.g. "OL-A4F23C81"). Required — clusters
@@ -13,7 +14,7 @@ export class AddClusterMemberDto {
 
 @Injectable()
 export class ClustersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private encryption: EncryptionService) {}
 
   // Throws unless the businessId points to an isCluster=true Business. Used
   // as a guard on every cluster-scoped endpoint so a regular business id
@@ -45,6 +46,14 @@ export class ClustersService {
       where: { businessId: clusterId },
       orderBy: { displayOrder: 'asc' },
     });
+    // Decrypt LA ids on the member projection so cluster admin UI can
+    // display the cleartext acc_... id (or just check truthiness for
+    // "Razorpay enabled" without seeing the enc:v1: marker).
+    for (const m of members) {
+      (m.outlet as any).razorpayLinkedAccountId = this.encryption.decrypt(
+        m.outlet.razorpayLinkedAccountId,
+      );
+    }
     return { ...cluster, members, images };
   }
 

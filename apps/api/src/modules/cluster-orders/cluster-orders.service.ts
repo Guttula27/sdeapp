@@ -6,6 +6,7 @@ import { OrdersGateway } from '../orders/orders.gateway';
 import { RazorpayService } from '../payments/razorpay.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { CreateClusterOrderDto, VerifyClusterPaymentDto } from './dto/create-cluster-order.dto';
+import { EncryptionService } from '../../config/crypto/encryption.service';
 
 // One entry per outlet in the cluster's payment split. Persisted to
 // ClusterOrder.routeTransfers as JSON; mirrors the structure Razorpay Route
@@ -30,6 +31,7 @@ export class ClusterOrdersService {
     private ordersGateway: OrdersGateway,
     private razorpay: RazorpayService,
     private rewards: RewardsService,
+    private encryption: EncryptionService,
   ) {}
 
   // ───────────────────────────────────────────────────────────
@@ -127,7 +129,10 @@ export class ClusterOrdersService {
         outletName: m.outlet.name,
         childOrderId: c.id,
         childOrderNumber: c.orderNumber,
-        razorpayLinkedAccountId: m.outlet.razorpayLinkedAccountId,
+        // LA id is encrypted at rest — decrypt here so the precomputed
+        // transfers list (and the downstream Razorpay payload) carry
+        // the plaintext acc_... id Razorpay expects.
+        razorpayLinkedAccountId: this.encryption.decrypt(m.outlet.razorpayLinkedAccountId),
         amountInRupees: Number(c.totalAmount),
         status: 'PENDING',
       };

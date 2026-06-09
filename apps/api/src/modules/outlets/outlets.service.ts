@@ -5,6 +5,7 @@ import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, ValidateIf } 
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { OutletType } from '@prisma/client';
 import { TranslationsService } from '../translations/translations.service';
+import { EncryptionService } from '../../config/crypto/encryption.service';
 import { allowsSeating } from '../../common/outlet-type';
 
 const DEFAULT_OUTLET_ADMIN_PASSWORD = 'abc@123';
@@ -70,7 +71,20 @@ export class OutletsService {
   constructor(
     private prisma: PrismaService,
     private translations: TranslationsService,
+    private encryption: EncryptionService,
   ) {}
+
+  // Encrypt the Razorpay Linked Account id before persistence. Called
+  // from create() and update() so the column at rest never holds the
+  // plaintext `acc_...` id. Reads decrypt at the consuming service
+  // (payments, clusters) — see razorpayLinkedAccountId callsites.
+  private maskRouteId<T extends { razorpayLinkedAccountId?: string | null }>(data: T): T {
+    if (data.razorpayLinkedAccountId === undefined) return data;
+    return {
+      ...data,
+      razorpayLinkedAccountId: this.encryption.encrypt(data.razorpayLinkedAccountId),
+    };
+  }
 
   private translatableOutletFields(o: any): Record<string, string | null | undefined> {
     return {
@@ -95,7 +109,7 @@ export class OutletsService {
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
         outlet = await this.prisma.outlet.create({
-          data: { ...outletData, publicCode: generateOutletCode() },
+          data: this.maskRouteId({ ...outletData, publicCode: generateOutletCode() }),
           include: { business: true },
         });
         break;
@@ -156,6 +170,10 @@ export class OutletsService {
     });
     if (!outlet) throw new NotFoundException('Outlet not found');
     await this.translations.hydrate('Outlet', outlet, ['name', 'description', 'address', 'addressLine1', 'addressLine2'], lang);
+    // Decrypt sensitive at-rest fields before responding so admin UI
+    // sees the cleartext acc_... id when pre-filling the form. The
+    // customer-facing getOpenStatus never reads this field plaintext.
+    (outlet as any).razorpayLinkedAccountId = this.encryption.decrypt(outlet.razorpayLinkedAccountId);
     return outlet;
   }
 
@@ -175,7 +193,7 @@ export class OutletsService {
         );
       }
     }
-    const outlet = await this.prisma.outlet.update({ where: { id }, data });
+    const outlet = await this.prisma.outlet.update({ where: { id }, data: this.maskRouteId(data) });
     const touchedTextFields = ['name', 'description', 'address', 'addressLine1', 'addressLine2']
       .some((f) => (data as any)[f] !== undefined);
     if (touchedTextFields) {

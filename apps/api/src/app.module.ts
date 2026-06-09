@@ -43,6 +43,7 @@ import { PrintersModule } from './modules/printers/printers.module';
 import { PlatformSettingsModule } from './modules/platform-settings/platform-settings.module';
 import { LoggerModule } from './config/logger/logger.module';
 import { RequestLogMiddleware } from './config/logger/request-log.middleware';
+import { CryptoModule } from './config/crypto/crypto.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { RequestLogMiddleware } from './config/logger/request-log.middleware';
       redis: process.env.REDIS_URL || 'redis://localhost:6379',
     }),
     LoggerModule,
+    CryptoModule,
     PrismaModule,
     AuthModule,
     UsersModule,

@@ -10,6 +10,7 @@ import {
   computePlatformFee,
 } from '../platform-settings/platform-settings.service';
 import { AuditLogService } from '../../config/logger/audit-log.service';
+import { EncryptionService } from '../../config/crypto/encryption.service';
 
 @Injectable()
 export class PaymentsService {
@@ -21,6 +22,7 @@ export class PaymentsService {
     private orders: OrdersService,
     private platformSettings: PlatformSettingsService,
     private audit: AuditLogService,
+    private encryption: EncryptionService,
   ) {}
 
   async initiatePayment(orderId: string, mode: PaymentMode, amount: number) {
@@ -52,7 +54,7 @@ export class PaymentsService {
 
     const updated = await this.prisma.payment.update({
       where: { id: paymentId },
-      data: { status: 'SUCCESS', gatewayRef },
+      data: { status: 'SUCCESS', gatewayRef: this.encryption.encrypt(gatewayRef) },
     });
 
     // Order status is driven by the kitchen/service workflow, not by payment.
@@ -64,7 +66,7 @@ export class PaymentsService {
       orderId: updated.orderId,
       amount: Number(updated.amount),
       mode: updated.mode,
-      gatewayRef: updated.gatewayRef ?? null,
+      gatewayRef: this.encryption.decrypt(updated.gatewayRef) ?? null,
     });
 
     // Lifecycle: PAYMENT_RECEIVED. Skip for guest/walk-in orders (no customerId).
@@ -100,7 +102,11 @@ export class PaymentsService {
   async failPayment(paymentId: string, reason?: string) {
     return this.prisma.payment.update({
       where: { id: paymentId },
-      data: { status: 'FAILED', gatewayResponse: { reason } },
+      // gatewayResponse stays Json? in the schema, but the inner blob
+      // is encrypted to keep webhook bodies / handler payloads opaque
+      // at rest. Stored as { enc: "enc:v1:..." } so the Prisma type
+      // stays Json without a schema change.
+      data: { status: 'FAILED', gatewayResponse: { enc: this.encryption.encryptJson({ reason }) } as any },
     });
   }
 
@@ -134,7 +140,9 @@ export class PaymentsService {
     // charge and the platform's margin). When no LA is set we fall
     // back to a plain order; settlement lands in the master account
     // and no transfer fires.
-    const outletLA = payment.order.outlet?.razorpayLinkedAccountId;
+    // razorpayLinkedAccountId is encrypted at rest; decrypt before
+    // handing the plaintext acc_... id to Razorpay's Route API.
+    const outletLA = this.encryption.decrypt(payment.order.outlet?.razorpayLinkedAccountId);
     let resolvedFee = 0;
     let transferable = Number(payment.amount);
     if (outletLA) {
@@ -168,8 +176,10 @@ export class PaymentsService {
     await this.prisma.payment.update({
       where: { id: paymentId },
       data: {
-        gatewayRef: order.id,
-        gatewayResponse: { provider: 'razorpay', order } as any,
+        gatewayRef: this.encryption.encrypt(order.id),
+        gatewayResponse: {
+          enc: this.encryption.encryptJson({ provider: 'razorpay', order }),
+        } as any,
       },
     });
 
@@ -191,7 +201,9 @@ export class PaymentsService {
   }) {
     const payment = await this.prisma.payment.findUnique({ where: { id: input.paymentId } });
     if (!payment) throw new NotFoundException('Payment not found');
-    if (payment.gatewayRef !== input.razorpayOrderId) {
+    // gatewayRef is encrypted at rest — compare against the decrypted
+    // value so the verify endpoint still matches the handler's plaintext.
+    if (this.encryption.decrypt(payment.gatewayRef) !== input.razorpayOrderId) {
       throw new BadRequestException('Razorpay order id mismatch');
     }
     const ok = this.razorpay.verifyHandlerSignature(
