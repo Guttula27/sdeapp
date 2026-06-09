@@ -6,6 +6,8 @@ blast radius. Each item names the failure mode, why it bites, and the
 shortest credible fix.
 
 Captured: 2026-05-26.
+Last revised: 2026-06-09 — items #2 (audit log) closed by Winston work;
+items partially addressed by recent encryption + permission audit.
 
 ---
 
@@ -34,7 +36,7 @@ Manual reconciliation is slow and embarrassing.
 
 ---
 
-### 2. Audit log for money-moving + sensitive operations
+### 2. Audit log for money-moving + sensitive operations ✅ DONE (2026-06-09)
 
 **Problem.** No structured record of who did what when. "Customer says
 they were charged ₹500 but no order shows up" → no answer. Same for
@@ -44,14 +46,17 @@ admin overrides.
 **Why it bites.** Support tickets balloon. Trust erodes quickly when
 you can't tell a customer / business owner exactly what happened.
 
-**Fix.**
-- New `AuditLog { id, actorId, actorRole, action, scope, before, after,
-  createdAt }` Prisma model.
-- NestJS interceptor (similar shape to `IdempotencyInterceptor`) that
-  records mutations on opt-in routes. Decorator-driven so individual
-  endpoints declare what they audit.
-- Critical surface to start: cancel order, cancel item, edit item
-  price, edit GST, refund, add/remove cluster member, deactivate outlet.
+**Status.** Closed by the Winston work. We did not add a separate
+`AuditLog` Prisma table — instead the events go to
+`logs/audit-*.log` (Winston, 90d rotation, JSON). Coverage today:
+order status changes, item status changes, postpaid verifies, payment
+confirmations, role-permission grants. Per-order log is also visible
+in the admin UI via `VIEW_ORDER_LOG`.
+
+**Still to add** (lower priority — file each as a separate ticket if
+needed): item availability flips, item price edits, refund issued,
+add/remove cluster member, deactivate outlet. Pattern is one-liner
+calls to `AuditLogService.record(...)` from the relevant service.
 
 ---
 
