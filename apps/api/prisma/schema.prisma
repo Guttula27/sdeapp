@@ -531,6 +531,17 @@ model Outlet {
   kitchenAutoPrint         Boolean @default(false)
   kitchenAllowManualPrint  Boolean @default(false)
 
+  // Customer-receipt printing. Mirrors the kitchen pair above but
+  // routes to a single dedicated `receiptPrinterId` (the front-of-
+  // house counter printer). receiptAutoPrint fires the bill the
+  // moment an order is created/paid; receiptAllowManualPrint exposes
+  // a Print Receipt button so staff can reprint on demand or print
+  // only when the customer asks. Both default off.
+  receiptAutoPrint        Boolean @default(false)
+  receiptAllowManualPrint Boolean @default(false)
+  receiptPrinterId        String?
+  receiptPrinter          Printer? @relation("OutletReceiptPrinter", fields: [receiptPrinterId], references: [id], onDelete: SetNull)
+
   // Per-outlet promotion rows. Business-wide promotions live with
   // outletId = null and apply to every outlet under the business.
   coupons   Coupon[]
@@ -911,6 +922,11 @@ model Printer {
   outletId    String
   outlet      Outlet  @relation(fields: [outletId], references: [id], onDelete: Cascade)
   name        String
+
+  // Inverse of Outlet.receiptPrinter — at most one outlet picks this
+  // printer as its receipt target. Deleting the printer resets that
+  // outlet's receiptPrinterId to null via the relation's ON DELETE SET NULL.
+  receiptForOutlets Outlet[] @relation("OutletReceiptPrinter")
   // Connection type. Today only 'BLUETOOTH'; kept as a string column so we
   // can add wifi/USB later without an enum migration.
   connection  String  @db.VarChar(20) @default("BLUETOOTH")

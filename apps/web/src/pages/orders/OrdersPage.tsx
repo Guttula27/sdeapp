@@ -2,13 +2,15 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download, Maximize2, Minimize2, Filter, ChevronDown, ListOrdered, Save } from 'lucide-react';
+import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download, Maximize2, Minimize2, Filter, ChevronDown, ListOrdered, Save, Printer as PrinterIcon } from 'lucide-react';
 import { RootState } from '../../store';
 import { setOrders, updateOrder } from '../../store/slices/ordersSlice';
 import { getSocket } from '../../services/socket';
 import { useSocketStatus } from '../../hooks/useSocketStatus';
 import { useUserRole } from '../../hooks/useUserRole';
 import api from '../../services/api';
+import { isPrinterConnected, isBluetoothSupported, connectPrinter, printCustomerReceipt } from '../../utils/bluetoothPrinter';
+import { buildReceiptPayload } from '../../utils/receiptPayload';
 import ThermalReceipt from '../../components/receipt/ThermalReceipt';
 import { downloadReceiptPdf } from '../../components/receipt/downloadReceiptPdf';
 import Modal from '../../components/common/Modal';
@@ -161,6 +163,35 @@ export default function OrdersPage() {
     if (!receiptRef.current || !detail) return;
     downloadReceiptPdf(receiptRef.current, `Receipt-${detail.orderNumber}`);
   };
+
+  // Outlet receipt-print config — declared as plain state up here; the
+  // actual fetch (which depends on outletId) lives further down in the
+  // existing fetch useEffect chain so we don't get TDZ-on-use.
+  const [outletPrint, setOutletPrint] = useState<{
+    allowManual: boolean;
+    printerId: string | null;
+  }>({ allowManual: false, printerId: null });
+
+  const [printing, setPrinting] = useState(false);
+  const printDetailReceipt = async () => {
+    if (!detail || !outletPrint.printerId) return;
+    setPrinting(true);
+    try {
+      // Auto-connect on first press so the staff doesn't need a
+      // separate "Connect printer" step — Web Bluetooth prompts if no
+      // handle exists yet.
+      if (!isPrinterConnected(outletPrint.printerId)) {
+        await connectPrinter(outletPrint.printerId);
+      }
+      const { data } = await api.get(`/outlets/${detail.outletId || outletId}/orders/${detail.id}`);
+      await printCustomerReceipt(outletPrint.printerId, buildReceiptPayload(data.data));
+      toast.success('Receipt sent to printer');
+    } catch (e: any) {
+      toast.error(e?.message || 'Print failed');
+    } finally {
+      setPrinting(false);
+    }
+  };
   const [cancelTarget, setCancelTarget] = useState<any>(null);
   const [cancelReason, setCancelReason] = useState('');
 
@@ -192,6 +223,20 @@ export default function OrdersPage() {
       .then((r) => setBusinessOutlets(r.data.data || []))
       .catch(() => setBusinessOutlets([]));
   }, [tier, businessId]);
+
+  // Pull the outlet's receipt-print config so the Print Receipt
+  // button on the detail panel knows whether to render + which
+  // printer to target. Skipped for platform / business tier where
+  // there isn't a single outlet context.
+  useEffect(() => {
+    if (!outletId || tier === 'platform' || tier === 'business') return;
+    api.get(`/outlets/${outletId}`).then(({ data }) => {
+      setOutletPrint({
+        allowManual: !!data.data?.receiptAllowManualPrint,
+        printerId: data.data?.receiptPrinterId ?? null,
+      });
+    }).catch(() => {});
+  }, [outletId, tier]);
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
@@ -723,6 +768,17 @@ export default function OrdersPage() {
               <button onClick={downloadDetailReceipt} className="btn-secondary">
                 <Download size={14} /> Download Receipt
               </button>
+              {outletPrint.allowManual && outletPrint.printerId && isBluetoothSupported() && (
+                <button
+                  onClick={printDetailReceipt}
+                  disabled={printing}
+                  className="btn-secondary"
+                  title="Send the receipt to the configured bluetooth printer"
+                >
+                  {printing && <span className="w-3 h-3 border-2 border-slate-300 border-t-slate-700 rounded-full animate-spin" />}
+                  <PrinterIcon size={14} /> Print Receipt
+                </button>
+              )}
               <button onClick={() => setDetail(null)} className="btn-secondary">Close</button>
             </div>
           )

@@ -11,6 +11,8 @@ import {
 import { RootState } from '../../store';
 import api from '../../services/api';
 import { allowsSeating } from '../../utils/outletType';
+import { isPrinterConnected, printCustomerReceipt, isBluetoothSupported } from '../../utils/bluetoothPrinter';
+import { buildReceiptPayload } from '../../utils/receiptPayload';
 
 type BookingMode = 'counter' | 'table';
 
@@ -72,6 +74,22 @@ export default function PlaceOrderPage() {
   // Cart survives a tab reload — keyed by outletId so two cashiers on
   // different outlets can't clobber each other. Cleared on order
   // placement success.
+  // Auto-print receipt on successful order placement. Three conditions
+  // must hold: (1) outlet opted in via receiptAutoPrint, (2) a printer
+  // is configured, (3) Web Bluetooth is supported AND the printer is
+  // currently connected (the connection handle is held in memory; the
+  // user must have "Connect printer" pressed at least once this session).
+  // Auto-print is best-effort — failures don't block the order flow.
+  const maybeAutoPrintReceipt = async (createdOrder: any) => {
+    if (!outlet?.receiptAutoPrint) return;
+    const printerId = outlet?.receiptPrinterId;
+    if (!printerId || !isBluetoothSupported() || !isPrinterConnected(printerId)) return;
+    // Re-fetch the full order so the payload has all the receipt
+    // includes (couponUsages + rewardTransactions + outlet address).
+    const { data } = await api.get(`/outlets/${outletId}/orders/${createdOrder.id}`);
+    await printCustomerReceipt(printerId, buildReceiptPayload(data.data));
+  };
+
   const cartKey = `placeorder-cart-${outletId}`;
   const [cart, setCart] = useState<CartLine[]>(() => {
     try { return JSON.parse(localStorage.getItem(cartKey) || '[]'); }
@@ -359,6 +377,13 @@ export default function PlaceOrderPage() {
         paymentMode: mode,
       });
       toast.success(`Order ${data.data.orderNumber} placed`);
+      // Auto-print receipt if the outlet's receiptAutoPrint flag is
+      // set AND a printer is configured AND it's currently connected
+      // (Web Bluetooth handle held in memory). Failures are toasted
+      // but don't block the navigation — the manual print button on
+      // the order detail page is the fallback path.
+      try { await maybeAutoPrintReceipt(data.data); }
+      catch (e: any) { toast.error(`Receipt print failed: ${e?.message ?? e}`); }
       setCart([]);
       setCustomerPhone('');
       setIsParcel(false);

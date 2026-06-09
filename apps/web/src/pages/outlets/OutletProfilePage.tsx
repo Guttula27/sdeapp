@@ -108,6 +108,14 @@ export default function OutletProfilePage() {
     gstNumber: '', upiId: '',
   });
   const [kitchenPrint, setKitchenPrint] = useState({ auto: false, allowManual: false });
+  // Front-of-house receipt printing. Parallel to kitchenPrint but
+  // targets a single dedicated counter printer chosen from the same
+  // Printers list. `printerId` is nullable — null = no printer yet,
+  // and the UI hides the auto / on-demand toggles' effect until a
+  // printer is picked.
+  const [receiptPrint, setReceiptPrint] = useState<{ auto: boolean; allowManual: boolean; printerId: string | null }>({
+    auto: false, allowManual: false, printerId: null,
+  });
   const [printers, setPrinters] = useState<Array<{ id: string; name: string; address: string | null; model: string | null; connection: string; stations?: Array<{ id: string; name: string }> }>>([]);
   const [printerForm, setPrinterForm] = useState({ name: '', address: '', model: '' });
   const [savingPrinter, setSavingPrinter] = useState(false);
@@ -188,6 +196,11 @@ export default function OutletProfilePage() {
       setKitchenPrint({
         auto: !!o.kitchenAutoPrint,
         allowManual: !!o.kitchenAllowManualPrint,
+      });
+      setReceiptPrint({
+        auto: !!o.receiptAutoPrint,
+        allowManual: !!o.receiptAllowManualPrint,
+        printerId: o.receiptPrinterId ?? null,
       });
       try {
         const pRes = await api.get(`/outlets/${outletId}/printers`);
@@ -396,6 +409,11 @@ export default function OutletProfilePage() {
         logoUrl: logo,
         kitchenAutoPrint: kitchenPrint.auto,
         kitchenAllowManualPrint: kitchenPrint.allowManual,
+        receiptAutoPrint: receiptPrint.auto,
+        receiptAllowManualPrint: receiptPrint.allowManual,
+        // Empty-string → null so the FK clears when the admin unsets
+        // the printer without picking a new one.
+        receiptPrinterId: receiptPrint.printerId || null,
       });
 
       // Gallery sync
@@ -806,6 +824,64 @@ export default function OutletProfilePage() {
             </button>
           </div>
         </div>
+      </div>
+
+      {/* ── Customer Receipt Printing ───────────────────────── */}
+      <div className="card p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <PrinterIcon size={15} className="text-slate-400" />
+          <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Customer Receipt Printing</p>
+        </div>
+        <p className="text-[11px] text-slate-400">
+          Sends the full bill (subtotal, discounts, GST split, grand total) to a counter
+          printer. Independent of the kitchen-station printer above — point both at the
+          same device if you only have one printer.
+        </p>
+
+        <label className="flex items-start justify-between gap-3 cursor-pointer p-3 rounded-xl border border-slate-200 hover:bg-slate-50">
+          <div>
+            <p className="text-sm font-bold text-slate-700">Auto-print receipt on order placement</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Every order placed by counter/admin staff prints a receipt the moment it's confirmed.</p>
+          </div>
+          <input type="checkbox" checked={receiptPrint.auto}
+            onChange={(e) => setReceiptPrint(p => ({ ...p, auto: e.target.checked }))}
+            className="w-4 h-4 mt-1 accent-brand-700 rounded" />
+        </label>
+
+        <label className="flex items-start justify-between gap-3 cursor-pointer p-3 rounded-xl border border-slate-200 hover:bg-slate-50">
+          <div>
+            <p className="text-sm font-bold text-slate-700">Allow on-demand receipt print</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Adds a Print Receipt button on order details. Useful when auto-print is off and the customer asks for a paper bill, or for reprints.</p>
+          </div>
+          <input type="checkbox" checked={receiptPrint.allowManual}
+            onChange={(e) => setReceiptPrint(p => ({ ...p, allowManual: e.target.checked }))}
+            className="w-4 h-4 mt-1 accent-brand-700 rounded" />
+        </label>
+
+        <div>
+          <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Receipt printer</label>
+          <select
+            value={receiptPrint.printerId ?? ''}
+            onChange={(e) => setReceiptPrint(p => ({ ...p, printerId: e.target.value || null }))}
+            className="input text-sm"
+          >
+            <option value="">— Not configured (printing disabled) —</option>
+            {printers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}{p.model ? ` · ${p.model}` : ''}
+              </option>
+            ))}
+          </select>
+          <p className="text-[10px] text-slate-400 mt-1">
+            Pick from printers added in the Kitchen Printing section above. Selection clears automatically if the printer is removed.
+          </p>
+        </div>
+
+        {!receiptPrint.printerId && (receiptPrint.auto || receiptPrint.allowManual) && (
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            ⚠ Toggles above won't take effect until a printer is selected.
+          </p>
+        )}
       </div>
 
       {/* Imagery */}

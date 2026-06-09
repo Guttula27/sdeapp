@@ -143,3 +143,141 @@ export async function printReceipt(printerId: string, receipt: ReceiptPayload): 
   const bytes = buildEscPos(receipt);
   await writeBytes(printerId, bytes);
 }
+
+// ── Customer bill ──────────────────────────────────────────────────────
+// Distinct from the kitchen-station ticket — this is the full customer
+// receipt with prices, discounts, GST split (CGST+SGST or IGST), and
+// grand total. Same ESC/POS sequence, 32-char width tuned for a 58mm
+// roll (most common thermal printer); 80mm rolls render with right-
+// justified amounts that still line up by virtue of the rune-padding
+// below.
+export type ReceiptItemLine = {
+  itemName: string;
+  variantName?: string | null;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+};
+
+export type ReceiptDiscountLine = {
+  label: string;
+  amount: number;
+};
+
+export type CustomerReceiptPayload = {
+  orderNumber: string;
+  tokenNumber: number | null;
+  printedAt: string;
+  outletName: string;
+  outletAddress?: string[];      // each line rendered separately
+  outletGstin?: string | null;
+  outletPhone?: string | null;
+  customerName?: string | null;
+  table?: string | null;
+  isParcel?: boolean;
+
+  items: ReceiptItemLine[];
+  subtotal: number;
+  parcelCharge?: number;
+  discounts: ReceiptDiscountLine[];      // each rendered as -₹X
+  taxable: number;                       // subtotal - discount
+  // Either cgst+sgst pair (intra-state) or igst alone (inter-state).
+  cgst?: number;
+  sgst?: number;
+  igst?: number;
+  gstPct?: number;                       // total %, used for "CGST 2.5%" label
+  roundOff?: number;
+  total: number;
+  paidVia?: string | null;
+};
+
+const W = 32; // 58mm thermal char width — works on 80mm too with safe margins
+function pad(left: string, right: string, width = W): string {
+  const l = asAscii(left);
+  const r = asAscii(right);
+  const free = Math.max(1, width - l.length - r.length);
+  return l + ' '.repeat(free) + r;
+}
+function dash(width = W) { return '-'.repeat(width); }
+function fmt(n: number): string { return n.toFixed(2); }
+
+function buildCustomerEscPos(r: CustomerReceiptPayload): Uint8Array {
+  const enc = new TextEncoder();
+  const ESC = 0x1b;
+  const GS = 0x1d;
+  const buf: number[] = [];
+  const push = (s: string) => { for (const c of enc.encode(asAscii(s))) buf.push(c); };
+  const cmd = (...b: number[]) => { for (const c of b) buf.push(c); };
+
+  cmd(ESC, 0x40);          // init
+  cmd(ESC, 0x61, 0x01);    // center
+  cmd(ESC, 0x21, 0x30);    // double w/h
+  push(r.outletName.toUpperCase() + '\n');
+  cmd(ESC, 0x21, 0x00);    // normal
+  for (const line of r.outletAddress ?? []) push(line + '\n');
+  if (r.outletPhone) push('Tel: ' + r.outletPhone + '\n');
+  if (r.outletGstin)  push('GSTIN: ' + r.outletGstin + '\n');
+
+  cmd(ESC, 0x61, 0x00);    // left
+  push('\n' + dash() + '\n');
+  if (r.customerName) push('Name : ' + r.customerName + '\n');
+  push('Bill : ' + r.orderNumber + '\n');
+  if (r.tokenNumber != null) push('Token: #' + r.tokenNumber + '\n');
+  if (r.table) push('Table: ' + r.table + '\n');
+  else if (r.isParcel) push('Type : PARCEL\n');
+  push('Date : ' + new Date(r.printedAt).toLocaleString('en-IN') + '\n');
+  push(dash() + '\n');
+
+  push(pad('Item', 'Amt') + '\n');
+  push(dash() + '\n');
+  for (const it of r.items) {
+    push(`${it.quantity} x ${it.itemName}\n`);
+    if (it.variantName) push(`   ${it.variantName}\n`);
+    push(pad(`   @ ${fmt(it.unitPrice)}`, fmt(it.totalPrice)) + '\n');
+  }
+  push(dash() + '\n');
+
+  push(pad('Sub Total', fmt(r.subtotal)) + '\n');
+  if (r.parcelCharge && r.parcelCharge > 0) {
+    push(pad('Parcel', fmt(r.parcelCharge)) + '\n');
+  }
+  for (const d of r.discounts) {
+    push(pad(d.label, '-' + fmt(d.amount)) + '\n');
+  }
+  if (r.discounts.length > 0) {
+    push(pad('Taxable', fmt(r.taxable)) + '\n');
+  }
+  if (r.cgst != null && r.sgst != null && (r.cgst > 0 || r.sgst > 0)) {
+    const half = ((r.gstPct ?? 0) / 2).toFixed(1).replace(/\.0$/, '');
+    push(pad(`CGST ${half}%`, fmt(r.cgst)) + '\n');
+    push(pad(`SGST ${half}%`, fmt(r.sgst)) + '\n');
+  } else if (r.igst && r.igst > 0) {
+    const full = (r.gstPct ?? 0).toFixed(1).replace(/\.0$/, '');
+    push(pad(`IGST ${full}%`, fmt(r.igst)) + '\n');
+  }
+  if (r.roundOff && r.roundOff !== 0) {
+    push(pad('Round off', (r.roundOff > 0 ? '+' : '-') + fmt(Math.abs(r.roundOff))) + '\n');
+  }
+
+  push(dash() + '\n');
+  cmd(ESC, 0x21, 0x10);    // double height
+  push(pad('TOTAL', '₹' + fmt(r.total)) + '\n');
+  cmd(ESC, 0x21, 0x00);
+  if (r.paidVia) push('Paid: ' + r.paidVia + '\n');
+
+  push(dash() + '\n');
+  cmd(ESC, 0x61, 0x01);    // center
+  push('Thank you, visit again!\n');
+
+  cmd(ESC, 0x64, 0x04);    // feed 4 lines
+  cmd(GS, 0x56, 0x00);     // full cut
+  return new Uint8Array(buf);
+}
+
+export async function printCustomerReceipt(
+  printerId: string,
+  receipt: CustomerReceiptPayload,
+): Promise<void> {
+  const bytes = buildCustomerEscPos(receipt);
+  await writeBytes(printerId, bytes);
+}

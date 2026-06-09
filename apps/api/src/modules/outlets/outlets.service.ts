@@ -46,6 +46,9 @@ export class CreateOutletDto {
   @IsBoolean() @IsOptional() acceptRewardRedemption?: boolean;
   @IsBoolean() @IsOptional() kitchenAutoPrint?: boolean;
   @IsBoolean() @IsOptional() kitchenAllowManualPrint?: boolean;
+  @IsBoolean() @IsOptional() receiptAutoPrint?: boolean;
+  @IsBoolean() @IsOptional() receiptAllowManualPrint?: boolean;
+  @IsString()  @IsOptional() receiptPrinterId?: string | null;
   @IsString() @IsOptional() adminPhone?: string;
   @IsString() @IsOptional() adminName?: string;
   // Razorpay Route — Linked Account id (acc_xxxxx). When set, single-
