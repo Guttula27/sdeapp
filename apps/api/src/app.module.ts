@@ -40,6 +40,7 @@ import { OffersModule } from './modules/offers/offers.module';
 import { RewardsModule } from './modules/rewards/rewards.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { PrintersModule } from './modules/printers/printers.module';
+import { PlatformSettingsModule } from './modules/platform-settings/platform-settings.module';
 
 @Module({
   imports: [
@@ -86,6 +87,7 @@ import { PrintersModule } from './modules/printers/printers.module';
     RewardsModule,
     PricingModule,
     PrintersModule,
+    PlatformSettingsModule,
   ],
 })
 export class AppModule {}

@@ -7,6 +7,7 @@ import LandingPage from './pages/landing/LandingPage';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/dashboard/DashboardPage';
 import PlatformPage from './pages/platform/PlatformPage';
+import PlatformFeesPage from './pages/platform/PlatformFeesPage';
 import ClusterDetailPage from './pages/clusters/ClusterDetailPage';
 import OrdersPage from './pages/orders/OrdersPage';
 import PlaceOrderPage from './pages/orders/PlaceOrderPage';
@@ -77,6 +78,7 @@ export default function App() {
           <Route path="subscriptions-mgmt" element={<PlatformPage />} />
           <Route path="businesses"         element={<PlatformPage />} />
           <Route path="platform/clusters/:id" element={<ClusterDetailPage />} />
+          <Route path="platform-settings" element={<PlatformFeesPage />} />
 
           {/* Shared across tiers */}
           <Route path="dashboard"  element={<DashboardPage />} />

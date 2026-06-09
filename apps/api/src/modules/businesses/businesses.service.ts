@@ -42,6 +42,12 @@ export class CreateBusinessDto {
   // OTHER businesses via the ClusterMember join. They own no outlets, seed
   // no menu, and the admin user is optional (platform-admin managed).
   @IsBoolean() @IsOptional() isCluster?: boolean;
+  // Per-business override of the platform fee schedule. Both fields are
+  // independently nullable — set just one (or both, or neither) and the
+  // rest fall back to PlatformSettings. Passing null explicitly clears
+  // the override and reverts to the global default for that field.
+  @IsOptional() platformFeePercent?: number | null;
+  @IsOptional() platformFeeMinimum?: number | null;
 }
 
 @Injectable()

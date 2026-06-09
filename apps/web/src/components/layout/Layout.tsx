@@ -58,6 +58,7 @@ const NAV: Record<UserTier, NavItem[]> = {
     { to: '/businesses',         icon: Building2,       label: 'Businesses' },
     { to: '/orders',             icon: ShoppingBag,     label: 'Orders' },
     { to: '/subscriptions-mgmt', icon: CreditCard,      label: 'Plans' },
+    { to: '/platform-settings',  icon: PercentIcon,     label: 'Fees' },
     { to: '/settings',           icon: Settings,        label: 'Settings', children: SETTINGS_CHILDREN.platform },
   ],
   business: [

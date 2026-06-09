@@ -372,6 +372,14 @@ model Business {
   subscriptionId String?       @unique
   subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
 
+  // Per-business platform-fee override. Null = inherit from
+  // PlatformSettings (the global default). Percentage is applied to
+  // the order total; if the result is below `platformFeeMinimum`,
+  // the minimum is charged instead. Razorpay Route then receives
+  // (total - fee) as the transfer to the outlet's LA.
+  platformFeePercent Decimal? @db.Decimal(5, 2)
+  platformFeeMinimum Decimal? @db.Decimal(10, 2)
+
   outlets    Outlet[]
   users      User[]
   roles      Role[]
@@ -1034,6 +1042,27 @@ model Order {
 // outletId is UNIQUE so an outlet can be in at most one cluster at any time
 // — the "cluster-exclusive while linked" rule. Removing this row releases
 // the outlet back to standalone operation.
+// Platform-wide settings, kept as a singleton row (id = "singleton").
+// Currently holds the default Razorpay platform-fee schedule that's
+// applied when a Business doesn't override it. New fields land here so
+// admins can edit them through the UI instead of redeploying with new
+// env vars.
+model PlatformSettings {
+  id                 String   @id @default("singleton")
+  // Default fee % applied to the order total on every Razorpay Route
+  // payment. 0 = no fee (outlet receives the full ticket). Per-business
+  // overrides on Business take precedence when set.
+  platformFeePercent Decimal  @default(0) @db.Decimal(5, 2)
+  // Minimum fee in INR. If percent × total falls below this floor, the
+  // floor is charged instead.
+  platformFeeMinimum Decimal  @default(0) @db.Decimal(10, 2)
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@map("paynpik_platform_settings")
+}
+
 // Section-level menu disables. A row here means: this menu is NOT
 // available when ordering from this section. Empty default = menu
 // visible everywhere. Used by the customer menu fetch when a table

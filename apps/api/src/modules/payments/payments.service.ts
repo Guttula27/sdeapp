@@ -5,6 +5,10 @@ import { OrdersService } from '../orders/orders.service';
 import { PaymentMode } from '@prisma/client';
 import { LifecycleDispatcherService } from '../customer-alerts/lifecycle-dispatcher.service';
 import { RazorpayService } from './razorpay.service';
+import {
+  PlatformSettingsService,
+  computePlatformFee,
+} from '../platform-settings/platform-settings.service';
 
 @Injectable()
 export class PaymentsService {
@@ -14,6 +18,7 @@ export class PaymentsService {
     private dispatcher: LifecycleDispatcherService,
     private razorpay: RazorpayService,
     private orders: OrdersService,
+    private platformSettings: PlatformSettingsService,
   ) {}
 
   async initiatePayment(orderId: string, mode: PaymentMode, amount: number) {
@@ -103,7 +108,7 @@ export class PaymentsService {
       include: {
         order: {
           include: {
-            outlet: { select: { name: true, razorpayLinkedAccountId: true } },
+            outlet: { select: { name: true, businessId: true, razorpayLinkedAccountId: true } },
           },
         },
       },
@@ -114,19 +119,34 @@ export class PaymentsService {
     }
 
     // Razorpay Route — when the outlet has a Linked Account configured,
-    // route the full payment to that account on capture (Razorpay
-    // deducts the gateway fee from the source so the LA receives the
-    // gross amount net of fees). When no LA is set we fall back to a
-    // plain order; settlement lands in the platform account.
+    // the full ticket value is captured into the paynpik master account
+    // and we route (total − platform fee) to the outlet's LA. The
+    // master account keeps the fee (which covers Razorpay's gateway
+    // charge and the platform's margin). When no LA is set we fall
+    // back to a plain order; settlement lands in the master account
+    // and no transfer fires.
     const outletLA = payment.order.outlet?.razorpayLinkedAccountId;
+    let resolvedFee = 0;
+    let transferable = Number(payment.amount);
+    if (outletLA) {
+      const feeCfg = await this.platformSettings.feeForBusiness(payment.order.outlet?.businessId);
+      const calc = computePlatformFee(Number(payment.amount), feeCfg);
+      resolvedFee = calc.fee;
+      transferable = calc.transferable;
+    }
+
     const order = outletLA
       ? await this.razorpay.createRouteOrder({
           amountInRupees: Number(payment.amount),
           receipt: `pay_${payment.id}`,
-          notes: { paymentId: payment.id, orderId: payment.orderId },
+          notes: {
+            paymentId: payment.id,
+            orderId: payment.orderId,
+            platformFee: resolvedFee.toFixed(2),
+          },
           transfers: [{
             account: outletLA,
-            amountInRupees: Number(payment.amount),
+            amountInRupees: transferable,
             notes: { paymentId: payment.id, orderId: payment.orderId },
           }],
         })
