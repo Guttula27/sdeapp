@@ -16,9 +16,12 @@ nixPkgs = ["nodejs_20", "openssl"]
 cmds = ["npm ci"]
 
 [phases.build]
+# prisma generate MUST run before nest build — the TS compiler needs the
+# generated client types (every new schema model / column lands here).
+# If you swap the order, build fails the moment a migration adds a field.
 cmds = [
-  "npm run build --workspace=apps/api",
   "cd apps/api && npx prisma generate",
+  "npm run build --workspace=apps/api",
 ]
 
 [start]
