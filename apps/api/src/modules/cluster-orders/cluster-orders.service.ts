@@ -7,6 +7,10 @@ import { RazorpayService } from '../payments/razorpay.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { CreateClusterOrderDto, VerifyClusterPaymentDto } from './dto/create-cluster-order.dto';
 import { EncryptionService } from '../../config/crypto/encryption.service';
+import {
+  PlatformSettingsService,
+  computePlatformFee,
+} from '../platform-settings/platform-settings.service';
 
 // One entry per outlet in the cluster's payment split. Persisted to
 // ClusterOrder.routeTransfers as JSON; mirrors the structure Razorpay Route
@@ -17,6 +21,15 @@ type TransferEntry = {
   childOrderId: string;
   childOrderNumber: string;
   razorpayLinkedAccountId: string | null;
+  // Gross share of the cart that belongs to this outlet — used as the
+  // base for platform-fee computation and also persisted for audit.
+  grossAmountInRupees: number;
+  // Platform fee retained on the master account for this outlet's
+  // share. Computed from the outlet's *business* fee config (cluster
+  // spans multiple businesses so each child can use a different rate).
+  platformFeeInRupees: number;
+  // Net amount routed to the outlet's LA on capture
+  // (= grossAmountInRupees − platformFeeInRupees).
   amountInRupees: number;
   status: 'PENDING' | 'COMPLETED' | 'STUBBED' | 'BYPASSED' | 'FAILED';
   transferId?: string;
@@ -32,6 +45,7 @@ export class ClusterOrdersService {
     private razorpay: RazorpayService,
     private rewards: RewardsService,
     private encryption: EncryptionService,
+    private platformSettings: PlatformSettingsService,
   ) {}
 
   // ───────────────────────────────────────────────────────────
@@ -62,7 +76,7 @@ export class ClusterOrdersService {
     const outletIds = Array.from(groups.keys());
     const members = await this.prisma.clusterMember.findMany({
       where: { clusterBusinessId: cluster.id, outletId: { in: outletIds } },
-      include: { outlet: { select: { id: true, name: true, razorpayLinkedAccountId: true } } },
+      include: { outlet: { select: { id: true, name: true, businessId: true, razorpayLinkedAccountId: true } } },
     });
     if (members.length !== outletIds.length) {
       const memberIds = new Set(members.map((m) => m.outletId));
@@ -122,21 +136,33 @@ export class ClusterOrdersService {
       .toUpperCase()}`;
 
     // ── Pre-compute the route split (one transfer per child) ──
-    const transfers: TransferEntry[] = childOrders.map((c) => {
-      const m = members.find((mm) => mm.outletId === c.outletId)!;
-      return {
-        outletId: c.outletId,
-        outletName: m.outlet.name,
-        childOrderId: c.id,
-        childOrderNumber: c.orderNumber,
-        // LA id is encrypted at rest — decrypt here so the precomputed
-        // transfers list (and the downstream Razorpay payload) carry
-        // the plaintext acc_... id Razorpay expects.
-        razorpayLinkedAccountId: this.encryption.decrypt(m.outlet.razorpayLinkedAccountId),
-        amountInRupees: Number(c.totalAmount),
-        status: 'PENDING',
-      };
-    });
+    // For each child we look up the *outlet's business* and apply the
+    // platform fee for that business. Cluster spans businesses, so two
+    // children in the same cart may pay different fee percentages.
+    // The master account retains the sum of fees; only the net is
+    // routed to each outlet's LA on capture.
+    const transfers: TransferEntry[] = await Promise.all(
+      childOrders.map(async (c) => {
+        const m = members.find((mm) => mm.outletId === c.outletId)!;
+        const gross = Number(c.totalAmount);
+        const feeCfg = await this.platformSettings.feeForBusiness(m.outlet.businessId ?? null);
+        const { fee, transferable } = computePlatformFee(gross, feeCfg);
+        return {
+          outletId: c.outletId,
+          outletName: m.outlet.name,
+          childOrderId: c.id,
+          childOrderNumber: c.orderNumber,
+          // LA id is encrypted at rest — decrypt here so the
+          // precomputed transfers list (and the downstream Razorpay
+          // payload) carry the plaintext acc_... id Razorpay expects.
+          razorpayLinkedAccountId: this.encryption.decrypt(m.outlet.razorpayLinkedAccountId),
+          grossAmountInRupees: gross,
+          platformFeeInRupees: fee,
+          amountInRupees: transferable,
+          status: 'PENDING',
+        };
+      }),
+    );
 
     // ── Create the ClusterOrder parent ───────────────────────
     const parent = await this.prisma.clusterOrder.create({
@@ -188,7 +214,12 @@ export class ClusterOrdersService {
     if (razorpayOrder) {
       await this.prisma.clusterOrder.update({
         where: { id: parent.id },
-        data: { razorpayOrderId: razorpayOrder.id, paymentMethod: 'RAZORPAY' },
+        data: {
+          // Encrypted at rest to match payments.service. Decrypted at
+          // the verify step below before being passed to Razorpay.
+          razorpayOrderId: this.encryption.encrypt(razorpayOrder.id),
+          paymentMethod: 'RAZORPAY',
+        },
       });
     }
 
@@ -225,11 +256,16 @@ export class ClusterOrdersService {
     }
     if (!parent.razorpayOrderId) throw new BadRequestException('No Razorpay order on this cluster order');
 
+    // razorpayOrderId is encrypted at rest — decrypt before handing it
+    // to verifyHandlerSignature, which HMACs the plaintext id.
+    const razorpayOrderId = this.encryption.decrypt(parent.razorpayOrderId);
+    if (!razorpayOrderId) throw new BadRequestException('Razorpay order id could not be read');
+
     // In stub mode the signature is bogus, so skip the strict check.
     const stubbed = this.razorpay.isStubbed();
     if (!stubbed) {
       const valid = this.razorpay.verifyHandlerSignature(
-        parent.razorpayOrderId,
+        razorpayOrderId,
         dto.razorpayPaymentId,
         dto.razorpaySignature,
       );
@@ -289,14 +325,33 @@ export class ClusterOrdersService {
             : 'COMPLETED',
     } as TransferEntry));
 
+    // Encrypt the persisted refs to match the encryption posture on
+    // single-outlet flows. The new razorpayPaymentId / razorpaySignature
+    // were just received from Razorpay (plaintext on the wire); we
+    // encrypt before storage. The fallback `?? parent.razorpayPaymentId`
+    // path is already-stored ciphertext and shouldn't be re-encrypted —
+    // only the freshly-received plaintext goes through encrypt().
+    const newRazorpayPaymentId = opts.razorpayPaymentId
+      ? this.encryption.encrypt(opts.razorpayPaymentId)
+      : parent.razorpayPaymentId;
+    const newRazorpaySignature = opts.razorpaySignature
+      ? this.encryption.encrypt(opts.razorpaySignature)
+      : parent.razorpaySignature;
+    // gatewayRef on each child Payment is encrypted the same way the
+    // single-outlet payments.service does it — keeps the at-rest
+    // posture uniform across the two checkout paths.
+    const childGatewayRef = this.encryption.encrypt(
+      opts.razorpayPaymentId ?? `cluster:${opts.method.toLowerCase()}`,
+    );
+
     await this.prisma.$transaction([
       this.prisma.clusterOrder.update({
         where: { id: parent.id },
         data: {
           paymentMethod: opts.method,
           paymentStatus: 'SUCCESS',
-          razorpayPaymentId: opts.razorpayPaymentId ?? parent.razorpayPaymentId,
-          razorpaySignature: opts.razorpaySignature ?? parent.razorpaySignature,
+          razorpayPaymentId: newRazorpayPaymentId,
+          razorpaySignature: newRazorpaySignature,
           routeTransfers: newTransfers as any,
         },
       }),
@@ -310,7 +365,7 @@ export class ClusterOrdersService {
             mode: 'UPI' as any,
             amount: c.totalAmount,
             status: 'SUCCESS',
-            gatewayRef: opts.razorpayPaymentId ?? `cluster:${opts.method.toLowerCase()}`,
+            gatewayRef: childGatewayRef,
           },
         }),
       ),
@@ -377,6 +432,24 @@ export class ClusterOrdersService {
       },
     });
     if (!parent) throw new NotFoundException('Cluster order not found');
+    // Decrypt the Razorpay refs before returning so the customer / admin
+    // app sees the plaintext ids (needed for the Razorpay handler).
+    return this.decryptForResponse(parent);
+  }
+
+  // Decrypt the at-rest-encrypted Razorpay refs on a cluster order
+  // response (parent + nested child Payment.gatewayRef rows) so the
+  // client receives the plaintext values it needs. Mutates a shallow
+  // clone — the persisted row stays encrypted.
+  private decryptForResponse<T extends { razorpayOrderId?: string | null; razorpayPaymentId?: string | null; razorpaySignature?: string | null; childOrders?: any[] }>(parent: T): T {
+    (parent as any).razorpayOrderId   = this.encryption.decrypt(parent.razorpayOrderId);
+    (parent as any).razorpayPaymentId = this.encryption.decrypt(parent.razorpayPaymentId);
+    (parent as any).razorpaySignature = this.encryption.decrypt(parent.razorpaySignature);
+    for (const child of parent.childOrders ?? []) {
+      for (const p of child.payments ?? []) {
+        p.gatewayRef = this.encryption.decrypt(p.gatewayRef);
+      }
+    }
     return parent;
   }
 
