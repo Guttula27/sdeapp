@@ -4,6 +4,8 @@ import { OutletsService, CreateOutletDto, CreateSectionDto, CreateTableDto } fro
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
 import { PreferredLanguage } from '../../common/language/preferred-language';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { assertResponsibility } from '../../common/permissions/responsibility';
 
 @ApiTags('Outlets')
 @ApiBearerAuth()
@@ -56,7 +58,11 @@ export class OutletsController {
   }
 
   @Get('sections/:sectionId/menus')
-  listSectionMenus(@Param('sectionId') sectionId: string) {
+  listSectionMenus(@Param('sectionId') sectionId: string, @CurrentUser() user: any) {
+    // Read access only needs VIEW_MENU since the response is just a
+    // menu × isEnabled projection — same data they'd see on the menu
+    // builder. MANAGE_SECTIONS is the right gate for the toggle below.
+    assertResponsibility(user, 'VIEW_MENU');
     return this.service.listSectionMenus(sectionId);
   }
 
@@ -65,7 +71,9 @@ export class OutletsController {
     @Param('sectionId') sectionId: string,
     @Param('menuId') menuId: string,
     @Body() body: { isEnabled: boolean },
+    @CurrentUser() user: any,
   ) {
+    assertResponsibility(user, 'MANAGE_SECTIONS');
     return this.service.setSectionMenuEnabled(sectionId, menuId, !!body?.isEnabled);
   }
 

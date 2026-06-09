@@ -156,6 +156,10 @@ async function main() {
     'VIEW_MENU', 'TOGGLE_ITEM_AVAILABILITY',
     'VIEW_ORDERS', 'UPDATE_ORDER_STATUS', 'UPDATE_ITEM_STATUS', 'VIEW_ORDER_LOG',
     'VIEW_KITCHEN', 'MANAGE_KITCHEN_STATIONS',
+    // Read-only visibility into the service-desk lanes so the kitchen
+    // manager can see where their finished output is going. The "Manage"
+    // counterpart belongs to the service desk / cashier role.
+    'VIEW_SERVICE_DESK',
     'VIEW_INVENTORY', 'MANAGE_INVENTORY',
     'VIEW_KITCHEN_REPORTS',
   ];
@@ -167,6 +171,18 @@ async function main() {
     'VIEW_CUSTOMERS', 'ASSIGN_CUSTOMER_TAGS',
     'VIEW_QR_CODES',
     'VIEW_SERVICE_DESK', 'MANAGE_SERVICE_DESK',
+  ];
+
+  // Dedicated service-desk role for outlets that staff the verify /
+  // release / pickup lanes separately from the cashier. Smaller surface
+  // than Cashier: no payment collection, no order create. They still
+  // need UPDATE_ORDER_STATUS so the lane buttons (release, on-its-way,
+  // served) work; the actions go through the regular status PATCH.
+  const SERVICE_DESK = [
+    'VIEW_MENU',
+    'VIEW_ORDERS', 'UPDATE_ORDER_STATUS', 'VIEW_ORDER_LOG',
+    'VIEW_SERVICE_DESK', 'MANAGE_SERVICE_DESK',
+    'VIEW_CUSTOMERS',
   ];
 
   const STORE_MANAGER = [
@@ -509,6 +525,14 @@ async function main() {
   const storeRole = await syncRole(
     { id: 'store-manager-role', name: 'Store Manager', businessId: demoBusiness.id },
     STORE_MANAGER,
+  );
+
+  // Dedicated service-desk staff role on the demo business. Outlets
+  // running the verify / release / pickup workflow as a separate
+  // function from the cashier can assign staff here.
+  const serviceDeskRole = await syncRole(
+    { id: 'service-desk-role', name: 'Service Desk', businessId: demoBusiness.id },
+    SERVICE_DESK,
   );
 
   const outletAdminPassword = await bcrypt.hash('Outlet@123', 12);
