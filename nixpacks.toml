@@ -16,15 +16,15 @@ nixPkgs = ["nodejs_20", "openssl"]
 cmds = ["npm ci"]
 
 [phases.build]
-# prisma generate MUST run before nest build — the TS compiler needs the
-# generated client types (every new schema model / column lands here).
-# If you swap the order, build fails the moment a migration adds a field.
+# `npm run build` for apps/api now runs `prisma generate && nest build`
+# internally (see apps/api/package.json) so the build always emits a
+# fresh client even when Nixpacks caches the install layer.
 cmds = [
-  "cd apps/api && npx prisma generate",
   "npm run build --workspace=apps/api",
 ]
 
 [start]
-# prisma migrate deploy is idempotent — safe to run on every boot.
-# If a deploy ships a new migration, it applies it before the API listens.
-cmd = "cd apps/api && npx prisma migrate deploy && node dist/src/main.js"
+# Regenerate the client at boot too — belt-and-braces for the case
+# where the build layer is cached but node_modules was reset; migrate
+# deploy is idempotent so re-running it across boots is safe.
+cmd = "cd apps/api && npx prisma generate && npx prisma migrate deploy && node dist/src/main.js"
