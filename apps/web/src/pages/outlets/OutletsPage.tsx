@@ -326,6 +326,44 @@ export default function OutletsPage() {
                     </form>
                   </div>
 
+                  {/* Payments — Razorpay Route. When set, every Razorpay
+                      payment on this outlet is routed (full amount) to
+                      this Linked Account; gateway fees come out of the
+                      LA's settlement. Empty = customer PWA hides the
+                      Razorpay option entirely. */}
+                  <div className="bg-white rounded-xl border border-slate-100 p-3 space-y-2.5">
+                    <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Payments</p>
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const fd = new FormData(e.currentTarget);
+                        const raw = String(fd.get('razorpayLinkedAccountId') || '').trim();
+                        saveOps(outlet.id, { razorpayLinkedAccountId: raw || null });
+                      }}
+                      className="space-y-2"
+                    >
+                      <div>
+                        <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">
+                          Razorpay Route ID
+                        </label>
+                        <input
+                          name="razorpayLinkedAccountId"
+                          defaultValue={selected.razorpayLinkedAccountId ?? ''}
+                          placeholder="acc_XXXXXXXXXXXXXX"
+                          className="input text-xs font-mono"
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Linked Account ID from Razorpay (starts with <code>acc_</code>). Leave blank to hide the Razorpay option from customers.
+                        </p>
+                      </div>
+                      <button type="submit" disabled={saving} className="btn-secondary text-xs py-1.5 w-full">
+                        {saving ? 'Saving…' : 'Save payments'}
+                      </button>
+                    </form>
+                  </div>
+
                   {!allowsSeating(selected.outletType) && (
                     <div className="bg-white rounded-xl border border-slate-100 p-3">
                       <p className="text-xs font-semibold text-slate-500">
