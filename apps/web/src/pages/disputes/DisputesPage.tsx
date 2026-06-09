@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { RootState } from '../../store';
 import { useUserRole } from '../../hooks/useUserRole';
+import ListToolbar from '../../components/common/ListToolbar';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
 
@@ -81,6 +82,12 @@ export default function DisputesPage() {
   const [disputes, setDisputes]   = useState<Dispute[]>([]);
   const [stats, setStats]         = useState<Stats | null>(null);
   const [filter, setFilter]       = useState<DisputeStatus | 'ALL'>('ALL');
+  // Search + sort — fully client-side. Search matches order number,
+  // customer name + phone, and the dispute description (so an operator
+  // can find by what the customer wrote).
+  const [search, setSearch]       = useState('');
+  const [sortBy, setSortBy]       = useState<'createdAt' | 'claimAmount' | 'status' | 'orderNumber'>('createdAt');
+  const [sortDir, setSortDir]     = useState<'asc' | 'desc'>('desc');
   const [loading, setLoading]     = useState(true);
   const [selected, setSelected]   = useState<Dispute | null>(null);
   const [resolveModal, setResolveModal] = useState<{ open: boolean; dispute?: Dispute; nextStatus?: DisputeStatus }>({ open: false });
@@ -119,6 +126,32 @@ export default function DisputesPage() {
   }, [outletId, filter]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Filtered + sorted view of the current dispute list. Search matches
+  // order number, customer name + phone, description; sort applies a
+  // sign flip per direction.
+  const visibleDisputes = (() => {
+    const q = search.trim().toLowerCase();
+    const matched = !q ? disputes : disputes.filter((d) => {
+      const haystack = [
+        d.order?.orderNumber,
+        d.order?.customer?.name,
+        d.order?.customer?.phone,
+        d.description,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...matched].sort((a, b) => {
+      switch (sortBy) {
+        case 'claimAmount': return dir * (Number(a.claimAmount || 0) - Number(b.claimAmount || 0));
+        case 'status':      return dir * a.status.localeCompare(b.status);
+        case 'orderNumber': return dir * (a.order?.orderNumber || '').localeCompare(b.order?.orderNumber || '');
+        case 'createdAt':
+        default:            return dir * (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      }
+    });
+  })();
 
   /* ── business-tier outlet picker ─────────────────────────── */
   const outletPicker = tier === 'business' && (
@@ -267,6 +300,23 @@ export default function DisputesPage() {
         </div>
       )}
 
+      {/* Search + sort toolbar */}
+      <ListToolbar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search by order number, customer name, phone, description…"
+        sortBy={sortBy}
+        onSortByChange={(v) => setSortBy(v as typeof sortBy)}
+        sortDir={sortDir}
+        onSortDirChange={setSortDir}
+        sortOptions={[
+          { value: 'createdAt',   label: 'Newest' },
+          { value: 'claimAmount', label: 'Claim ₹' },
+          { value: 'status',      label: 'Status' },
+          { value: 'orderNumber', label: 'Order #' },
+        ]}
+      />
+
       {/* Filter tabs */}
       <div className="card p-4 flex gap-1.5 flex-wrap">
         {FILTER_OPTIONS.map(f => (
@@ -295,13 +345,15 @@ export default function DisputesPage() {
         <div className={clsx('space-y-3 min-w-0', selected ? 'flex-1' : 'w-full')}>
           {loading ? (
             Array.from({ length: 4 }).map((_, i) => <div key={i} className="card h-28 animate-pulse" />)
-          ) : disputes.length === 0 ? (
+          ) : visibleDisputes.length === 0 ? (
             <div className="card flex flex-col items-center py-20 text-center">
               <AlertTriangle size={36} className="text-slate-200 mb-3" />
-              <p className="text-slate-500 font-medium">No disputes {filter !== 'ALL' ? `with status "${filter}"` : ''}</p>
+              <p className="text-slate-500 font-medium">
+                No disputes {search ? `match "${search}"` : filter !== 'ALL' ? `with status "${filter}"` : ''}
+              </p>
             </div>
           ) : (
-            disputes.map(dispute => {
+            visibleDisputes.map(dispute => {
               const cfg = STATUS_CFG[dispute.status];
               const isSelected = selected?.id === dispute.id;
               return (

@@ -7,6 +7,7 @@ import { RootState } from '../../store';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
+import ListToolbar from '../../components/common/ListToolbar';
 
 interface Role {
   id: string;
@@ -204,12 +205,29 @@ export default function StaffPage() {
     finally { setSaving(false); }
   };
 
-  const filtered = staff.filter(s =>
-    !search ||
-    s.name?.toLowerCase().includes(search.toLowerCase()) ||
-    s.phone?.includes(search) ||
-    s.email?.toLowerCase().includes(search.toLowerCase())
-  );
+  const [sortBy, setSortBy] = useState<'name' | 'role' | 'outlet' | 'status' | 'createdAt'>('name');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const filtered = (() => {
+    const q = search.trim().toLowerCase();
+    const matched = staff.filter((s) => !q
+      || s.name?.toLowerCase().includes(q)
+      || s.phone?.includes(search.trim())
+      || s.email?.toLowerCase().includes(q)
+      || s.role?.name?.toLowerCase().includes(q)
+      || s.outlet?.name?.toLowerCase().includes(q),
+    );
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...matched].sort((a, b) => {
+      switch (sortBy) {
+        case 'role':      return dir * ((a.role?.name || '').localeCompare(b.role?.name || ''));
+        case 'outlet':    return dir * ((a.outlet?.name || '').localeCompare(b.outlet?.name || ''));
+        case 'status':    return dir * ((a.status || '').localeCompare(b.status || ''));
+        case 'createdAt': return dir * (new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+        case 'name':
+        default:          return dir * ((a.name || '').localeCompare(b.name || ''));
+      }
+    });
+  })();
 
   return (
     <div className="space-y-5">
@@ -221,17 +239,22 @@ export default function StaffPage() {
         <button className="btn-primary" onClick={openCreate}><Plus size={15} /> Add Staff</button>
       </div>
 
-      <div className="card p-4">
-        <div className="relative">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search by name, phone, email…"
-            className="input pl-9"
-          />
-        </div>
-      </div>
+      <ListToolbar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search by name, phone, email, role, outlet…"
+        sortBy={sortBy}
+        onSortByChange={(v) => setSortBy(v as typeof sortBy)}
+        sortDir={sortDir}
+        onSortDirChange={setSortDir}
+        sortOptions={[
+          { value: 'name',      label: 'Name' },
+          { value: 'role',      label: 'Role' },
+          { value: 'outlet',    label: 'Outlet' },
+          { value: 'status',    label: 'Status' },
+          { value: 'createdAt', label: 'Joined' },
+        ]}
+      />
 
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

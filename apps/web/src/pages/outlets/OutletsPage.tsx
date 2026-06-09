@@ -12,6 +12,7 @@ import { useUserRole } from '../../hooks/useUserRole';
 import { allowsSeating } from '../../utils/outletType';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
+import ListToolbar from '../../components/common/ListToolbar';
 
 // SELF_SERVICE_PARCEL is intentionally absent — parcel is now available at
 // every outlet by default, so the dedicated "Self Service + Parcel" option is
@@ -37,6 +38,9 @@ export default function OutletsPage() {
   // they need lives on /outlet-profile.
   if (tier === 'outlet') return <Navigate to="/outlet-profile" replace />;
   const [outlets, setOutlets]       = useState<any[]>([]);
+  const [outletSearch, setOutletSearch] = useState('');
+  const [outletSort,   setOutletSort]   = useState<'name' | 'outletType' | 'status' | 'createdAt'>('name');
+  const [outletSortDir, setOutletSortDir] = useState<'asc' | 'desc'>('asc');
   const [selected, setSelected]     = useState<any>(null);   // outlet with sections
   const [expanded, setExpanded]     = useState<Set<string>>(new Set());
   const [loading, setLoading]       = useState(true);
@@ -180,21 +184,66 @@ export default function OutletsPage() {
     } catch (e: any) { toast.error('QR generation failed'); }
   };
 
+  // Local search + sort over the outlet list. List is small per
+  // business (units to low hundreds) so client-side filter is plenty.
+  // Search matches name, public code, address fields and outlet type.
+  const visibleOutlets = (() => {
+    const q = outletSearch.trim().toLowerCase();
+    const matched = !q ? outlets : outlets.filter((o: any) => {
+      const haystack = [
+        o.name, o.publicCode,
+        o.address, o.addressLine1, o.addressLine2, o.city, o.state, o.pincode,
+        o.outletType?.replace(/_/g, ' '),
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+    const dir = outletSortDir === 'asc' ? 1 : -1;
+    return [...matched].sort((a: any, b: any) => {
+      switch (outletSort) {
+        case 'createdAt':  return dir * (new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+        case 'outletType': return dir * (a.outletType || '').localeCompare(b.outletType || '');
+        case 'status':     return dir * ((a.isActive ? 'a' : 'b').localeCompare(b.isActive ? 'a' : 'b'));
+        case 'name':
+        default:           return dir * (a.name || '').localeCompare(b.name || '');
+      }
+    });
+  })();
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="page-title">Outlets</h1>
-          <p className="page-subtitle">{outlets.length} location{outlets.length !== 1 ? 's' : ''}</p>
+          <p className="page-subtitle">
+            {outletSearch
+              ? `${visibleOutlets.length} of ${outlets.length} match "${outletSearch}"`
+              : `${outlets.length} location${outlets.length !== 1 ? 's' : ''}`}
+          </p>
         </div>
         <button className="btn-primary" onClick={() => setOutletModal(true)}><Plus size={15} /> Add Outlet</button>
       </div>
+
+      <ListToolbar
+        search={outletSearch}
+        onSearchChange={setOutletSearch}
+        searchPlaceholder="Search by name, code, address or type"
+        sortBy={outletSort}
+        onSortByChange={(v) => setOutletSort(v as typeof outletSort)}
+        sortDir={outletSortDir}
+        onSortDirChange={setOutletSortDir}
+        sortOptions={[
+          { value: 'name',       label: 'Name' },
+          { value: 'outletType', label: 'Type' },
+          { value: 'status',     label: 'Status' },
+          { value: 'createdAt',  label: 'Created' },
+        ]}
+      />
 
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {Array.from({ length: 3 }).map((_, i) => <div key={i} className="card h-40 animate-pulse" />)}
         </div>
-      ) : outlets.length === 0 ? (
+      ) : visibleOutlets.length === 0 ? (
         <div className="card flex flex-col items-center py-20 text-center">
           <Store size={40} className="text-slate-200 mb-3" />
           <p className="text-slate-500 font-medium">No outlets yet</p>
@@ -202,7 +251,7 @@ export default function OutletsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {outlets.map(outlet => (
+          {visibleOutlets.map((outlet: any) => (
             <div key={outlet.id} className="card overflow-hidden card-hover">
               <div className="px-5 pt-5 pb-4">
                 <div className="flex items-start justify-between">

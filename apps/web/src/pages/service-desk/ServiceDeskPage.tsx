@@ -7,6 +7,8 @@ import { CheckCircle2, XCircle, ChefHat, Bell, Truck, Utensils, Clock } from 'lu
 import { RootState } from '../../store';
 import { getSocket } from '../../services/socket';
 import { useUserRole } from '../../hooks/useUserRole';
+import { useFullscreen } from '../../hooks/useFullscreen';
+import FullscreenToggle from '../../components/common/FullscreenToggle';
 import api from '../../services/api';
 
 type Lane = 'verify' | 'release' | 'pickup';
@@ -212,17 +214,31 @@ export default function ServiceDeskPage() {
     );
   }
 
+  const { ref: pageRef, isFullscreen, toggle: toggleFullscreen } = useFullscreen<HTMLDivElement>();
+
   return (
-    <div className="p-4 lg:p-6 max-w-[1600px] mx-auto">
-      <header className="flex items-center justify-between mb-4">
+    <div
+      ref={pageRef}
+      className={clsx(
+        'mx-auto',
+        // In fullscreen we drop the page chrome's max-width so the
+        // three lanes get every available pixel — same trick the
+        // Kitchen + Orders pages use.
+        isFullscreen ? 'p-4 bg-slate-50 h-screen overflow-auto' : 'p-4 lg:p-6 max-w-[1600px]',
+      )}
+    >
+      <header className="flex items-center justify-between mb-4 gap-2">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Service desk</h1>
           <p className="text-xs text-slate-500">
             Verify postpaid lines, release self-service orders, and run table-service pickups.
           </p>
         </div>
-        <div className="text-xs text-slate-400">
-          {loading ? 'Loading…' : `${counts.verify + counts.release + counts.pickup} open`}
+        <div className="flex items-center gap-2">
+          <div className="text-xs text-slate-400">
+            {loading ? 'Loading…' : `${counts.verify + counts.release + counts.pickup} open`}
+          </div>
+          <FullscreenToggle active={isFullscreen} onClick={toggleFullscreen} />
         </div>
       </header>
 
