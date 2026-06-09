@@ -406,8 +406,15 @@ export default function PlaceOrderPage() {
       customerPhone: customerPhone.trim() || undefined,
       paymentMode: mode,
     };
+    // Mint the provisional orderNumber up-front and use it as the
+    // Idempotency-Key. If the call later fails offline, the same string
+    // identifies the IndexedDB snapshot, so when the outbox eventually
+    // replays the request the api replay helper can mark that snapshot
+    // synced + record the server-issued ON- number.
+    const provisional = `OFF-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(-3).toUpperCase()}`;
     try {
       const { data } = await api.post(`/outlets/${outletId}/orders`, body, {
+        headers: { 'Idempotency-Key': provisional },
         // Labelled so the offline banner can show "Place order" if this
         // ends up in the outbox via the api interceptor's failure path.
         __outboxLabel: 'Place order',
@@ -435,7 +442,7 @@ export default function PlaceOrderPage() {
       // creates the canonical record.
       const isNetwork = !e?.response;
       if (isNetwork) {
-        await placeOfflineOrder(isTableOrder, body, mode);
+        await placeOfflineOrder(provisional, isTableOrder, body, mode);
         setCart([]);
         setCustomerPhone('');
         setIsParcel(false);
@@ -453,11 +460,11 @@ export default function PlaceOrderPage() {
   // Build the snapshot, persist it locally, and print the receipt with
   // a provisional orderNumber. Used by the offline branch of submit().
   const placeOfflineOrder = async (
+    provisional: string,
     isTableOrder: boolean,
     body: any,
     mode: 'CASH' | 'UPI',
   ) => {
-    const provisional = `OFF-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(-3).toUpperCase()}`;
     // Expand the cart with full item names so the receipt can render
     // without re-querying the menu (which would also be offline).
     const itemMeta = new Map<string, any>();

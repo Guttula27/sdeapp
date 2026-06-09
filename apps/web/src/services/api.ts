@@ -143,8 +143,29 @@ export async function replayEntry(entry: OutboxEntry): Promise<{ ok: boolean; st
       headers: { ...(entry.headers || {}), 'Idempotency-Key': entry.idempotencyKey },
       __skipOutbox: true,
     } as RetryableConfig);
+    // If the entry corresponded to an offline order (its idempotencyKey
+    // doubles as the offline orderNumber, prefix "OFF-"), mark the
+    // local snapshot as synced and stamp the server-issued ON- number
+    // alongside. Lazy-imported so this module stays UI-app-agnostic.
+    if (entry.idempotencyKey.startsWith('OFF-')) {
+      try {
+        const { markOfflineSynced } = await import('../utils/idb');
+        const body = res.data?.data;
+        if (body?.id) {
+          await markOfflineSynced(entry.idempotencyKey, { id: body.id, orderNumber: body.orderNumber });
+        }
+      } catch { /* offline-orders module missing or write failed — ignore */ }
+    }
     return { ok: true, status: res.status };
   } catch (e: any) {
+    // Permanent server-side rejection (4xx) → mark the offline order
+    // as failed so the reconciliation view can show the reason.
+    if (entry.idempotencyKey.startsWith('OFF-') && e?.response?.status && e.response.status >= 400 && e.response.status < 500) {
+      try {
+        const { markOfflineFailed } = await import('../utils/idb');
+        await markOfflineFailed(entry.idempotencyKey, e?.response?.data?.message || e?.message || 'Server rejected the order');
+      } catch { /* ignore */ }
+    }
     return {
       ok: false,
       status: e?.response?.status,

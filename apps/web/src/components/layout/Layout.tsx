@@ -9,6 +9,7 @@ import {
   Gauge, Menu, Flame, Tag, Sandwich, Plus, LayoutGrid, Shield, Languages, ConciergeBell,
   Plug, MessageCircle, ClipboardCheck, MessageSquare, Network,
   Ticket, Percent as PercentIcon, Package, Gift, Award,
+  CloudOff,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
@@ -95,6 +96,7 @@ const NAV: Record<UserTier, NavItem[]> = {
     { to: '/kitchen',   icon: ChefHat,         label: 'Kitchen' },
     { to: '/service-desk', icon: ConciergeBell, label: 'Service Desk' },
     { to: '/parcel-desk',  icon: Package,       label: 'Parcel Desk' },
+    { to: '/offline-orders', icon: CloudOff,    label: 'Offline Orders' },
     { to: '/disputes',  icon: ShieldAlert,     label: 'Disputes' },
     { to: '/feedback',  icon: MessageSquare,   label: 'Feedback' },
     { to: '/staff',     icon: Users,           label: 'Staff' },
@@ -129,6 +131,7 @@ const MINIMAL_NAV: NavItem[] = [
   { to: '/kitchen',     icon: ChefHat,         label: 'Kitchen',     requires: ['VIEW_KITCHEN'] },
   { to: '/service-desk', icon: ConciergeBell,  label: 'Service Desk', requires: ['VIEW_SERVICE_DESK'] },
   { to: '/parcel-desk',  icon: Package,        label: 'Parcel Desk',  requires: ['VIEW_PARCEL_DESK'] },
+  { to: '/offline-orders', icon: CloudOff,     label: 'Offline Orders', requires: ['CREATE_ORDER'] },
   { to: '/menu',        icon: UtensilsCrossed, label: 'Menu',        requires: ['VIEW_MENU'] },
   { to: '/customers',   icon: Users,           label: 'Customers',   requires: ['VIEW_CUSTOMERS'] },
   { to: '/disputes',    icon: ShieldAlert,     label: 'Disputes',    requires: ['VIEW_DISPUTES'] },

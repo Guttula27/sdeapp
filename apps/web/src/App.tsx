@@ -20,6 +20,7 @@ import StationsPage from './pages/stations/StationsPage';
 import ServiceStationsPage from './pages/service-stations/ServiceStationsPage';
 import ServiceDeskPage from './pages/service-desk/ServiceDeskPage';
 import ParcelDeskPage from './pages/parcel-desk/ParcelDeskPage';
+import OfflineOrdersPage from './pages/offline-orders/OfflineOrdersPage';
 import TagsPage from './pages/tags/TagsPage';
 import CustomersPage from './pages/customers/CustomersPage';
 import ToppingsPage from './pages/toppings/ToppingsPage';
@@ -100,6 +101,7 @@ export default function App() {
           <Route path="kitchen"    element={<KitchenPage />} />
           <Route path="service-desk" element={<ServiceDeskPage />} />
           <Route path="parcel-desk" element={<ParcelDeskPage />} />
+          <Route path="offline-orders" element={<OfflineOrdersPage />} />
           <Route path="stations"   element={<StationsPage />} />
           <Route path="service-stations" element={<ServiceStationsPage />} />
           <Route path="tags"       element={<TagsPage />} />

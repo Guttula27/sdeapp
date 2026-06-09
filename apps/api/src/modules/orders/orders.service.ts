@@ -290,7 +290,11 @@ export class OrdersService {
     // collided when two outlets shared the first 4 chars of their CUID
     // (caught by the cluster smoke test on 2026-05-25).
     const prefix = counters.publicCode || `OL-${outletId.slice(0, 8).toUpperCase()}`;
-    const orderNumber = `ORD-${prefix}-${String(orderSeq).padStart(5, '0')}`;
+    // `ON-` (Online) mirrors `OFF-` used by the admin web's offline POS
+    // path, so a glance at any orderNumber tells you which lane it came
+    // from. The orderNumber column is unique-indexed; the two formats
+    // can never collide.
+    const orderNumber = `ON-${prefix}-${String(orderSeq).padStart(5, '0')}`;
 
     // (customer + staff already resolved above, ahead of promotions)
 
