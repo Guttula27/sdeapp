@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download, Maximize2, Minimize2, Filter, ChevronDown, ListOrdered, Save, Printer as PrinterIcon } from 'lucide-react';
+import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download, Maximize2, Minimize2, Filter, ChevronDown, ListOrdered, Save, Printer as PrinterIcon, ArrowUp, ArrowDown } from 'lucide-react';
 import { RootState } from '../../store';
 import { setOrders, updateOrder } from '../../store/slices/ordersSlice';
 import { getSocket } from '../../services/socket';
@@ -238,26 +238,47 @@ export default function OrdersPage() {
     }).catch(() => {});
   }, [outletId, tier]);
 
+  // Debounced needle + sort key. The `search` state already exists
+  // (used by the existing client-side filter); we lift its value to
+  // the server with a 300ms debounce so each keystroke doesn't fire
+  // a request. The server-side filter is broader (orderNumber, table,
+  // customer name + phone) than the original client-side one.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [sortBy, setSortBy] = useState<'createdAt' | 'totalAmount' | 'orderNumber' | 'status'>('createdAt');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [search]);
+
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     try {
+      // Same params object for every tier so the server applies search
+      // + sort uniformly. Empty `search` is dropped by the backend.
+      const params: Record<string, string | number | undefined> = {
+        limit: 100,
+        search: debouncedSearch || undefined,
+        sortBy,
+        sortDir,
+      };
       if (tier === 'platform') {
-        const { data } = await api.get(`/orders?limit=100`);
+        const { data } = await api.get(`/orders`, { params });
         dispatch(setOrders(data.data.orders));
       } else if (tier === 'business' && businessId) {
         if (selectedOutletId !== 'ALL') {
-          const { data } = await api.get(`/outlets/${selectedOutletId}/orders`, { params: { limit: 100 } });
+          const { data } = await api.get(`/outlets/${selectedOutletId}/orders`, { params });
           dispatch(setOrders(data.data.orders));
         } else {
-          const { data } = await api.get(`/orders?businessId=${businessId}&limit=100`);
+          const { data } = await api.get(`/orders`, { params: { ...params, businessId } });
           dispatch(setOrders(data.data.orders));
         }
       } else {
-        const { data } = await api.get(`/outlets/${outletId}/orders`);
+        const { data } = await api.get(`/outlets/${outletId}/orders`, { params });
         dispatch(setOrders(data.data.orders));
       }
     } finally { setLoading(false); }
-  }, [tier, outletId, businessId, selectedOutletId]);
+  }, [tier, outletId, businessId, selectedOutletId, debouncedSearch, sortBy, sortDir]);
 
   useEffect(() => {
     fetchOrders();
@@ -266,7 +287,7 @@ export default function OrdersPage() {
     socket.on('orderCreated', (o: any) => { dispatch(setOrders([o, ...orders])); toast.success(`New order — ${o.orderNumber}`); });
     socket.on('orderStatusUpdated', (o: any) => dispatch(updateOrder(o)));
     return () => { socket.off('orderCreated'); socket.off('orderStatusUpdated'); };
-  }, [tier, outletId, businessId, selectedOutletId]);
+  }, [tier, outletId, businessId, selectedOutletId, debouncedSearch, sortBy, sortDir]);
 
   // Socket state + auto-backfill. The orders page is the cashier's main
   // view; missing a new order because the socket silently dropped is the
@@ -607,7 +628,7 @@ export default function OrdersPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Escape') { setSearch(''); setSearchOpen(false); } }}
-                placeholder="Order #…"
+                placeholder="Order #, table, customer, phone"
                 className="input pl-7 pr-7 py-1.5 text-xs"
                 style={{ width: 180 }}
               />
@@ -628,6 +649,30 @@ export default function OrdersPage() {
               <Search size={14} />
             </button>
           )}
+
+          {/* Sort dropdown + asc/desc toggle. Server-side; refetches
+              when either side changes via the effect on fetchOrders. */}
+          <div className="flex items-center gap-1">
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="input py-1.5 text-xs"
+              style={{ width: 130 }}
+              title="Sort by"
+            >
+              <option value="createdAt">Newest</option>
+              <option value="totalAmount">Total</option>
+              <option value="orderNumber">Order #</option>
+              <option value="status">Status</option>
+            </select>
+            <button
+              onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+              className="btn-ghost p-2 text-slate-500 hover:text-slate-800"
+              title={sortDir === 'asc' ? 'Switch to descending' : 'Switch to ascending'}
+            >
+              {sortDir === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+            </button>
+          </div>
 
           <button
             onClick={toggleFullscreen}

@@ -514,13 +514,41 @@ export class OrdersService {
 
   async findAll(
     outletId: string,
-    filters: { status?: OrderStatus; page?: number; limit?: number; callerUserId?: string },
+    filters: {
+      status?: OrderStatus; page?: number; limit?: number;
+      callerUserId?: string;
+      // Free-text needle — matched (contains, case-insensitive) against
+      // orderNumber, table.number, customer.name, customer.phone.
+      search?: string;
+      // Sort column + direction. Defaults to createdAt-desc so the
+      // newest orders come first (existing behaviour).
+      sortBy?: 'createdAt' | 'totalAmount' | 'orderNumber' | 'status';
+      sortDir?: 'asc' | 'desc';
+    },
     lang?: string | null,
   ) {
     const page  = Number(filters.page)  || 1;
     const limit = Number(filters.limit) || 20;
     const status = filters.status;
     const where: any = { outletId, ...(status && { status }) };
+
+    // Search needle. Empty string is treated the same as undefined.
+    const q = filters.search?.trim();
+    if (q) {
+      // Each leg of the OR is a `contains` match — MySQL collation is
+      // case-insensitive by default with utf8mb4_unicode_ci.
+      where.AND = [
+        ...(where.AND ?? []),
+        {
+          OR: [
+            { orderNumber: { contains: q } },
+            { table:    { number: { contains: q } } },
+            { customer: { name:   { contains: q } } },
+            { customer: { phone:  { contains: q } } },
+          ],
+        },
+      ];
+    }
 
     // Service-station scoping: if the caller is *only* a service-station worker
     // (not an admin / counter / kitchen role), restrict to orders placed at
@@ -570,6 +598,12 @@ export class OrdersService {
       }
     }
 
+    // Sort column + direction. Falls back to createdAt-desc when unset
+    // so legacy callers see no behaviour change.
+    const sortKey = filters.sortBy ?? 'createdAt';
+    const sortDir: 'asc' | 'desc' = filters.sortDir ?? 'desc';
+    const orderBy: any = { [sortKey]: sortDir };
+
     const [orders, total] = await Promise.all([
       this.prisma.order.findMany({
         where,
@@ -584,7 +618,7 @@ export class OrdersService {
         },
           payments: true,
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -598,6 +632,9 @@ export class OrdersService {
   async findAllScoped(filters: {
     businessId?: string; outletId?: string;
     status?: OrderStatus; page?: number; limit?: number;
+    search?: string;
+    sortBy?: 'createdAt' | 'totalAmount' | 'orderNumber' | 'status';
+    sortDir?: 'asc' | 'desc';
   }, lang?: string | null) {
     const page  = Number(filters.page)  || 1;
     const limit = Number(filters.limit) || 50;
@@ -606,6 +643,25 @@ export class OrdersService {
     if (filters.status)   where.status   = filters.status;
     if (filters.outletId) where.outletId = filters.outletId;
     if (filters.businessId) where.outlet = { businessId: filters.businessId };
+
+    const q = filters.search?.trim();
+    if (q) {
+      where.AND = [
+        ...(where.AND ?? []),
+        {
+          OR: [
+            { orderNumber: { contains: q } },
+            { table:    { number: { contains: q } } },
+            { customer: { name:   { contains: q } } },
+            { customer: { phone:  { contains: q } } },
+          ],
+        },
+      ];
+    }
+
+    const sortKey = filters.sortBy ?? 'createdAt';
+    const sortDir: 'asc' | 'desc' = filters.sortDir ?? 'desc';
+    const orderBy: any = { [sortKey]: sortDir };
 
     const [orders, total] = await Promise.all([
       this.prisma.order.findMany({
@@ -622,7 +678,7 @@ export class OrdersService {
         },
           payments: true,
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip: (page - 1) * limit,
         take: limit,
       }),

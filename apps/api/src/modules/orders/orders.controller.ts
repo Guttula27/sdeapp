@@ -37,8 +37,15 @@ export class OrdersController {
     @Query('status') status?: OrderStatus,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
+    @Query('search') search?: string,
+    @Query('sortBy') sortBy?: 'createdAt' | 'totalAmount' | 'orderNumber' | 'status',
+    @Query('sortDir') sortDir?: 'asc' | 'desc',
   ) {
-    return this.ordersService.findAll(outletId, { status, page, limit, callerUserId: user?.id }, lang);
+    return this.ordersService.findAll(
+      outletId,
+      { status, page, limit, callerUserId: user?.id, search, sortBy, sortDir },
+      lang,
+    );
   }
 
   // Postpaid open-order lookup for a given table. Customer-scoped — a

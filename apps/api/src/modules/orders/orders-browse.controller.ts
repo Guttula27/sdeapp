@@ -21,8 +21,14 @@ export class OrdersBrowseController {
     @Query('status')     status?: OrderStatus,
     @Query('page')       page?: number,
     @Query('limit')      limit?: number,
+    @Query('search')     search?: string,
+    @Query('sortBy')     sortBy?: 'createdAt' | 'totalAmount' | 'orderNumber' | 'status',
+    @Query('sortDir')    sortDir?: 'asc' | 'desc',
   ) {
-    return this.ordersService.findAllScoped({ businessId, outletId, status, page, limit }, lang);
+    return this.ordersService.findAllScoped(
+      { businessId, outletId, status, page, limit, search, sortBy, sortDir },
+      lang,
+    );
   }
 
   @Get(':id')

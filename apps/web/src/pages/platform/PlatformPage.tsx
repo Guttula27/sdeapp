@@ -5,7 +5,8 @@ import toast from 'react-hot-toast';
 import {
   Building2, Store, ShoppingBag, IndianRupee,
   CheckCircle2, Clock, XCircle, Plus, ToggleRight, ToggleLeft,
-  CreditCard, Zap, Network, ChevronRight,
+  CreditCard, Zap, Network, ChevronRight, Search,
+  ArrowUp, ArrowDown, X as XIcon,
 } from 'lucide-react';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
@@ -19,9 +20,22 @@ interface Business {
   businessType: string;
   isCluster?: boolean;
   status: string;
+  // Address fields — used by the search filter (everything in the
+  // search box matches across these as a single needle). Optional
+  // because older businesses may not have the breakdown populated.
+  address?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+  createdAt?: string;
   subscription?: { status: string; plan: { name: string; monthlyCost: number } } | null;
   _count: { outlets: number };
 }
+
+type BusinessSortKey = 'name' | 'outlets' | 'createdAt' | 'status';
+type SortDir = 'asc' | 'desc';
 
 interface Plan {
   id: string;
@@ -50,6 +64,13 @@ export default function PlatformPage() {
              : 'overview';
 
   const [businesses, setBusinesses] = useState<Business[]>([]);
+  // Search + sort are local — the businesses list is small enough
+  // (10s/100s) that paginated server queries would be overkill. Sort
+  // defaults to name-asc; search matches a single needle across name,
+  // address, type and GST number.
+  const [bizSearch, setBizSearch] = useState('');
+  const [bizSort, setBizSort] = useState<BusinessSortKey>('name');
+  const [bizSortDir, setBizSortDir] = useState<SortDir>('asc');
   const [plans, setPlans]           = useState<Plan[]>([]);
   const [stats, setStats]           = useState<any>(null);
   const [loading, setLoading]       = useState(true);
@@ -212,21 +233,97 @@ export default function PlatformPage() {
     else navigate(`/platform/businesses/${b.id}`);
   };
 
+  // Filtered + sorted view of the businesses list. Re-computes on every
+  // render — the upstream array is small so memoization would be
+  // overkill, and keeping the derivation inline makes it easy to verify
+  // every field the search matches against.
+  const visibleBusinesses = (() => {
+    const q = bizSearch.trim().toLowerCase();
+    const filtered = !q ? businesses : businesses.filter((b) => {
+      const haystack = [
+        b.name,
+        b.publicCode,
+        b.gstNumber,
+        b.businessType?.replace(/_/g, ' '),
+        b.address, b.addressLine1, b.addressLine2,
+        b.city, b.state, b.pincode,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+    const dir = bizSortDir === 'asc' ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      switch (bizSort) {
+        case 'name':      return dir * a.name.localeCompare(b.name);
+        case 'outlets':   return dir * ((a._count?.outlets ?? 0) - (b._count?.outlets ?? 0));
+        case 'createdAt': return dir * ((new Date(a.createdAt || 0).getTime()) - (new Date(b.createdAt || 0).getTime()));
+        case 'status':    return dir * a.status.localeCompare(b.status);
+        default: return 0;
+      }
+    });
+  })();
+
   /* ── render: businesses ──────────────────────────────── */
   const renderBusinesses = () => (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="page-title">Businesses</h1>
-          <p className="page-subtitle">{businesses.length} registered</p>
+          <p className="page-subtitle">
+            {bizSearch
+              ? `${visibleBusinesses.length} of ${businesses.length} match "${bizSearch}"`
+              : `${businesses.length} registered`}
+          </p>
         </div>
         <button className="btn-primary" onClick={() => setBizModal(true)}>
           <Plus size={15} /> Add Business
         </button>
       </div>
+
+      {/* Search + sort toolbar */}
+      <div className="card p-3 flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            value={bizSearch}
+            onChange={(e) => setBizSearch(e.target.value)}
+            placeholder="Search by name, address, type or GST number"
+            className="input pl-8 text-sm"
+          />
+          {bizSearch && (
+            <button
+              onClick={() => setBizSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+              title="Clear search"
+            >
+              <XIcon size={14} />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Sort by</label>
+          <select
+            value={bizSort}
+            onChange={(e) => setBizSort(e.target.value as BusinessSortKey)}
+            className="input text-xs h-8 w-[120px]"
+          >
+            <option value="name">Name</option>
+            <option value="outlets">Outlets</option>
+            <option value="createdAt">Created</option>
+            <option value="status">Status</option>
+          </select>
+          <button
+            onClick={() => setBizSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+            className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600"
+            title={bizSortDir === 'asc' ? 'Switch to descending' : 'Switch to ascending'}
+          >
+            {bizSortDir === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+          </button>
+        </div>
+      </div>
+
       <div className="card overflow-hidden">
         <BusinessTable
-          businesses={businesses}
+          businesses={visibleBusinesses}
           loading={loading}
           onToggle={toggleBiz}
           onOpen={openBusiness}
