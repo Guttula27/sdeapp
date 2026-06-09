@@ -10,6 +10,7 @@ const RESPONSIBILITY_DEFS: Array<{ name: string; module: string; description: st
   // Platform-wide (only platform admins / internal staff)
   { name: 'PLATFORM_ADMIN',          module: 'PLATFORM',   description: 'Full platform administration access' },
   { name: 'VIEW_PLATFORM_REPORTS',   module: 'PLATFORM',   description: 'View platform-wide summary & hourly reports' },
+  { name: 'MANAGE_PLATFORM_SETTINGS',module: 'PLATFORM',   description: 'Edit platform-wide settings (Razorpay route fee defaults)' },
   { name: 'MANAGE_LEADS',            module: 'PLATFORM',   description: 'View and update sales leads' },
   { name: 'MANAGE_PLANS',            module: 'PLATFORM',   description: 'Create or update subscription plans' },
 
@@ -51,6 +52,7 @@ const RESPONSIBILITY_DEFS: Array<{ name: string; module: string; description: st
   { name: 'VIEW_KITCHEN',            module: 'KITCHEN',    description: 'View the kitchen display / KDS queue' },
   { name: 'MANAGE_KITCHEN_STATIONS', module: 'KITCHEN',    description: 'Manage kitchen stations and item routing' },
   { name: 'VIEW_SERVICE_DESK',       module: 'KITCHEN',    description: 'View the service-desk dashboard (verify / release / pickup lanes)' },
+  { name: 'MANAGE_SERVICE_DESK',     module: 'KITCHEN',    description: 'Act on service-desk lanes (verify postpaid items, release, mark on-its-way / served)' },
 
   // Inventory & vendors
   { name: 'VIEW_INVENTORY',          module: 'INVENTORY',  description: 'View raw materials and stock levels' },
@@ -135,7 +137,7 @@ async function main() {
     'VIEW_MENU', 'MANAGE_MENU', 'MANAGE_MENU_ITEMS', 'TOGGLE_ITEM_AVAILABILITY', 'IMPORT_MENU', 'MANAGE_TOPPINGS',
     'VIEW_ORDERS', 'CREATE_ORDER', 'UPDATE_ORDER_STATUS', 'CANCEL_ORDER', 'UPDATE_ITEM_STATUS', 'VIEW_ORDER_LOG',
     'COLLECT_PAYMENT', 'VIEW_PAYMENTS',
-    'VIEW_KITCHEN', 'MANAGE_KITCHEN_STATIONS', 'VIEW_SERVICE_DESK',
+    'VIEW_KITCHEN', 'MANAGE_KITCHEN_STATIONS', 'VIEW_SERVICE_DESK', 'MANAGE_SERVICE_DESK',
     'VIEW_INVENTORY', 'MANAGE_INVENTORY', 'MANAGE_PURCHASE_ORDERS', 'VIEW_VENDORS', 'MANAGE_VENDORS',
     'VIEW_REPORTS', 'VIEW_KITCHEN_REPORTS',
     'VIEW_STAFF', 'MANAGE_STAFF', 'MANAGE_ROLES',
@@ -164,7 +166,7 @@ async function main() {
     'COLLECT_PAYMENT', 'VIEW_PAYMENTS',
     'VIEW_CUSTOMERS', 'ASSIGN_CUSTOMER_TAGS',
     'VIEW_QR_CODES',
-    'VIEW_SERVICE_DESK',
+    'VIEW_SERVICE_DESK', 'MANAGE_SERVICE_DESK',
   ];
 
   const STORE_MANAGER = [

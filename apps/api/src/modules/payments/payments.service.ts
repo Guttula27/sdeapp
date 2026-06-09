@@ -9,6 +9,7 @@ import {
   PlatformSettingsService,
   computePlatformFee,
 } from '../platform-settings/platform-settings.service';
+import { AuditLogService } from '../../config/logger/audit-log.service';
 
 @Injectable()
 export class PaymentsService {
@@ -19,6 +20,7 @@ export class PaymentsService {
     private razorpay: RazorpayService,
     private orders: OrdersService,
     private platformSettings: PlatformSettingsService,
+    private audit: AuditLogService,
   ) {}
 
   async initiatePayment(orderId: string, mode: PaymentMode, amount: number) {
@@ -57,6 +59,13 @@ export class PaymentsService {
     // Payment success is recorded on the Payment record itself.
 
     this.ordersGateway.emitPaymentConfirmed(payment.order.outletId, updated);
+    this.audit.paymentConfirmed({
+      paymentId: updated.id,
+      orderId: updated.orderId,
+      amount: Number(updated.amount),
+      mode: updated.mode,
+      gatewayRef: updated.gatewayRef ?? null,
+    });
 
     // Lifecycle: PAYMENT_RECEIVED. Skip for guest/walk-in orders (no customerId).
     if (payment.order.customerId) {

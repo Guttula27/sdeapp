@@ -4,8 +4,7 @@ import { IsNumber, IsOptional, Min, Max } from 'class-validator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PlatformSettingsService } from './platform-settings.service';
-import { scopeFor } from '../../common/permissions/scope';
-import { ForbiddenException } from '@nestjs/common';
+import { assertResponsibility } from '../../common/permissions/responsibility';
 
 class UpdatePlatformSettingsDto {
   @IsOptional() @IsNumber() @Min(0) @Max(100) platformFeePercent?: number;
@@ -30,10 +29,7 @@ export class PlatformSettingsController {
 
   @Patch()
   update(@Body() dto: UpdatePlatformSettingsDto, @CurrentUser() user: any) {
-    const scope = scopeFor(user);
-    if (scope.kind !== 'platform') {
-      throw new ForbiddenException('Only platform admins can update platform settings');
-    }
+    assertResponsibility(user, 'MANAGE_PLATFORM_SETTINGS');
     return this.service.update(dto);
   }
 }

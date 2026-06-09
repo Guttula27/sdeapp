@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards, UseInterceptors, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import { assertResponsibility } from '../../common/permissions/responsibility';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -143,11 +144,7 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   @Get(':id/log')
   async getLog(@Param('id') id: string, @CurrentUser() user: any) {
-    const responsibilities: string[] =
-      user?.role?.responsibilities?.map((r: any) => r?.responsibility?.name || r?.name).filter(Boolean) ?? [];
-    if (!responsibilities.includes('VIEW_ORDER_LOG')) {
-      throw new ForbiddenException('VIEW_ORDER_LOG permission required');
-    }
+    assertResponsibility(user, 'VIEW_ORDER_LOG');
     return this.ordersService.getOrderLog(id);
   }
 
@@ -160,9 +157,10 @@ export class OrdersController {
   verifyItems(
     @Param('id') id: string,
     @Body() body: { itemIds?: string[]; action: 'confirm' | 'strike' },
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
   ) {
-    return this.ordersService.verifyItems(id, body.itemIds, body.action || 'confirm', userId);
+    assertResponsibility(user, 'MANAGE_SERVICE_DESK');
+    return this.ordersService.verifyItems(id, body.itemIds, body.action || 'confirm', user?.id);
   }
 
   // Service desk dashboard: returns three lanes for this outlet —
@@ -170,7 +168,8 @@ export class OrdersController {
   // table-service awaiting pickup. Parcel orders ride in their own UI.
   @UseGuards(JwtAuthGuard)
   @Get('service-desk/queue')
-  serviceDeskQueue(@Param('outletId') outletId: string) {
+  serviceDeskQueue(@Param('outletId') outletId: string, @CurrentUser() user: any) {
+    assertResponsibility(user, 'VIEW_SERVICE_DESK');
     return this.ordersService.getServiceDeskQueue(outletId);
   }
 

@@ -1,12 +1,19 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { WinstonModule } from 'nest-winston';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { winstonAppConfig } from './config/logger/winston.config';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // Boot Nest with Winston as the framework logger so every
+  // `Logger.log()` / framework boot message flows through the same
+  // pipeline as our app + audit logs.
+  const app = await NestFactory.create(AppModule, {
+    logger: WinstonModule.createLogger(winstonAppConfig),
+  });
 
   app.getHttpAdapter().getInstance().disable('x-powered-by');
 

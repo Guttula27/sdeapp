@@ -6,6 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
+import { AuditLogService } from '../../config/logger/audit-log.service';
 import {
   ActorScope,
   PLATFORM_ONLY,
@@ -32,7 +33,7 @@ type Scope = ActorScope;
 
 @Injectable()
 export class RolesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private audit: AuditLogService) {}
 
   /** Resolve the actor's scope. */
   private scopeFor(user: any): Scope {
@@ -278,6 +279,13 @@ export class RolesService {
         where: { roleId: { in: targetRoleIds }, responsibilityId: responsibility.id },
       });
     }
+
+    this.audit.permissionGranted({
+      actorId: user?.id ?? null,
+      roleId: role.id,
+      responsibility: dto.responsibilityName,
+      granted: dto.enabled,
+    });
 
     return this.findOne(user, id);
   }

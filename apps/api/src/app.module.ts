@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { BullModule } from '@nestjs/bull';
@@ -41,6 +41,8 @@ import { RewardsModule } from './modules/rewards/rewards.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { PrintersModule } from './modules/printers/printers.module';
 import { PlatformSettingsModule } from './modules/platform-settings/platform-settings.module';
+import { LoggerModule } from './config/logger/logger.module';
+import { RequestLogMiddleware } from './config/logger/request-log.middleware';
 
 @Module({
   imports: [
@@ -49,6 +51,7 @@ import { PlatformSettingsModule } from './modules/platform-settings/platform-set
     BullModule.forRoot({
       redis: process.env.REDIS_URL || 'redis://localhost:6379',
     }),
+    LoggerModule,
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -90,4 +93,8 @@ import { PlatformSettingsModule } from './modules/platform-settings/platform-set
     PlatformSettingsModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(RequestLogMiddleware).forRoutes('*');
+  }
+}

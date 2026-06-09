@@ -4,6 +4,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersGateway } from './orders.gateway';
 import { OrderStatus, OrderItemStatus, OutletType } from '@prisma/client';
+import { AuditLogService } from '../../config/logger/audit-log.service';
 import { TranslationsService } from '../translations/translations.service';
 import { LifecycleDispatcherService } from '../customer-alerts/lifecycle-dispatcher.service';
 import { PricingService } from '../pricing/pricing.service';
@@ -21,6 +22,7 @@ export class OrdersService {
     private pricing: PricingService,
     private rewards: RewardsService,
     private serviceStations: ServiceStationsService,
+    private audit: AuditLogService,
   ) {}
 
   /** Hydrate items[].item, items[].variant, and outlet for a batch of orders. */
@@ -706,6 +708,15 @@ export class OrdersService {
     });
 
     this.ordersGateway.emitOrderStatusUpdated(order.outletId, updated);
+    this.audit.orderStatusChanged({
+      actorId: userId,
+      orderId: updated.id,
+      orderNumber: updated.orderNumber,
+      outletId: updated.outletId,
+      from: order.status,
+      to: dto.status,
+      notes: dto.notes ?? null,
+    });
 
     // Service-desk lane routing on the new status:
     //   - self-service: kitchen-done → OUT_FOR_SERVICE → "release" lane.
@@ -947,7 +958,16 @@ export class OrdersService {
       },
     });
 
-    if (updated) this.ordersGateway.emitOrderStatusUpdated(updated.outletId, updated);
+    if (updated) {
+      this.ordersGateway.emitOrderStatusUpdated(updated.outletId, updated);
+      this.audit.orderItemStatusChanged({
+        actorId: userId ?? null,
+        orderId: updated.id,
+        orderItemId,
+        from: item.status,
+        to: status,
+      });
+    }
 
     // Fan-out the service-desk "kitchen done" nudge whenever the rollup
     // pushes the order onto the lane the service desk owns: OUT_FOR_SERVICE
@@ -1633,6 +1653,12 @@ export class OrdersService {
       },
     });
     if (updated) this.ordersGateway.emitOrderStatusUpdated(updated.outletId, updated);
+    this.audit.postpaidVerification({
+      actorId: userId ?? null,
+      orderId,
+      action,
+      itemCount: eligible.length,
+    });
 
     // After confirm, ping the kitchen so they pull the now-PENDING lines.
     // (emitOrderStatusUpdated already hits the kitchen room — this is the
