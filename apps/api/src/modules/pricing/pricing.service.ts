@@ -256,10 +256,39 @@ export class PricingService {
       );
       rewardPromo = { points: q.pointsRequested, amount: q.applied };
     }
-    const totalAfterReward = Math.max(0, totalAfterCoupon - (rewardPromo?.amount ?? 0));
+    // `totalAfterCoupon` / `totalAfterReward` chain was used by the old
+    // (GST-on-gross) flow. Removed — the final totalAmount is now derived
+    // from the net-tax recompute below so coupons + rewards reduce both
+    // the taxable subtotal AND the GST proportionally.
 
     const totalAutoDiscount = autoDiscounts.reduce((s, d) => s + d.amount, 0);
     const totalPromoDiscount = (couponPromo?.amount ?? 0) + (rewardPromo?.amount ?? 0);
+
+    // ─── GST on the *net* (post-discount) taxable amount ────────────
+    // Indian convention: discounts first, GST after. Per-line GST rates
+    // are preserved by allocating the total discount proportionally to
+    // each line's pre-tax gross share, then computing each line's tax
+    // on its allocated net. Sum gives the new aggregate taxAmount.
+    if (gstOn) {
+      // `runningSubtotal` here is already (gross − line discounts − bill discount).
+      // `taxAmount` was computed earlier on the pre-bill-discount amount;
+      // we override it below with the net-based recompute so the bill,
+      // coupon, and reward discounts also reduce tax (not just line ones).
+      const customerDiscount = (couponPromo?.amount ?? 0) + (rewardPromo?.amount ?? 0);
+      const taxableSubtotal = Math.max(0, runningSubtotal - customerDiscount);
+      const preTaxBase = lines.reduce((s, l) => s + l.totalPrice, 0); // post line-discount
+      if (preTaxBase > 0) {
+        const netRatio = taxableSubtotal / preTaxBase;
+        taxAmount = lines.reduce(
+          (s, l) => s + (l.totalPrice * netRatio) * (l.gstRate / 100),
+          0,
+        );
+      } else {
+        taxAmount = 0;
+      }
+      runningSubtotal = taxableSubtotal;
+    }
+    const totalAmount = Math.max(0, runningSubtotal + parcelAmount + taxAmount);
 
     const finalLines: QuoteLine[] = lines.map((l) => ({
       itemId: l.itemId,
@@ -285,7 +314,12 @@ export class PricingService {
       reward: rewardPromo ? { ...rewardPromo, amount: this.round2(rewardPromo.amount) } : undefined,
       totalAutoDiscount: this.round2(totalAutoDiscount),
       totalPromoDiscount: this.round2(totalPromoDiscount),
-      totalAmount: this.round2(totalAfterReward),
+      // `totalAmount` now comes from the net-tax recompute above, not
+      // from the running subtract-discount-from-pre-tax-total chain.
+      // The old `totalAfterReward` is dead but retained as a local so
+      // the diff is readable; same number when all discounts are line-
+      // level (no behaviour change for the simple case).
+      totalAmount: this.round2(totalAmount),
     };
   }
 

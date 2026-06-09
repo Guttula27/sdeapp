@@ -141,12 +141,13 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
   const cgst = Number(order.cgstAmount ?? 0);
   const sgst = Number(order.sgstAmount ?? 0);
 
-  // Taxable base under the "discount before tax" model the user spec'd:
-  // GST is on (subtotal + parcel − discount). When the stored taxAmount
-  // was computed on the gross instead, the displayed split below uses
-  // the stored figures and the round-off line absorbs the gap so the
-  // grand total still matches what the customer actually paid.
-  const taxable = Math.max(0, subtotal + parcel - discount);
+  // Taxable subtotal under the "discount before tax" model. From
+  // 2026-06-09 the backend persists taxAmount + totalAmount computed
+  // on this base, so the receipt math reconciles cleanly without a
+  // forced round-off line. Pre-cutover orders still render correctly
+  // — their stored taxAmount was on gross, the round-off line absorbs
+  // the small gap so the customer's total matches what they paid.
+  const taxable = Math.max(0, subtotal - discount);
   const firstItemRate = Number((order.items || [])[0]?.gstRate ?? 0);
   const rate = effectiveRate(taxAmount, taxable || subtotal, firstItemRate);
   const halfRateLabel = formatPct(rate / 2);
@@ -154,8 +155,10 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
   const split = gstSplit(taxAmount, cgst, sgst);
 
   // Round-off = (stored grand total) − (sum of components as displayed).
-  // Renders as "Round off  +0.02 / -0.05" when present.
-  const componentsSum = taxable + taxAmount;
+  // Should be ~0 for new orders post-cutover; non-zero only on legacy
+  // orders persisted under the old gross-tax math. Renders as
+  // "Round off  +0.02 / -0.05" when present.
+  const componentsSum = taxable + parcel + taxAmount;
   const roundOff = Math.round((total - componentsSum) * 100) / 100;
 
   // Discount breakdown (coupon + reward + leftover auto-discount).

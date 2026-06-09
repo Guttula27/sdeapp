@@ -191,8 +191,12 @@ export class OrdersService {
       subtotal = linesTotal;
     }
 
-    const sgstAmount = taxAmount / 2;
-    const cgstAmount = taxAmount / 2;
+    // sgst/cgst are made `let` because they get recomputed after the
+    // promotions quote — GST is on the post-discount net amount, so
+    // applying coupons / rewards changes the tax (and therefore the
+    // split) from what the initial gross calc gave us.
+    let sgstAmount = taxAmount / 2;
+    let cgstAmount = taxAmount / 2;
 
     const parcelAmount = dto.isParcel ? await this.computeParcelCharge(outletId, items as any) : 0;
     let totalAmount = subtotal + taxAmount + parcelAmount;
@@ -243,12 +247,18 @@ export class OrdersService {
         couponId: dto.couponId,
         rewardPoints: dto.rewardPoints,
       });
-      // The pricing quote reflects the full bill (subtotal + tax + parcel +
-      // promotions). Use its totalAmount as the persisted total; surface the
-      // delta as the order's discountAmount for receipt summary.
-      const preDiscount = subtotal + taxAmount + parcelAmount;
+      // PricingService now applies GST on the *net* (post-discount)
+      // taxable amount. Pull its recomputed taxAmount + totalAmount so
+      // the persisted order matches what the customer sees on the quote
+      // and the receipt. `quote.subtotal` is the taxable subtotal (gross
+      // minus all discounts); the difference between the original
+      // pre-tax subtotal and that is the aggregate discount that lands
+      // on the bill.
       totalAmount = quote.totalAmount;
-      discountAmount = Math.max(0, preDiscount - quote.totalAmount);
+      taxAmount = quote.taxAmount;
+      sgstAmount = taxAmount / 2;
+      cgstAmount = taxAmount / 2;
+      discountAmount = Math.max(0, subtotal - quote.subtotal);
       appliedCouponId = quote.coupon?.id ?? null;
       appliedCouponDiscount = quote.coupon?.amount ?? 0;
       appliedRewardPoints = quote.reward?.points ?? 0;
