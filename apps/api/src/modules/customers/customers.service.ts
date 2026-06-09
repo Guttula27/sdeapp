@@ -1,9 +1,15 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
+import { EncryptionService } from '../../config/crypto/encryption.service';
+import { UserLookupService } from '../../config/crypto/user-lookup.service';
 
 @Injectable()
 export class CustomersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private encryption: EncryptionService,
+    private userLookup: UserLookupService,
+  ) {}
 
   async list(outletId: string) {
     const [grouped, manualLinks] = await Promise.all([
@@ -64,8 +70,9 @@ export class CustomersService {
     if (!phone) throw new BadRequestException('Phone is required');
     const name = data.name?.trim() || `Customer (${phone})`;
 
-    // Upsert the user by phone — fill name only if it wasn't set before
-    const existing = await this.prisma.user.findUnique({ where: { phone } });
+    // Upsert the user by phone — fill name only if it wasn't set before.
+    // findByPhone wraps the dual-read (hash → legacy plaintext fallback).
+    const existing = await this.userLookup.findByPhone(phone);
     const user = existing
       ? await this.prisma.user.update({
           where: { id: existing.id },
@@ -73,7 +80,7 @@ export class CustomersService {
           select: { id: true, name: true, phone: true, email: true },
         })
       : await this.prisma.user.create({
-          data: { phone, name, status: 'ACTIVE' },
+          data: { ...this.encryption.buildPhoneFields(phone), name, status: 'ACTIVE' },
           select: { id: true, name: true, phone: true, email: true },
         });
 

@@ -138,7 +138,15 @@ enum TemplateApprovalStatus {
 model User {
   id           String     @id @default(cuid())
   email        String?    @unique
+  // Plaintext phone — kept for one deploy cycle as a safety net while
+  // phoneHash-driven lookups are in production. Drop in a follow-up
+  // migration once the new path is proven (see docs/hardening-backlog).
   phone        String     @unique
+  // Encrypted plaintext (enc:v1:...). Source of truth for display.
+  phoneEnc     String?    @db.Text
+  // Deterministic HMAC of the normalized phone — unique-indexed so all
+  // lookups by phone happen against this column.
+  phoneHash    String?    @unique
   name         String
   passwordHash String?
   status       UserStatus @default(ACTIVE)

@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException, ConflictException, BadRequestExcepti
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../config/prisma/prisma.service';
+import { EncryptionService } from '../../config/crypto/encryption.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RequestOtpDto, VerifyOtpDto } from './dto/customer-otp.dto';
@@ -20,17 +21,40 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private encryption: EncryptionService,
   ) {}
 
+  // Centralised phone→User lookup so every callsite goes through the
+  // same dual-read path: prefer the HMAC index (fast, unique, no
+  // plaintext exposure), fall back to the legacy plaintext column for
+  // users whose row hasn't been backfilled yet.
+  private async findUserByPhone<T extends { phone?: string | null } = any>(
+    phone: string,
+    extras?: { include?: any; select?: any },
+  ): Promise<T | null> {
+    const normalized = this.encryption.normalizePhone(phone);
+    const hash = this.encryption.phoneHmac(normalized);
+    const args = extras ?? {};
+    const byHash = await this.prisma.user.findUnique({
+      where: { phoneHash: hash },
+      ...(args as any),
+    });
+    if (byHash) return byHash as any;
+    return this.prisma.user.findUnique({
+      where: { phone: normalized },
+      ...(args as any),
+    }) as any;
+  }
+
   async register(dto: RegisterDto) {
-    const existing = await this.prisma.user.findUnique({ where: { phone: dto.phone } });
+    const existing = await this.findUserByPhone(dto.phone);
     if (existing) throw new ConflictException('Phone number already registered');
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
     const user = await this.prisma.user.create({
       data: {
         name: dto.name,
-        phone: dto.phone,
+        ...this.encryption.buildPhoneFields(dto.phone),
         email: dto.email,
         passwordHash,
       },
@@ -42,8 +66,7 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { phone: dto.phone },
+    const user: any = await this.findUserByPhone(dto.phone, {
       include: {
         role: { include: { responsibilities: { include: { responsibility: true } } } },
         // Cluster context so the client can route Cluster Owners straight
@@ -83,7 +106,7 @@ export class AuthService {
     if (!phone) throw new BadRequestException('Phone is required');
 
     // Block phones already attached to a staff/admin account (those have passwords).
-    const existing = await this.prisma.user.findUnique({ where: { phone } });
+    const existing: any = await this.findUserByPhone(phone);
     if (existing && existing.businessId) {
       throw new UnauthorizedException('Use the staff portal to sign in with this number');
     }
@@ -101,8 +124,7 @@ export class AuthService {
     if (!phone) throw new BadRequestException('Phone is required');
     if (dto.otp !== TEST_CUSTOMER_OTP) throw new UnauthorizedException('Invalid OTP');
 
-    let user = await this.prisma.user.findUnique({
-      where: { phone },
+    let user: any = await this.findUserByPhone(phone, {
       include: { role: { include: { responsibilities: { include: { responsibility: true } } } } },
     });
 
@@ -114,7 +136,7 @@ export class AuthService {
       user = await this.prisma.user.create({
         data: {
           name: dto.name?.trim() || `Guest ${phone.slice(-4)}`,
-          phone,
+          ...this.encryption.buildPhoneFields(phone),
           status: 'ACTIVE',
         },
         include: { role: { include: { responsibilities: { include: { responsibility: true } } } } },

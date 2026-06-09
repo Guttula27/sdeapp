@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
+import { UserLookupService } from '../../config/crypto/user-lookup.service';
 
 type CouponWriteDto = {
   code: string;
@@ -21,7 +22,10 @@ type CouponWriteDto = {
 
 @Injectable()
 export class CouponsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private userLookup: UserLookupService,
+  ) {}
 
   // ─── Admin: list / CRUD scoped to a business ────────────────────
   async listForBusiness(businessId: string, outletId?: string) {
@@ -216,12 +220,8 @@ export class CouponsService {
   // Helper for admin UI: resolve phone numbers → user ids so the operator
   // can target a coupon by phone without first looking up customer ids.
   async lookupByPhones(phones: string[]) {
-    const cleaned = phones.map((p) => p.trim()).filter(Boolean);
-    if (!cleaned.length) return [];
-    return this.prisma.user.findMany({
-      where: { phone: { in: cleaned } },
-      select: { id: true, name: true, phone: true },
-    });
+    const map = await this.userLookup.findByPhones(phones);
+    return Array.from(map.values()).map((u) => ({ id: u.id, name: u.name, phone: u.phone }));
   }
 
   private validate(dto: CouponWriteDto) {

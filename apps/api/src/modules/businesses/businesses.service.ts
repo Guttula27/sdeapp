@@ -3,6 +3,8 @@ import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { IsBoolean, IsEnum, IsOptional, IsString } from 'class-validator';
 import { PrismaService } from '../../config/prisma/prisma.service';
+import { EncryptionService } from '../../config/crypto/encryption.service';
+import { UserLookupService } from '../../config/crypto/user-lookup.service';
 import { BusinessType } from '@prisma/client';
 import { TranslationsService } from '../translations/translations.service';
 
@@ -55,6 +57,8 @@ export class BusinessesService {
   constructor(
     private prisma: PrismaService,
     private translations: TranslationsService,
+    private encryption: EncryptionService,
+    private userLookup: UserLookupService,
   ) {}
 
   private translatableBusinessFields(b: any): Record<string, string | null | undefined> {
@@ -74,7 +78,7 @@ export class BusinessesService {
     // the only thing they skip is the seeded "Main Menu" since the cluster
     // doesn't own a menu of its own.
     if (!adminPhone) throw new BadRequestException('Business admin phone is required');
-    const existing = await this.prisma.user.findUnique({ where: { phone: adminPhone } });
+    const existing = await this.userLookup.findByPhone(adminPhone);
     if (existing) throw new BadRequestException(`Phone ${adminPhone} is already registered`);
 
     // Generate a unique publicCode with retry on the rare unique-violation.
@@ -122,7 +126,7 @@ export class BusinessesService {
     const adminUser = await this.prisma.user.create({
       data: {
         name: adminName?.trim() || `${business.name} Owner`,
-        phone: adminPhone!.trim(),
+        ...this.encryption.buildPhoneFields(adminPhone!),
         passwordHash,
         businessId: business.id,
         roleId: ownerRole.id,

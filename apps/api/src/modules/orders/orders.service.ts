@@ -5,6 +5,8 @@ import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersGateway } from './orders.gateway';
 import { OrderStatus, OrderItemStatus, OutletType } from '@prisma/client';
 import { AuditLogService } from '../../config/logger/audit-log.service';
+import { EncryptionService } from '../../config/crypto/encryption.service';
+import { UserLookupService } from '../../config/crypto/user-lookup.service';
 import { TranslationsService } from '../translations/translations.service';
 import { LifecycleDispatcherService } from '../customer-alerts/lifecycle-dispatcher.service';
 import { PricingService } from '../pricing/pricing.service';
@@ -23,6 +25,8 @@ export class OrdersService {
     private rewards: RewardsService,
     private serviceStations: ServiceStationsService,
     private audit: AuditLogService,
+    private encryption: EncryptionService,
+    private userLookup: UserLookupService,
   ) {}
 
   /** Hydrate items[].item, items[].variant, and outlet for a batch of orders. */
@@ -207,9 +211,9 @@ export class OrdersService {
     if (dto.customerPhone) {
       const phone = dto.customerPhone.trim();
       if (phone) {
-        const existing = await this.prisma.user.findUnique({ where: { phone } });
+        const existing = await this.userLookup.findByPhone(phone);
         const customer = existing || await this.prisma.user.create({
-          data: { phone, name: `Guest (${phone})`, status: 'ACTIVE' },
+          data: { ...this.encryption.buildPhoneFields(phone), name: `Guest (${phone})`, status: 'ACTIVE' },
         });
         resolvedCustomerId = customer.id;
         resolvedStaffId = userId;
@@ -1385,10 +1389,7 @@ export class OrdersService {
     let resolvedCustomerId: string | null = null;
     const phone = opts.customerPhone?.trim();
     if (phone) {
-      const cust = await this.prisma.user.findUnique({
-        where: { phone },
-        select: { id: true },
-      });
+      const cust = await this.userLookup.findByPhone(phone, { select: { id: true } });
       resolvedCustomerId = cust?.id ?? null;
       // Phone provided but unknown → no possible match. Bail before
       // querying (and definitely without falling back to userId, which

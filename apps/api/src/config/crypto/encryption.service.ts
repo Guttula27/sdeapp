@@ -27,6 +27,11 @@ const PREFIX = 'enc:v1:';
 export class EncryptionService implements OnModuleInit {
   private readonly logger = new Logger('Encryption');
   private key!: Buffer;
+  // Separate sub-key for HMAC so a stolen ciphertext can't be turned
+  // into the fingerprint that lets you query a record. Derived from the
+  // master key with a constant info string (HKDF-light) so only one env
+  // secret needs management.
+  private hmacKey!: Buffer;
 
   onModuleInit() {
     const fromEnv = process.env.APP_ENCRYPTION_KEY;
@@ -38,20 +43,21 @@ export class EncryptionService implements OnModuleInit {
         );
       }
       this.key = buf;
-      return;
+    } else {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('APP_ENCRYPTION_KEY is required in production.');
+      }
+      // Dev fallback — deterministic so re-starts don't break local
+      // data, but the log line is intentionally loud.
+      this.key = crypto
+        .createHash('sha256')
+        .update('paynpik-dev-encryption-key-do-not-use-in-prod')
+        .digest();
+      this.logger.warn(
+        'APP_ENCRYPTION_KEY not set — using a dev-only fallback key. DO NOT USE IN PRODUCTION.',
+      );
     }
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('APP_ENCRYPTION_KEY is required in production.');
-    }
-    // Dev fallback — deterministic so re-starts don't break local data,
-    // but the log line is intentionally loud.
-    this.key = crypto
-      .createHash('sha256')
-      .update('paynpik-dev-encryption-key-do-not-use-in-prod')
-      .digest();
-    this.logger.warn(
-      'APP_ENCRYPTION_KEY not set — using a dev-only fallback key. DO NOT USE IN PRODUCTION.',
-    );
+    this.hmacKey = crypto.createHmac('sha256', this.key).update('phone-hmac-v1').digest();
   }
 
   // ─── Strings ──────────────────────────────────────────────────────────
@@ -96,5 +102,37 @@ export class EncryptionService implements OnModuleInit {
       // so callers can decide what to do with it.
       return plain as unknown as T;
     }
+  }
+
+  // ─── Phone numbers ────────────────────────────────────────────────────
+  // Normalization is what makes the HMAC lookups stable — two
+  // representations of the same number (e.g. "+91 9876543210" vs
+  // "9876543210" vs " 9876543210 ") have to hash to the same value or
+  // login by phone silently fails. Keep this conservative: trim + strip
+  // common punctuation. Stricter normalization (E.164) is a future
+  // upgrade; coordinate the change with a re-hash backfill.
+  normalizePhone(phone: string): string {
+    return phone.trim().replace(/[\s-]/g, '');
+  }
+
+  phoneHmac(phone: string): string {
+    if (!phone) return '';
+    return crypto
+      .createHmac('sha256', this.hmacKey)
+      .update(this.normalizePhone(phone))
+      .digest('hex');
+  }
+
+  // Convenience for the write paths: returns the triplet to splat into
+  // any user create/update so the plaintext, encrypted, and lookup
+  // columns stay in lock-step. Plaintext stays in `phone` for one
+  // deploy cycle as a safety net.
+  buildPhoneFields(phone: string): { phone: string; phoneEnc: string; phoneHash: string } {
+    const normalized = this.normalizePhone(phone);
+    return {
+      phone: normalized,
+      phoneEnc: this.encrypt(normalized)!,
+      phoneHash: this.phoneHmac(normalized),
+    };
   }
 }

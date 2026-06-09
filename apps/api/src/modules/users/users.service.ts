@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { TranslationsService } from '../translations/translations.service';
+import { EncryptionService } from '../../config/crypto/encryption.service';
+import { UserLookupService } from '../../config/crypto/user-lookup.service';
 import * as bcrypt from 'bcryptjs';
 
 @Injectable()
@@ -8,6 +10,8 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private translations: TranslationsService,
+    private encryption: EncryptionService,
+    private userLookup: UserLookupService,
   ) {}
 
   private async hydrateOrders(orders: any[], lang: string | null | undefined) {
@@ -25,12 +29,12 @@ export class UsersService {
   }
 
   async create(data: { name: string; phone: string; email?: string; password: string; roleId?: string; businessId?: string; outletId?: string }) {
-    const existing = await this.prisma.user.findUnique({ where: { phone: data.phone } });
+    const existing = await this.userLookup.findByPhone(data.phone);
     if (existing) throw new ConflictException('Phone already registered');
-    const { password, ...rest } = data;
+    const { password, phone, ...rest } = data;
     const passwordHash = await bcrypt.hash(password, 12);
     return this.prisma.user.create({
-      data: { ...rest, passwordHash },
+      data: { ...rest, ...this.encryption.buildPhoneFields(phone), passwordHash },
       select: { id: true, name: true, phone: true, email: true, status: true, role: { select: { id: true, name: true } } },
     });
   }

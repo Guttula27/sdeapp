@@ -6,6 +6,7 @@ import { PrismaService } from '../../config/prisma/prisma.service';
 import { OutletType } from '@prisma/client';
 import { TranslationsService } from '../translations/translations.service';
 import { EncryptionService } from '../../config/crypto/encryption.service';
+import { UserLookupService } from '../../config/crypto/user-lookup.service';
 import { allowsSeating } from '../../common/outlet-type';
 
 const DEFAULT_OUTLET_ADMIN_PASSWORD = 'abc@123';
@@ -72,6 +73,7 @@ export class OutletsService {
     private prisma: PrismaService,
     private translations: TranslationsService,
     private encryption: EncryptionService,
+    private userLookup: UserLookupService,
   ) {}
 
   // Encrypt the Razorpay Linked Account id before persistence. Called
@@ -100,7 +102,7 @@ export class OutletsService {
     const { adminPhone, adminName, ...outletData } = data;
     if (!adminPhone) throw new BadRequestException('Outlet admin phone is required');
 
-    const existing = await this.prisma.user.findUnique({ where: { phone: adminPhone } });
+    const existing = await this.userLookup.findByPhone(adminPhone);
     if (existing) throw new BadRequestException(`Phone ${adminPhone} is already registered`);
 
     // Stamp a publicCode. The column is UNIQUE, so on the extremely rare
@@ -134,7 +136,7 @@ export class OutletsService {
     const adminUser = await this.prisma.user.create({
       data: {
         name: adminName?.trim() || `${outlet.name} Admin`,
-        phone: adminPhone.trim(),
+        ...this.encryption.buildPhoneFields(adminPhone),
         passwordHash,
         businessId: outlet.businessId,
         outletId: outlet.id,
