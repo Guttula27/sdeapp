@@ -40,16 +40,25 @@ export class OrdersController {
     return this.ordersService.findAll(outletId, { status, page, limit, callerUserId: user?.id }, lang);
   }
 
-  // Postpaid open-order lookup for a given table. Returns the single open
-  // postpaid order (no billRequestedAt, not cancelled) on the table or null.
+  // Postpaid open-order lookup for a given table. Customer-scoped — a
+  // table can hold multiple open tabs (one per phone). Customer PWA
+  // uses the JWT user as the customer; staff pass ?customerPhone= so
+  // they pick the tab belonging to the customer in front of them.
   @UseGuards(JwtAuthGuard)
   @Get('open')
   findOpenForTable(
     @Param('outletId') outletId: string,
     @Query('tableId') tableId: string,
+    @Query('customerPhone') customerPhone: string | undefined,
+    @CurrentUser('id') userId: string | undefined,
     @PreferredLanguage() lang: string | null,
   ) {
-    return this.ordersService.findOpenForTable(outletId, tableId, lang);
+    return this.ordersService.findOpenForTable(
+      outletId,
+      tableId,
+      { userId, customerPhone },
+      lang,
+    );
   }
 
   // Append new items to an existing postpaid (open) order.

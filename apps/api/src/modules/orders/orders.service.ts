@@ -1348,12 +1348,42 @@ export class OrdersService {
   // The "open" order on a table is the unfinished postpaid one: items can
   // still be appended until Bill Now is pressed (billRequestedAt set).
 
-  async findOpenForTable(outletId: string, tableId: string, lang: string | null) {
+  async findOpenForTable(
+    outletId: string,
+    tableId: string,
+    opts: { userId?: string | null; customerPhone?: string | null },
+    lang: string | null,
+  ) {
     if (!tableId) throw new BadRequestException('tableId is required');
+
+    // A table can have several open postpaid tabs at once — one per
+    // customer. Disambiguate by customerId: prefer an explicit phone
+    // lookup (staff-driven flow where the staff JWT is not the
+    // customer), fall back to the JWT user when it IS the customer
+    // (PWA). With no resolvable customer we can't pick a tab safely,
+    // so return null — the UI will start a new order.
+    let resolvedCustomerId: string | null = null;
+    const phone = opts.customerPhone?.trim();
+    if (phone) {
+      const cust = await this.prisma.user.findUnique({
+        where: { phone },
+        select: { id: true },
+      });
+      resolvedCustomerId = cust?.id ?? null;
+      // Phone provided but unknown → no possible match. Bail before
+      // querying (and definitely without falling back to userId, which
+      // would be the staff user and would surface another customer's tab).
+      if (!resolvedCustomerId) return null;
+    } else if (opts.userId) {
+      resolvedCustomerId = opts.userId;
+    }
+    if (!resolvedCustomerId) return null;
+
     const order = await this.prisma.order.findFirst({
       where: {
         outletId,
         tableId,
+        customerId: resolvedCustomerId,
         isPostpaid: true,
         billRequestedAt: null,
         status: { notIn: [OrderStatus.CANCELLED, OrderStatus.SERVED, OrderStatus.REFUND_COMPLETE] },

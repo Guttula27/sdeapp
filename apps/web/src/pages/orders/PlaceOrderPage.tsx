@@ -211,17 +211,25 @@ export default function PlaceOrderPage() {
   // 'idle' = adding items / placing; 'billing' = Bill Now pressed, show Cash/UPI.
   const [billingState, setBillingState] = useState<'idle' | 'billing'>('idle');
 
-  // Whenever the staff picks a different table on a postpaid flow, refresh
-  // the open order so the locked-items list and Bill Now button stay in sync.
+  // Whenever the staff picks a different table OR types a different
+  // customer phone on a postpaid flow, refresh the open order. Open
+  // tabs on a single table are customer-scoped — without a phone we
+  // can't pick a tab safely, so the call resolves to null and the UI
+  // starts a fresh order. Trimmed phones below 10 chars are skipped
+  // to avoid a request per keystroke.
   const refreshOpenOrder = useCallback(async () => {
     if (!isPostpaidTableFlow || !tableId) { setOpenOrder(null); return; }
+    const phone = customerPhone.trim();
+    if (phone.length < 10) { setOpenOrder(null); return; }
     try {
-      const { data } = await api.get(`/outlets/${outletId}/orders/open`, { params: { tableId } });
+      const { data } = await api.get(`/outlets/${outletId}/orders/open`, {
+        params: { tableId, customerPhone: phone },
+      });
       setOpenOrder(data.data ?? null);
     } catch {
       setOpenOrder(null);
     }
-  }, [isPostpaidTableFlow, tableId, outletId]);
+  }, [isPostpaidTableFlow, tableId, outletId, customerPhone]);
   useEffect(() => { refreshOpenOrder(); setBillingState('idle'); }, [refreshOpenOrder]);
 
   // If the outlet type later changes such that seating is no longer allowed
