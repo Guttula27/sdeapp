@@ -360,8 +360,10 @@ async function main() {
     },
   });
 
-  const section = await prisma.section.create({
-    data: { name: 'Main Hall', outletId: demoOutlet.id },
+  const section = await prisma.section.upsert({
+    where: { id: 'demo-section-main' },
+    update: {},
+    create: { id: 'demo-section-main', name: 'Main Hall', outletId: demoOutlet.id },
   });
 
   for (let i = 1; i <= 10; i++) {
@@ -379,32 +381,48 @@ async function main() {
   }
 
   // ─── Demo Menu ────────────────────────────────────────────
-  const breakfastCat = await prisma.category.create({
-    data: { name: 'Breakfast', outletId: demoOutlet.id, displayOrder: 1 },
+  // All categories / subcategories / items below use stable IDs +
+  // upsert so re-running `npm run db:seed` (which is mandatory after
+  // adding new responsibilities) doesn't duplicate the menu. Variants
+  // ride on the item's nested-create, which only fires on first
+  // insert — subsequent runs leave existing variants untouched.
+  const breakfastCat = await prisma.category.upsert({
+    where: { id: 'demo-cat-breakfast' },
+    update: {},
+    create: { id: 'demo-cat-breakfast', name: 'Breakfast', outletId: demoOutlet.id, displayOrder: 1 },
+  });
+  const mainsCat = await prisma.category.upsert({
+    where: { id: 'demo-cat-mains' },
+    update: {},
+    create: { id: 'demo-cat-mains', name: 'Main Course', outletId: demoOutlet.id, displayOrder: 2 },
+  });
+  const beveragesCat = await prisma.category.upsert({
+    where: { id: 'demo-cat-beverages' },
+    update: {},
+    create: { id: 'demo-cat-beverages', name: 'Beverages', outletId: demoOutlet.id, displayOrder: 3 },
   });
 
-  const mainsCat = await prisma.category.create({
-    data: { name: 'Main Course', outletId: demoOutlet.id, displayOrder: 2 },
+  const southIndianSub = await prisma.subcategory.upsert({
+    where: { id: 'demo-sub-south-indian' },
+    update: {},
+    create: { id: 'demo-sub-south-indian', name: 'South Indian', categoryId: breakfastCat.id, displayOrder: 1 },
+  });
+  const northIndianSub = await prisma.subcategory.upsert({
+    where: { id: 'demo-sub-north-indian' },
+    update: {},
+    create: { id: 'demo-sub-north-indian', name: 'North Indian', categoryId: mainsCat.id, displayOrder: 1 },
+  });
+  const hotBeveragesSub = await prisma.subcategory.upsert({
+    where: { id: 'demo-sub-hot-beverages' },
+    update: {},
+    create: { id: 'demo-sub-hot-beverages', name: 'Hot Beverages', categoryId: beveragesCat.id, displayOrder: 1 },
   });
 
-  const beveragesCat = await prisma.category.create({
-    data: { name: 'Beverages', outletId: demoOutlet.id, displayOrder: 3 },
-  });
-
-  const southIndianSub = await prisma.subcategory.create({
-    data: { name: 'South Indian', categoryId: breakfastCat.id, displayOrder: 1 },
-  });
-
-  const northIndianSub = await prisma.subcategory.create({
-    data: { name: 'North Indian', categoryId: mainsCat.id, displayOrder: 1 },
-  });
-
-  const hotBeveragesSub = await prisma.subcategory.create({
-    data: { name: 'Hot Beverages', categoryId: beveragesCat.id, displayOrder: 1 },
-  });
-
-  const dosa = await prisma.item.create({
-    data: {
+  const dosa = await prisma.item.upsert({
+    where: { id: 'demo-item-masala-dosa' },
+    update: {},
+    create: {
+      id: 'demo-item-masala-dosa',
       name: 'Masala Dosa',
       description: 'Crispy dosa with spiced potato filling',
       basePrice: 80,
@@ -421,8 +439,11 @@ async function main() {
     },
   });
 
-  await prisma.item.create({
-    data: {
+  await prisma.item.upsert({
+    where: { id: 'demo-item-idli' },
+    update: {},
+    create: {
+      id: 'demo-item-idli',
       name: 'Idli (2 Pcs)',
       basePrice: 50,
       preparationTime: 8,
@@ -430,8 +451,11 @@ async function main() {
     },
   });
 
-  await prisma.item.create({
-    data: {
+  await prisma.item.upsert({
+    where: { id: 'demo-item-butter-chicken' },
+    update: {},
+    create: {
+      id: 'demo-item-butter-chicken',
       name: 'Butter Chicken',
       basePrice: 280,
       preparationTime: 20,
@@ -440,8 +464,11 @@ async function main() {
     },
   });
 
-  await prisma.item.create({
-    data: {
+  await prisma.item.upsert({
+    where: { id: 'demo-item-paneer-butter-masala' },
+    update: {},
+    create: {
+      id: 'demo-item-paneer-butter-masala',
       name: 'Paneer Butter Masala',
       basePrice: 240,
       preparationTime: 18,
@@ -449,8 +476,11 @@ async function main() {
     },
   });
 
-  await prisma.item.create({
-    data: {
+  await prisma.item.upsert({
+    where: { id: 'demo-item-filter-coffee' },
+    update: {},
+    create: {
+      id: 'demo-item-filter-coffee',
       name: 'Filter Coffee',
       basePrice: 40,
       preparationTime: 3,
