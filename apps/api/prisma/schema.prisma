@@ -169,6 +169,7 @@ model User {
   couponUsages     CouponUsage[]    @relation("CouponUsages")
   rewardAccount    CustomerRewardAccount? @relation("RewardAccount")
   rewardTransactions RewardTransaction[] @relation("RewardTransactions")
+  orderStatusChanges OrderStatusHistory[] @relation("OrderStatusHistoryActor")
   preferredUpiApp String?
   profileImageUrl String? @db.Text
   alertRingtone   String? @default("chime")
@@ -1219,13 +1220,18 @@ model OrderItemReview {
 model OrderStatusHistory {
   id        String      @id @default(cuid())
   status    OrderStatus
+  // Free-text user id of the staff (or null for system rollups). Real
+  // FK is on the relation below — keep the field nullable + SET NULL
+  // so deleting a staff user doesn't break the audit trail.
   changedBy String?
+  changedByUser User? @relation("OrderStatusHistoryActor", fields: [changedBy], references: [id], onDelete: SetNull)
   notes     String?
   orderId   String
   order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
+  @@index([changedBy])
   @@map("paynpik_order_status_history")
 }
 

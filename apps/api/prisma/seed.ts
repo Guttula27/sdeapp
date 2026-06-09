@@ -37,6 +37,7 @@ const RESPONSIBILITY_DEFS: Array<{ name: string; module: string; description: st
 
   // Orders
   { name: 'VIEW_ORDERS',             module: 'ORDERS',     description: 'View orders list & details' },
+  { name: 'VIEW_ORDER_LOG',          module: 'ORDERS',     description: 'View the per-order status history (stage, time, staff)' },
   { name: 'CREATE_ORDER',            module: 'ORDERS',     description: 'Create new orders' },
   { name: 'UPDATE_ORDER_STATUS',     module: 'ORDERS',     description: 'Move orders through workflow states' },
   { name: 'CANCEL_ORDER',            module: 'ORDERS',     description: 'Cancel existing orders' },
@@ -132,7 +133,7 @@ async function main() {
     'VIEW_BUSINESSES', 'VIEW_OUTLETS', 'MANAGE_OUTLETS', 'MANAGE_OUTLET_IMAGES', 'MANAGE_OUTLET_HOURS',
     'MANAGE_SECTIONS', 'MANAGE_TABLES', 'MANAGE_TABLE_TYPES',
     'VIEW_MENU', 'MANAGE_MENU', 'MANAGE_MENU_ITEMS', 'TOGGLE_ITEM_AVAILABILITY', 'IMPORT_MENU', 'MANAGE_TOPPINGS',
-    'VIEW_ORDERS', 'CREATE_ORDER', 'UPDATE_ORDER_STATUS', 'CANCEL_ORDER', 'UPDATE_ITEM_STATUS',
+    'VIEW_ORDERS', 'CREATE_ORDER', 'UPDATE_ORDER_STATUS', 'CANCEL_ORDER', 'UPDATE_ITEM_STATUS', 'VIEW_ORDER_LOG',
     'COLLECT_PAYMENT', 'VIEW_PAYMENTS',
     'VIEW_KITCHEN', 'MANAGE_KITCHEN_STATIONS', 'VIEW_SERVICE_DESK',
     'VIEW_INVENTORY', 'MANAGE_INVENTORY', 'MANAGE_PURCHASE_ORDERS', 'VIEW_VENDORS', 'MANAGE_VENDORS',
@@ -151,7 +152,7 @@ async function main() {
 
   const KITCHEN_MANAGER = [
     'VIEW_MENU', 'TOGGLE_ITEM_AVAILABILITY',
-    'VIEW_ORDERS', 'UPDATE_ORDER_STATUS', 'UPDATE_ITEM_STATUS',
+    'VIEW_ORDERS', 'UPDATE_ORDER_STATUS', 'UPDATE_ITEM_STATUS', 'VIEW_ORDER_LOG',
     'VIEW_KITCHEN', 'MANAGE_KITCHEN_STATIONS',
     'VIEW_INVENTORY', 'MANAGE_INVENTORY',
     'VIEW_KITCHEN_REPORTS',

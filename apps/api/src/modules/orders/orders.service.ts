@@ -1535,6 +1535,53 @@ export class OrdersService {
     return updated;
   }
 
+  // ─── Order log (audit trail) ──────────────────────────────────────────
+  // Enriched status history: stage, time, actor name + role, notes. Gated
+  // separately from VIEW_ORDERS because the actor names leak staff
+  // identity — only show it to the management roles.
+  async getOrderLog(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, outletId: true, orderNumber: true, createdAt: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    const rows = await this.prisma.orderStatusHistory.findMany({
+      where: { orderId },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        changedByUser: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            role: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    return {
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      placedAt: order.createdAt,
+      entries: rows.map((r) => ({
+        id: r.id,
+        status: r.status,
+        at: r.createdAt,
+        notes: r.notes,
+        actor: r.changedByUser
+          ? {
+              id: r.changedByUser.id,
+              name: r.changedByUser.name,
+              phone: r.changedByUser.phone,
+              role: r.changedByUser.role?.name ?? null,
+            }
+          : null,
+      })),
+    };
+  }
+
   // ─── Service desk: postpaid verification gate ──────────────────────────
   // Service desk confirms (or strikes) lines that the customer added to a
   // postpaid order. Confirm moves PENDING_VERIFICATION → PENDING so the

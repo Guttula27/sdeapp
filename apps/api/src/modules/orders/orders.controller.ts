@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards, UseInterceptors, ForbiddenException } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -136,6 +136,19 @@ export class OrdersController {
     @CurrentUser('id') userId: string,
   ) {
     return this.ordersService.updateItemStatus(id, itemId, status, userId);
+  }
+
+  // Order log: enriched status history (stage / time / staff). Gated by
+  // VIEW_ORDER_LOG so only management roles see who did what.
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/log')
+  async getLog(@Param('id') id: string, @CurrentUser() user: any) {
+    const responsibilities: string[] =
+      user?.role?.responsibilities?.map((r: any) => r?.responsibility?.name || r?.name).filter(Boolean) ?? [];
+    if (!responsibilities.includes('VIEW_ORDER_LOG')) {
+      throw new ForbiddenException('VIEW_ORDER_LOG permission required');
+    }
+    return this.ordersService.getOrderLog(id);
   }
 
   // Service desk: confirm or strike unverified postpaid lines. Body:

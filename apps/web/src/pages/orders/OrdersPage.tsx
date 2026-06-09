@@ -95,7 +95,7 @@ function elapsed(t: string) {
 export default function OrdersPage() {
   const dispatch = useDispatch();
   const user = useSelector((s: RootState) => s.auth.user);
-  const { tier } = useUserRole();
+  const { tier, has } = useUserRole();
   const { orders } = useSelector((s: RootState) => s.orders);
   // Multi-select filter: users can combine statuses (e.g. ACTIVE + CANCELLED).
   // ACTIVE/ALL act as presets that compose with specific statuses — see
@@ -256,12 +256,29 @@ export default function OrdersPage() {
     finally { setSaving(false); }
   };
 
+  // Enriched per-order log (status / time / staff). Tier 'outlet' admins
+  // and 'business' owners always have access; other roles need
+  // VIEW_ORDER_LOG. Cleared on detail close so we don't leak across
+  // orders when the modal reopens for a different one.
+  const canViewLog = tier === 'outlet' || tier === 'business' || has('VIEW_ORDER_LOG');
+  const [orderLog, setOrderLog] = useState<any | null>(null);
   const openDetail = async (order: any) => {
     const url = isReadOnly
       ? `/orders/${order.id}`
       : `/outlets/${order.outletId || outletId}/orders/${order.id}`;
     try { const { data } = await api.get(url); setDetail(data.data); }
     catch { setDetail(order); }
+    setOrderLog(null);
+    if (canViewLog) {
+      try {
+        const targetOutlet = order.outletId || outletId;
+        const { data } = await api.get(`/outlets/${targetOutlet}/orders/${order.id}/log`);
+        setOrderLog(data.data);
+      } catch {
+        // Falls back to the basic Timeline if log fetch fails (e.g. a
+        // role with VIEW_ORDERS but no VIEW_ORDER_LOG would 403 here).
+      }
+    }
   };
 
   const [pendingItem, setPendingItem] = useState<string | null>(null);
@@ -877,8 +894,38 @@ export default function OrdersPage() {
                 </div>
               );
             })()}
-            {/* Timeline */}
-            {detail.statusHistory?.length > 0 && (
+            {/* Timeline — enriched (with actor) when VIEW_ORDER_LOG is
+                granted and the log endpoint has loaded; otherwise the
+                basic status+time fallback baked into the order detail. */}
+            {orderLog?.entries?.length ? (
+              <div className="space-y-1.5">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Order log</p>
+                <div className="border border-slate-100 rounded-xl divide-y divide-slate-100 overflow-hidden">
+                  {orderLog.entries.map((h: any) => (
+                    <div key={h.id} className="flex items-center gap-3 px-3 py-2 text-xs bg-white">
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: STATUS[h.status]?.dot }} />
+                      <span className="font-medium text-slate-700 min-w-[110px]">{STATUS[h.status]?.label || h.status}</span>
+                      <div className="flex-1 min-w-0">
+                        {h.actor ? (
+                          <span className="text-slate-600 truncate">
+                            <span className="font-semibold">{h.actor.name}</span>
+                            {h.actor.role && <span className="text-slate-400"> · {h.actor.role}</span>}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 italic">system</span>
+                        )}
+                        {h.notes && (
+                          <p className="text-[11px] text-slate-400 truncate">{h.notes}</p>
+                        )}
+                      </div>
+                      <span className="text-slate-400 whitespace-nowrap" title={new Date(h.at).toLocaleString('en-IN')}>
+                        {new Date(h.at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : detail.statusHistory?.length > 0 ? (
               <div className="space-y-1.5">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Timeline</p>
                 {detail.statusHistory.map((h: any, i: number) => (
@@ -889,7 +936,7 @@ export default function OrdersPage() {
                   </div>
                 ))}
               </div>
-            )}
+            ) : null}
           </div>
         )}
       </Modal>
