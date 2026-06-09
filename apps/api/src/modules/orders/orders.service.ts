@@ -640,7 +640,16 @@ export class OrdersService {
         },
         table: true,
         section: true,
-        outlet: { select: { id: true, name: true, address: true, gstNumber: true, upiId: true, logoUrl: true, phone: true, outletType: true } },
+        outlet: {
+          select: {
+            id: true, name: true, phone: true, logoUrl: true, upiId: true, outletType: true,
+            // Full address breakdown so the receipt can render street /
+            // city-state-pincode on separate lines instead of one comma-joined blob.
+            address: true, addressLine1: true, addressLine2: true,
+            city: true, state: true, pincode: true,
+            gstNumber: true,
+          },
+        },
         customer: {
           select: {
             id: true, name: true, phone: true,
@@ -650,9 +659,23 @@ export class OrdersService {
         payments: true,
         statusHistory: { orderBy: { createdAt: 'asc' } },
         disputes: true,
+        // Discount breakdown for the receipt: per-coupon row and per-redeem row.
+        // The order's stored discountAmount is the aggregate; these relations
+        // let the receipt list each component on its own line.
+        couponUsages: {
+          select: { discountAmount: true, coupon: { select: { code: true, name: true } } },
+        },
       },
     });
     if (!order) throw new NotFoundException('Order not found');
+    // Order doesn't expose rewardTransactions as a Prisma relation —
+    // pull the REDEEM rows separately and attach so receipts can list
+    // the reward redemption on its own line.
+    const rewardTransactions = await this.prisma.rewardTransaction.findMany({
+      where: { orderId: order.id, type: 'REDEEM' },
+      select: { points: true, amountValue: true },
+    });
+    (order as any).rewardTransactions = rewardTransactions;
     await this.hydrateOrders([order], lang);
     return order;
   }
