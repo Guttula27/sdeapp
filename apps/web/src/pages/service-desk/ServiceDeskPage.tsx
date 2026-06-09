@@ -92,6 +92,11 @@ function elapsedMins(iso: string) {
 export default function ServiceDeskPage() {
   const user = useSelector((s: RootState) => s.auth.user);
   const { tier, has } = useUserRole();
+  // useFullscreen MUST sit above any conditional `return` below so the
+  // Rules of Hooks aren't violated — earlier versions called it after
+  // the outletId guard and the hook state ended up wired to the wrong
+  // slot, which is why the toggle did nothing.
+  const { ref: pageRef, isFullscreen, toggle: toggleFullscreen } = useFullscreen<HTMLDivElement>();
   // Outlet-tier admins always have access; everyone else needs the
   // explicit responsibility (Cashier role gets it by default).
   const allowed = tier === 'outlet' || tier === 'business' || has('VIEW_SERVICE_DESK');
@@ -213,8 +218,6 @@ export default function ServiceDeskPage() {
       </div>
     );
   }
-
-  const { ref: pageRef, isFullscreen, toggle: toggleFullscreen } = useFullscreen<HTMLDivElement>();
 
   return (
     <div

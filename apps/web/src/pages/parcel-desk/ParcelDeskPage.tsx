@@ -82,6 +82,9 @@ function elapsedMins(iso: string) {
 export default function ParcelDeskPage() {
   const user = useSelector((s: RootState) => s.auth.user);
   const { tier, has } = useUserRole();
+  // useFullscreen MUST sit above every conditional `return` below —
+  // same Rules-of-Hooks fix as ServiceDeskPage.
+  const { ref: pageRef, isFullscreen, toggle: toggleFullscreen } = useFullscreen<HTMLDivElement>();
   const allowed = tier === 'outlet' || tier === 'business' || has('VIEW_PARCEL_DESK');
   if (!allowed) return <Navigate to="/dashboard" replace />;
 
@@ -165,8 +168,6 @@ export default function ParcelDeskPage() {
       </div>
     );
   }
-
-  const { ref: pageRef, isFullscreen, toggle: toggleFullscreen } = useFullscreen<HTMLDivElement>();
 
   return (
     <div
