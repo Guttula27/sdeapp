@@ -173,6 +173,16 @@ export class OrdersController {
     return this.ordersService.getServiceDeskQueue(outletId);
   }
 
+  // Parcel desk dashboard: two lanes — pack (kitchen done, awaiting
+  // packaging) and handover (packed, customer collecting). Returns
+  // 403 if the caller lacks VIEW_PARCEL_DESK.
+  @UseGuards(JwtAuthGuard)
+  @Get('parcel-desk/queue')
+  parcelDeskQueue(@Param('outletId') outletId: string, @CurrentUser() user: any) {
+    assertResponsibility(user, 'VIEW_PARCEL_DESK');
+    return this.ordersService.getParcelDeskQueue(outletId);
+  }
+
   // Course planner: bulk assign items to sequence numbers and rename
   // courses. Body shape:
   //   { items: [{ itemId, sequenceNumber }], labels: { "1": "Starter" } }

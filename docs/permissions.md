@@ -21,6 +21,7 @@ bundles below in lock-step.
 | **Kitchen Manager** | Per-business | — | `KITCHEN_MANAGER` |
 | **Cashier** | Per-business | — | `CASHIER` |
 | **Service Desk** | Per-business (new 2026-06-09) | — | `SERVICE_DESK` |
+| **Parcel Desk** | Per-business (new 2026-06-09) | — | `PARCEL_DESK` |
 | **Store Manager** | Per-business | — | `STORE_MANAGER` |
 
 ---
@@ -94,6 +95,8 @@ bundles below in lock-step.
 | `MANAGE_KITCHEN_STATIONS` | Kitchen station CRUD + item routing | Business Owner, Outlet Admin, Kitchen Manager |
 | `VIEW_SERVICE_DESK` | Service-desk dashboard read + `GET /orders/service-desk/queue` | Business Owner, Outlet Admin, Cashier, Kitchen Manager (read-only), Service Desk |
 | `MANAGE_SERVICE_DESK` | Verify / strike postpaid items (`PATCH /orders/:id/verify-items`), release / mark on-its-way / mark served via the dashboard | Business Owner, Outlet Admin, Cashier, Service Desk |
+| `VIEW_PARCEL_DESK` | Parcel-desk dashboard read + `GET /orders/parcel-desk/queue` | Business Owner, Outlet Admin, Cashier, Parcel Desk |
+| `MANAGE_PARCEL_DESK` | Mark packed (READY → READY_FOR_PICKUP) and mark handed over (READY_FOR_PICKUP → SERVED) on parcel orders | Business Owner, Outlet Admin, Cashier, Parcel Desk |
 
 ### Inventory & vendors
 
@@ -217,6 +220,7 @@ Endpoints with explicit server-side gates today (2026-06-09):
 - `GET /outlets/:outletId/orders/:id/log` → `VIEW_ORDER_LOG`
 - `PATCH /outlets/:outletId/orders/:id/verify-items` → `MANAGE_SERVICE_DESK`
 - `GET /outlets/:outletId/orders/service-desk/queue` → `VIEW_SERVICE_DESK`
+- `GET /outlets/:outletId/orders/parcel-desk/queue` → `VIEW_PARCEL_DESK`
 
 A more aggressive rollout (every endpoint hard-gated) is a separate
 hardening pass — see `docs/hardening-backlog.md` if you want to plan it.

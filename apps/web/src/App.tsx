@@ -8,6 +8,7 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/dashboard/DashboardPage';
 import PlatformPage from './pages/platform/PlatformPage';
 import PlatformFeesPage from './pages/platform/PlatformFeesPage';
+import BusinessDetailPage from './pages/platform/BusinessDetailPage';
 import ClusterDetailPage from './pages/clusters/ClusterDetailPage';
 import OrdersPage from './pages/orders/OrdersPage';
 import PlaceOrderPage from './pages/orders/PlaceOrderPage';
@@ -18,6 +19,7 @@ import KitchenPage from './pages/kitchen/KitchenPage';
 import StationsPage from './pages/stations/StationsPage';
 import ServiceStationsPage from './pages/service-stations/ServiceStationsPage';
 import ServiceDeskPage from './pages/service-desk/ServiceDeskPage';
+import ParcelDeskPage from './pages/parcel-desk/ParcelDeskPage';
 import TagsPage from './pages/tags/TagsPage';
 import CustomersPage from './pages/customers/CustomersPage';
 import ToppingsPage from './pages/toppings/ToppingsPage';
@@ -78,6 +80,7 @@ export default function App() {
           <Route path="subscriptions-mgmt" element={<PlatformPage />} />
           <Route path="businesses"         element={<PlatformPage />} />
           <Route path="platform/clusters/:id" element={<ClusterDetailPage />} />
+          <Route path="platform/businesses/:id" element={<BusinessDetailPage />} />
           <Route path="platform-settings" element={<PlatformFeesPage />} />
 
           {/* Shared across tiers */}
@@ -96,6 +99,7 @@ export default function App() {
           <Route path="reports"    element={<ReportsPage />} />
           <Route path="kitchen"    element={<KitchenPage />} />
           <Route path="service-desk" element={<ServiceDeskPage />} />
+          <Route path="parcel-desk" element={<ParcelDeskPage />} />
           <Route path="stations"   element={<StationsPage />} />
           <Route path="service-stations" element={<ServiceStationsPage />} />
           <Route path="tags"       element={<TagsPage />} />

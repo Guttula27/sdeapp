@@ -52,6 +52,14 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     client.join(`service-desk:${outletId}`);
   }
 
+  // Parcel desk staff join their outlet's room for pack / handover
+  // lane nudges. Separate room from the service desk so parcel
+  // operators don't see dine-in chatter.
+  @SubscribeMessage('joinParcelDesk')
+  handleJoinParcelDesk(@MessageBody() outletId: string, @ConnectedSocket() client: Socket) {
+    client.join(`parcel-desk:${outletId}`);
+  }
+
   @SubscribeMessage('joinTable')
   handleJoinTable(
     @MessageBody() data: { outletId: string; tableId: string },
@@ -82,6 +90,7 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     this.server.to(`outlet:${outletId}`).emit('orderStatusUpdated', order);
     this.server.to(`kitchen:${outletId}`).emit('orderStatusUpdated', order);
     this.server.to(`service-desk:${outletId}`).emit('orderStatusUpdated', order);
+    this.server.to(`parcel-desk:${outletId}`).emit('orderStatusUpdated', order);
     if (order.tableId) {
       this.server.to(`table:${order.tableId}`).emit('orderStatusUpdated', order);
     }
@@ -98,6 +107,15 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     payload: { kind: 'verify' | 'release' | 'pickup'; orderId: string; orderNumber?: string },
   ) {
     this.server.to(`service-desk:${outletId}`).emit('serviceDeskAlert', payload);
+  }
+
+  // Parcel-desk variant — two lanes: pack (kitchen done, parcel still
+  // needs to be packaged) and handover (packed, customer collecting).
+  emitParcelDeskAlert(
+    outletId: string,
+    payload: { kind: 'pack' | 'handover'; orderId: string; orderNumber?: string },
+  ) {
+    this.server.to(`parcel-desk:${outletId}`).emit('parcelDeskAlert', payload);
   }
 
   emitPaymentConfirmed(outletId: string, payment: any) {

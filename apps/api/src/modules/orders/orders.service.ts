@@ -772,6 +772,22 @@ export class OrdersService {
         orderId: updated.id,
         orderNumber: updated.orderNumber,
       });
+    } else if (shape === 'parcel') {
+      // Parcel lifecycle nudges fire to the parcel desk, not the
+      // service desk. READY → pack lane; READY_FOR_PICKUP → handover.
+      if (dto.status === OrderStatus.READY) {
+        this.ordersGateway.emitParcelDeskAlert(order.outletId, {
+          kind: 'pack',
+          orderId: updated.id,
+          orderNumber: updated.orderNumber,
+        });
+      } else if (dto.status === OrderStatus.READY_FOR_PICKUP) {
+        this.ordersGateway.emitParcelDeskAlert(order.outletId, {
+          kind: 'handover',
+          orderId: updated.id,
+          orderNumber: updated.orderNumber,
+        });
+      }
     }
 
     // Customer-facing nudges:
@@ -1026,6 +1042,14 @@ export class OrdersService {
       } else if (rolledUp === OrderStatus.READY && shape === 'table-service') {
         this.ordersGateway.emitServiceDeskAlert(updated.outletId, {
           kind: 'pickup',
+          orderId: updated.id,
+          orderNumber: updated.orderNumber,
+        });
+      } else if (rolledUp === OrderStatus.READY && shape === 'parcel') {
+        // Parcel orders rolling up from item-status updates → parcel
+        // desk gets the "ready to pack" nudge.
+        this.ordersGateway.emitParcelDeskAlert(updated.outletId, {
+          kind: 'pack',
           orderId: updated.id,
           orderNumber: updated.orderNumber,
         });
@@ -1698,6 +1722,31 @@ export class OrdersService {
     // (emitOrderStatusUpdated already hits the kitchen room — this is the
     // explicit notification hook for future kitchen-side toast / sound.)
     return { order: updated, verifiedCount: eligible.length, action };
+  }
+
+  // ─── Parcel desk: queue read for the parcel dashboard ──────────────────
+  // Two lanes:
+  //   pack     — parcel orders at READY (kitchen done, awaiting packaging)
+  //   handover — parcel orders at READY_FOR_PICKUP (packed, awaiting customer)
+  async getParcelDeskQueue(outletId: string) {
+    const include = {
+      items:    { include: { item: true, variant: true } },
+      table:    { select: { id: true, number: true, sectionId: true } },
+      customer: { select: { id: true, name: true, phone: true } },
+    };
+    const [packRows, handoverRows] = await Promise.all([
+      this.prisma.order.findMany({
+        where: { outletId, isParcel: true, status: OrderStatus.READY },
+        include,
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.order.findMany({
+        where: { outletId, isParcel: true, status: OrderStatus.READY_FOR_PICKUP },
+        include,
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+    return { pack: packRows, handover: handoverRows };
   }
 
   // ─── Service desk: queue read for the dashboard ─────────────────────────

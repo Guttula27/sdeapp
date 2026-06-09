@@ -53,6 +53,8 @@ const RESPONSIBILITY_DEFS: Array<{ name: string; module: string; description: st
   { name: 'MANAGE_KITCHEN_STATIONS', module: 'KITCHEN',    description: 'Manage kitchen stations and item routing' },
   { name: 'VIEW_SERVICE_DESK',       module: 'KITCHEN',    description: 'View the service-desk dashboard (verify / release / pickup lanes)' },
   { name: 'MANAGE_SERVICE_DESK',     module: 'KITCHEN',    description: 'Act on service-desk lanes (verify postpaid items, release, mark on-its-way / served)' },
+  { name: 'VIEW_PARCEL_DESK',        module: 'KITCHEN',    description: 'View the parcel-desk dashboard (pack / handover lanes)' },
+  { name: 'MANAGE_PARCEL_DESK',      module: 'KITCHEN',    description: 'Act on parcel-desk lanes (mark packed, mark handed over)' },
 
   // Inventory & vendors
   { name: 'VIEW_INVENTORY',          module: 'INVENTORY',  description: 'View raw materials and stock levels' },
@@ -138,6 +140,7 @@ async function main() {
     'VIEW_ORDERS', 'CREATE_ORDER', 'UPDATE_ORDER_STATUS', 'CANCEL_ORDER', 'UPDATE_ITEM_STATUS', 'VIEW_ORDER_LOG',
     'COLLECT_PAYMENT', 'VIEW_PAYMENTS',
     'VIEW_KITCHEN', 'MANAGE_KITCHEN_STATIONS', 'VIEW_SERVICE_DESK', 'MANAGE_SERVICE_DESK',
+    'VIEW_PARCEL_DESK', 'MANAGE_PARCEL_DESK',
     'VIEW_INVENTORY', 'MANAGE_INVENTORY', 'MANAGE_PURCHASE_ORDERS', 'VIEW_VENDORS', 'MANAGE_VENDORS',
     'VIEW_REPORTS', 'VIEW_KITCHEN_REPORTS',
     'VIEW_STAFF', 'MANAGE_STAFF', 'MANAGE_ROLES',
@@ -171,6 +174,7 @@ async function main() {
     'VIEW_CUSTOMERS', 'ASSIGN_CUSTOMER_TAGS',
     'VIEW_QR_CODES',
     'VIEW_SERVICE_DESK', 'MANAGE_SERVICE_DESK',
+    'VIEW_PARCEL_DESK', 'MANAGE_PARCEL_DESK',
   ];
 
   // Dedicated service-desk role for outlets that staff the verify /
@@ -182,6 +186,15 @@ async function main() {
     'VIEW_MENU',
     'VIEW_ORDERS', 'UPDATE_ORDER_STATUS', 'VIEW_ORDER_LOG',
     'VIEW_SERVICE_DESK', 'MANAGE_SERVICE_DESK',
+    'VIEW_CUSTOMERS',
+  ];
+
+  // Parcel-desk operator — mirrors SERVICE_DESK but for the parcel
+  // pack / handover lanes. Same minimal surface plus the parcel perms.
+  const PARCEL_DESK = [
+    'VIEW_MENU',
+    'VIEW_ORDERS', 'UPDATE_ORDER_STATUS', 'VIEW_ORDER_LOG',
+    'VIEW_PARCEL_DESK', 'MANAGE_PARCEL_DESK',
     'VIEW_CUSTOMERS',
   ];
 
@@ -533,6 +546,11 @@ async function main() {
   const serviceDeskRole = await syncRole(
     { id: 'service-desk-role', name: 'Service Desk', businessId: demoBusiness.id },
     SERVICE_DESK,
+  );
+
+  const parcelDeskRole = await syncRole(
+    { id: 'parcel-desk-role', name: 'Parcel Desk', businessId: demoBusiness.id },
+    PARCEL_DESK,
   );
 
   const outletAdminPassword = await bcrypt.hash('Outlet@123', 12);

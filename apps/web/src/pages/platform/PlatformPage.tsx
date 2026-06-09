@@ -199,11 +199,18 @@ export default function PlatformPage() {
           businesses={businesses}
           loading={loading}
           onToggle={toggleBiz}
-          onOpen={(b) => b.isCluster && navigate(`/platform/clusters/${b.id}`)}
+          onOpen={openBusiness}
         />
       </div>
     </div>
   );
+
+  // Cluster businesses have their own dedicated admin shell; regular
+  // businesses get the new /platform/businesses/:id detail page.
+  const openBusiness = (b: Business) => {
+    if (b.isCluster) navigate(`/platform/clusters/${b.id}`);
+    else navigate(`/platform/businesses/${b.id}`);
+  };
 
   /* ── render: businesses ──────────────────────────────── */
   const renderBusinesses = () => (
@@ -222,7 +229,7 @@ export default function PlatformPage() {
           businesses={businesses}
           loading={loading}
           onToggle={toggleBiz}
-          onOpen={(b) => b.isCluster && navigate(`/platform/clusters/${b.id}`)}
+          onOpen={openBusiness}
         />
       </div>
     </div>
@@ -433,61 +440,70 @@ function BusinessTable({ businesses, loading, onToggle, onOpen }: {
 
   return (
     <div className="overflow-x-auto">
-      <table className="table-auto">
-        <thead>
+      <table className="w-full text-sm border-collapse">
+        <thead className="bg-slate-50 border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-500">
           <tr>
-            <th>Business</th>
-            <th>Type</th>
-            <th>GST</th>
-            <th>Outlets</th>
-            <th>Plan</th>
-            <th>Status</th>
-            <th>Action</th>
+            <th className="text-left  font-semibold px-4 py-2.5">Business</th>
+            <th className="text-left  font-semibold px-4 py-2.5 hidden md:table-cell">Type</th>
+            <th className="text-left  font-semibold px-4 py-2.5 hidden lg:table-cell">GST</th>
+            <th className="text-right font-semibold px-4 py-2.5">Outlets</th>
+            <th className="text-left  font-semibold px-4 py-2.5 hidden md:table-cell">Plan</th>
+            <th className="text-left  font-semibold px-4 py-2.5">Status</th>
+            <th className="text-right font-semibold px-4 py-2.5 w-[200px]">Actions</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-slate-100">
           {businesses.map(b => (
             <tr
               key={b.id}
               onClick={() => onOpen(b)}
               className={clsx(
                 'cursor-pointer hover:bg-slate-50 transition-colors',
-                b.isCluster && 'bg-indigo-50/40 hover:bg-indigo-50',
+                b.isCluster && 'bg-indigo-50/30 hover:bg-indigo-50/60',
               )}
-              title={b.isCluster ? 'Open cluster admin' : 'Open business'}
+              title={b.isCluster ? 'Open cluster admin' : 'Open business details'}
             >
-              <td className="font-semibold text-slate-900">
-                <div className="flex items-center gap-2">
+              <td className="px-4 py-3 align-top">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-slate-900">{b.name}</span>
                   {b.isCluster && (
                     <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">
                       <Network size={10} /> CLUSTER
                     </span>
                   )}
-                  <span>{b.name}</span>
                 </div>
                 {b.publicCode && (
                   <div className="font-mono text-[10px] text-slate-400 mt-0.5">{b.publicCode}</div>
                 )}
               </td>
-              <td className="text-slate-500 text-xs">{b.isCluster ? '—' : b.businessType.replace(/_/g, ' ')}</td>
-              <td className="font-mono text-xs text-slate-500">{b.gstNumber || '—'}</td>
-              <td className="text-center">{b._count?.outlets ?? 0}</td>
-              <td>
-                {b.subscription
-                  ? <span className="badge badge-blue">{b.subscription.plan.name}</span>
-                  : <span className="badge badge-slate">No plan</span>}
+              <td className="px-4 py-3 text-slate-600 text-xs hidden md:table-cell">
+                {b.isCluster ? '—' : b.businessType.replace(/_/g, ' ')}
               </td>
-              <td>
-                <span className={clsx('badge', b.status === 'ACTIVE' ? 'badge-green' : 'badge-red')}>
+              <td className="px-4 py-3 font-mono text-xs text-slate-500 hidden lg:table-cell">
+                {b.gstNumber || '—'}
+              </td>
+              <td className="px-4 py-3 text-right font-semibold text-slate-700 tabular-nums">
+                {b._count?.outlets ?? 0}
+              </td>
+              <td className="px-4 py-3 hidden md:table-cell">
+                {b.subscription
+                  ? <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{b.subscription.plan.name}</span>
+                  : <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">No plan</span>}
+              </td>
+              <td className="px-4 py-3">
+                <span className={clsx(
+                  'inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider',
+                  b.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700',
+                )}>
                   {b.status}
                 </span>
               </td>
-              <td>
-                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <td className="px-4 py-3">
+                <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                   <button
                     onClick={() => onToggle(b.id, b.status)}
                     className={clsx(
-                      'flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg transition-colors',
+                      'inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg transition-colors',
                       b.status === 'ACTIVE'
                         ? 'text-red-600 hover:bg-red-50'
                         : 'text-emerald-600 hover:bg-emerald-50',
@@ -496,7 +512,7 @@ function BusinessTable({ businesses, loading, onToggle, onOpen }: {
                     {b.status === 'ACTIVE' ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
                     {b.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
                   </button>
-                  <ChevronRight size={14} className="text-slate-300" />
+                  <ChevronRight size={14} className="text-slate-300 ml-1" />
                 </div>
               </td>
             </tr>
