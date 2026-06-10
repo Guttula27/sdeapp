@@ -90,6 +90,18 @@ jobs:
           npx cap sync android
 
       # ---------------------------------------------------------------
+      # Generate launcher icons + splash screens from the brand assets
+      # committed under mobile/android/resources/ (icon.png,
+      # icon-foreground.png, icon-background.png, splash.png). This
+      # replaces the default Capacitor "C" mark with the VEZEOR logo
+      # across every mipmap-* density and the splash drawable.
+      # Idempotent — safe to run on every CI invocation.
+      # ---------------------------------------------------------------
+      - name: Generate VEZEOR launcher icons + splash
+        working-directory: mobile/android
+        run: npx capacitor-assets generate --android
+
+      # ---------------------------------------------------------------
       # AndroidManifest.xml + MainActivity patches.
       #
       # Capacitor's freshly-generated manifest ships with only the

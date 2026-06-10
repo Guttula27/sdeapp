@@ -137,11 +137,9 @@ export default function AuthPage() {
           <ArrowLeft size={16} /> Back
         </button>
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-brand-500 to-brand-400 rounded-xl flex items-center justify-center shadow-lg">
-            <UtensilsCrossed size={18} className="text-white" />
-          </div>
+          <img src="/icon-192.png" alt="VEZEOR" className="w-10 h-10 object-contain" />
           <div>
-            <p className="text-white font-black text-lg leading-tight">PayNPik</p>
+            <p className="text-white font-black text-lg leading-tight">VEZEOR</p>
             <p className="text-slate-400 text-xs">
               {step === 'phone' ? 'Sign in with your phone' : 'Enter the OTP we just sent'}
             </p>

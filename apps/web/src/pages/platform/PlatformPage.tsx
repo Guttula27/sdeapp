@@ -191,7 +191,7 @@ export default function PlatformPage() {
     <div className="space-y-6">
       <div>
         <h1 className="page-title">Platform Overview</h1>
-        <p className="page-subtitle">All businesses and activity on PayNPik</p>
+        <p className="page-subtitle">All businesses and activity on VEZEOR</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

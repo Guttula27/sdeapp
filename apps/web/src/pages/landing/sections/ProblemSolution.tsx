@@ -34,7 +34,7 @@ export default function ProblemSolution() {
               <div className="w-9 h-9 rounded-xl flex items-center justify-center icon-gradient-red">
                 <AlertTriangle size={18} />
               </div>
-              <h3 className="text-lg font-bold text-slate-900">Without PayNPik</h3>
+              <h3 className="text-lg font-bold text-slate-900">Without VEZEOR</h3>
             </div>
             <ul className="space-y-3">
               {PROBLEMS.map((p) => (
@@ -51,7 +51,7 @@ export default function ProblemSolution() {
               <div className="w-9 h-9 rounded-xl flex items-center justify-center icon-gradient-green">
                 <CheckCircle2 size={18} />
               </div>
-              <h3 className="text-lg font-bold text-slate-900">With PayNPik</h3>
+              <h3 className="text-lg font-bold text-slate-900">With VEZEOR</h3>
             </div>
             <ul className="space-y-3">
               {SOLUTIONS.map((s) => (

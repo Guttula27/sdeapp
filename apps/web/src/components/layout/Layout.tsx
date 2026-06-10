@@ -366,11 +366,10 @@ export default function Layout() {
     <>
       {/* Logo */}
       <div className="flex items-center gap-3 px-5 h-16 border-b border-white/6 shrink-0">
-        <div className="w-8 h-8 rounded-xl shrink-0 flex items-center justify-center font-black text-white text-sm shadow-lg"
-          style={{ background: 'linear-gradient(135deg,#0B4245 0%,#073032 100%)' }}>P</div>
+        <img src="/logo.png" alt="VEZEOR" className="w-8 h-8 shrink-0 object-contain" />
         {!compact && (
           <div className="animate-fade-in overflow-hidden">
-            <p className="text-white font-bold text-sm tracking-tight leading-none">PayNPik</p>
+            <p className="text-white font-bold text-sm tracking-tight leading-none">VEZEOR</p>
             {badge.label && (
               <span className={`inline-flex items-center gap-1 mt-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${badge.bg}`}>
                 <span className={`w-1 h-1 rounded-full ${badge.dot}`} />

@@ -78,7 +78,7 @@ function HeroVisual() {
           <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
           <span className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
           <span className="w-2.5 h-2.5 rounded-full bg-green-400" />
-          <span className="ml-3 text-xs font-mono text-slate-400">paynpik.com/dashboard</span>
+          <span className="ml-3 text-xs font-mono text-slate-400">vezeor.com/dashboard</span>
         </div>
         <div className="p-5 bg-white">
           <div className="flex items-center justify-between mb-4">

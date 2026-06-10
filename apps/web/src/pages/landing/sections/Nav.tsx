@@ -29,13 +29,8 @@ export default function Nav() {
     >
       <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2.5">
-          <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-white text-sm shadow-md"
-            style={{ background: 'linear-gradient(135deg,#0B4245,#073032)' }}
-          >
-            P
-          </div>
-          <span className="font-black text-slate-900 text-lg tracking-tight">PayNPik</span>
+          <img src="/logo.png" alt="VEZEOR" className="w-9 h-9 object-contain" />
+          <span className="font-black text-slate-900 text-lg tracking-tight">VEZEOR</span>
         </Link>
 
         <nav className="hidden md:flex items-center gap-1">

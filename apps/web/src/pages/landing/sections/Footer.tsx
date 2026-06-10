@@ -38,16 +38,15 @@ export default function Footer() {
         <div className="grid lg:grid-cols-5 gap-10">
           <div className="lg:col-span-2">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-white text-sm shadow-md"
-                style={{ background: 'linear-gradient(135deg,#0B4245,#073032)' }}>P</div>
-              <span className="font-black text-slate-900 text-lg tracking-tight">PayNPik</span>
+              <img src="/logo.png" alt="VEZEOR" className="w-9 h-9 object-contain" />
+              <span className="font-black text-slate-900 text-lg tracking-tight">VEZEOR</span>
             </div>
             <p className="mt-4 text-sm text-slate-600 max-w-xs leading-relaxed">
               The all-in-one platform for modern restaurants. QR ordering, kitchen display,
               payments and analytics — on one screen.
             </p>
             <ul className="mt-6 space-y-2 text-sm text-slate-600">
-              <li className="flex items-center gap-2"><Mail size={14} className="text-slate-400" /> hello@paynpik.com</li>
+              <li className="flex items-center gap-2"><Mail size={14} className="text-slate-400" /> hello@vezeor.com</li>
               <li className="flex items-center gap-2"><Phone size={14} className="text-slate-400" /> +91 80 4567 8900</li>
               <li className="flex items-center gap-2"><MapPin size={14} className="text-slate-400" /> Bengaluru, India</li>
             </ul>
@@ -85,7 +84,7 @@ export default function Footer() {
         </div>
 
         <div className="mt-6 pt-6 border-t border-slate-100 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
-          <p className="text-xs text-slate-500">© {new Date().getFullYear()} PayNPik. All rights reserved.</p>
+          <p className="text-xs text-slate-500">© {new Date().getFullYear()} VEZEOR. All rights reserved.</p>
           <div className="flex items-center gap-4 text-xs">
             <a href="#" className="text-slate-500 hover:text-slate-700">Privacy</a>
             <a href="#" className="text-slate-500 hover:text-slate-700">Terms</a>

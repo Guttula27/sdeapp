@@ -9,13 +9,10 @@ node_modules/
 # To rebuild from scratch: `npx cap add android && npx cap sync android`
 android/
 
-# Resources for icon/splash generation. Replace with real 1024x1024
-# and 2732x2732 PNGs to brand the APK; the files themselves are
-# build-time artifacts we don't track.
-resources/icon.png
-resources/splash.png
-resources/icon-foreground.png
-resources/icon-background.png
+# Brand source images for icon/splash generation. CI runs
+# `npx capacitor-assets generate --android` against these to
+# fan out every mipmap-* density and the splash drawable, so
+# they must live in git.
 
 # Secrets — keystore + signing config never go in git
 *.keystore

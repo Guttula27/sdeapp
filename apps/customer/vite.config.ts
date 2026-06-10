@@ -12,8 +12,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       injectRegister: 'auto',
       manifest: {
-        name: 'PayNPik',
-        short_name: 'PayNPik',
+        name: 'VEZEOR',
+        short_name: 'VEZEOR',
         description: 'Order from your table — scan, choose, pay.',
         theme_color: '#0B4245',
         background_color: '#ffffff',
@@ -22,8 +22,8 @@ export default defineConfig({
         start_url: '/',
         scope: '/',
         icons: [
-          { src: '/icon-192.svg', sizes: '192x192', type: 'image/svg+xml', purpose: 'any maskable' },
-          { src: '/icon-512.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' },
+          { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+          { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
         ],
       },
       workbox: {

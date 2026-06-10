@@ -69,7 +69,7 @@ export default function CTA() {
         <div className="lg:col-span-2 text-white">
           <p className="text-xs font-bold uppercase tracking-[.18em] text-brand-300">Get started</p>
           <h2 className="mt-2 text-3xl md:text-4xl font-black tracking-tight leading-tight">
-            See PayNPik on<br />your menu, in 30 minutes.
+            See VEZEOR on<br />your menu, in 30 minutes.
           </h2>
           <p className="mt-4 text-slate-300 leading-relaxed">
             Tell us about your restaurant. Our team will set up a tailored demo with your menu
@@ -199,7 +199,7 @@ export default function CTA() {
               </button>
 
               <p className="text-[11px] text-slate-500 text-center">
-                By submitting, you agree to be contacted by PayNPik. We never share your info.
+                By submitting, you agree to be contacted by VEZEOR. We never share your info.
               </p>
             </form>
           )}

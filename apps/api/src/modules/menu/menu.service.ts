@@ -808,7 +808,14 @@ export class MenuService {
       include: { category: { select: { businessId: true } } },
     });
     if (!sub?.category?.businessId) throw new BadRequestException('Subcategory does not belong to a business template');
-    const item = await this.prisma.item.create({ data: { subcategoryId, ...dto } });
+    // bundleChildren is a join-table relation, not a scalar column — strip it
+    // off the payload and apply it via replaceBundleChildren after create,
+    // mirroring the outlet-level createItem path.
+    const { bundleChildren, ...itemData } = dto || {};
+    const item = await this.prisma.item.create({ data: { subcategoryId, ...itemData } });
+    if (Array.isArray(bundleChildren) && bundleChildren.length) {
+      await this.replaceBundleChildren(item.id, bundleChildren);
+    }
     await this.translations.upsertAll('Item', item.id, {
       name: item.name,
       description: item.description ?? undefined,

@@ -170,7 +170,7 @@ export default function MessagingPage() {
         <div className="card overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-100">
             <p className="text-sm font-bold text-slate-800">Platform Boilerplate</p>
-            <p className="text-[11px] text-slate-500">Pre-approved templates shipped by PayNPik. Clone to customise.</p>
+            <p className="text-[11px] text-slate-500">Pre-approved templates shipped by VEZEOR. Clone to customise.</p>
           </div>
           <ul className="divide-y divide-slate-100">
             {platformPool.map((t) => (
