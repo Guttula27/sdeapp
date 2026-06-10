@@ -68,6 +68,56 @@ export class ReportsController {
     return this.service.getHourlyOrders(outletId, parseDate(date) ?? new Date());
   }
 
+  // ── GST report (CGST/SGST/IGST + per-rate slab + daily totals). The
+  // output is the source of truth for filling out GSTR-1 — UI also
+  // exposes a CSV export from this same response.
+  @Get('gst')
+  gst(
+    @Query('outletId') outletId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    if (!outletId) throw new BadRequestException('outletId is required');
+    const r = defaultRange(from, to);
+    return this.service.getGstReport(outletId, r.from, r.to);
+  }
+
+  // ── Category-level sales: category → subcategory → quantity / revenue.
+  @Get('category-sales')
+  categorySales(
+    @Query('outletId') outletId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    if (!outletId) throw new BadRequestException('outletId is required');
+    const r = defaultRange(from, to);
+    return this.service.getCategorySalesReport(outletId, r.from, r.to);
+  }
+
+  // ── Top customers by spend + new vs. repeat + lifetime-spend buckets.
+  @Get('customers')
+  customers(
+    @Query('outletId') outletId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    if (!outletId) throw new BadRequestException('outletId is required');
+    const r = defaultRange(from, to);
+    return this.service.getCustomerAnalytics(outletId, r.from, r.to);
+  }
+
+  // ── Discount + coupon + reward redemption totals for the period.
+  @Get('discounts')
+  discounts(
+    @Query('outletId') outletId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    if (!outletId) throw new BadRequestException('outletId is required');
+    const r = defaultRange(from, to);
+    return this.service.getDiscountUtilization(outletId, r.from, r.to);
+  }
+
   // Platform-wide reports must not leak through to business/outlet/kitchen
   // tokens. A full responsibility-check layer isn't built yet; gate on
   // JWT scope (the seed defines VIEW_PLATFORM_REPORTS as platform-only).

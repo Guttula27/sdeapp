@@ -2,10 +2,35 @@ import { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
 import { useSelector } from 'react-redux';
 import { IndianRupee, ShoppingBag, TrendingUp, Percent, Calendar, ChefHat, Download, Banknote, Smartphone, Wallet, Users } from 'lucide-react';
+import clsx from 'clsx';
 import { RootState } from '../../store';
 import { useUserRole } from '../../hooks/useUserRole';
 import api from '../../services/api';
 import dayjs from 'dayjs';
+import { rangeFor, type PresetId } from '../../utils/dateRangePresets';
+import { downloadCsv, rowsToCsv } from '../../utils/csvExport';
+import GstTab from './tabs/GstTab';
+import CategoryTab from './tabs/CategoryTab';
+import CustomersTab from './tabs/CustomersTab';
+import DiscountsTab from './tabs/DiscountsTab';
+
+type TabId = 'overview' | 'gst' | 'category' | 'customers' | 'discounts';
+const TABS: Array<{ id: TabId; label: string }> = [
+  { id: 'overview',  label: 'Overview' },
+  { id: 'gst',       label: 'GST' },
+  { id: 'category',  label: 'Categories' },
+  { id: 'customers', label: 'Customers' },
+  { id: 'discounts', label: 'Discounts' },
+];
+
+const PRESETS: Array<{ id: PresetId; label: string }> = [
+  { id: 'today',     label: 'Today' },
+  { id: 'yesterday', label: 'Yesterday' },
+  { id: '7d',        label: '7d' },
+  { id: '30d',       label: '30d' },
+  { id: 'mtd',       label: 'MTD' },
+  { id: 'lastMonth', label: 'Last month' },
+];
 
 const PIE_COLORS = ['#0B4245','#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6'];
 
@@ -44,6 +69,13 @@ export default function ReportsPage() {
   const outletId = tier === 'business' ? selectedOutletId : (user?.outletId || 'demo-outlet');
   const [from, setFrom] = useState(dayjs().format('YYYY-MM-DD'));
   const [to, setTo]     = useState(dayjs().format('YYYY-MM-DD'));
+  const [tab, setTab]   = useState<TabId>('overview');
+  const setPreset = (id: PresetId) => {
+    const r = rangeFor(id);
+    if (!r) return;
+    setFrom(dayjs(r.from).format('YYYY-MM-DD'));
+    setTo(dayjs(r.to).format('YYYY-MM-DD'));
+  };
   const [hourly, setHourly]     = useState<any[]>([]);
   const [revenue, setRevenue]   = useState<any>(null);
   const [itemSales, setItemSales] = useState<any[]>([]);
@@ -69,7 +101,25 @@ export default function ReportsPage() {
 
   useEffect(() => { fetch(); }, [fetch]);
 
-  const preset = (days: number) => { setTo(dayjs().format('YYYY-MM-DD')); setFrom(dayjs().subtract(days - 1, 'day').format('YYYY-MM-DD')); };
+  // Overview-tab CSV: revenue summary + payment split + top items.
+  const exportOverviewCsv = () => {
+    if (!revenue) return;
+    const ps = revenue.paymentSplit ?? {};
+    const summary = [
+      { Field: 'Revenue',  Value: revenue.totalRevenue },
+      { Field: 'Orders served', Value: revenue.totalOrders },
+      { Field: 'Orders total',  Value: revenue.totalOrdersAll ?? revenue.totalOrders },
+      { Field: 'Customers',     Value: revenue.totalCustomers },
+      { Field: 'Avg order',     Value: revenue.avgOrderValue },
+      { Field: 'GST',           Value: revenue.totalTax },
+      { Field: 'Cash',     Value: ps.CASH?.amount ?? 0 },
+      { Field: 'UPI',      Value: ps.UPI?.amount  ?? 0 },
+      { Field: 'Card',     Value: ps.CARD?.amount ?? 0 },
+      { Field: 'Wallet',   Value: ps.WALLET?.amount ?? 0 },
+      { Field: 'NetBanking', Value: ps.NET_BANKING?.amount ?? 0 },
+    ];
+    downloadCsv(`overview-${from}-to-${to}.csv`, rowsToCsv(summary));
+  };
 
   const hourlyChart = hourly.map(h => ({ ...h, hour: `${String(h.hour).padStart(2,'0')}h` }));
 
@@ -81,7 +131,25 @@ export default function ReportsPage() {
           <h1 className="page-title">Reports & Analytics</h1>
           <p className="page-subtitle">{from === to ? dayjs(from).format('D MMM YYYY') : `${dayjs(from).format('D MMM')} – ${dayjs(to).format('D MMM YYYY')}`}</p>
         </div>
-        <button className="btn-secondary"><Download size={14} /> Export</button>
+        <button className="btn-secondary" onClick={exportOverviewCsv} disabled={!revenue || tab !== 'overview'}>
+          <Download size={14} /> Export (overview)
+        </button>
+      </div>
+
+      {/* Tabs */}
+      <div className="card p-1 inline-flex gap-1 flex-wrap">
+        {TABS.map((tx) => (
+          <button
+            key={tx.id}
+            onClick={() => setTab(tx.id)}
+            className={clsx(
+              'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all',
+              tab === tx.id ? 'bg-brand-500 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100',
+            )}
+          >
+            {tx.label}
+          </button>
+        ))}
       </div>
 
       {/* Outlet picker (business tier) */}
@@ -110,9 +178,11 @@ export default function ReportsPage() {
           <span className="text-slate-400 text-sm">to</span>
           <input type="date" value={to} min={from} max={dayjs().format('YYYY-MM-DD')} onChange={e => setTo(e.target.value)} className="input text-sm w-36" />
         </div>
-        <div className="flex gap-1.5">
-          {[{ l:'Today',d:1},{l:'7d',d:7},{l:'30d',d:30}].map(p => (
-            <button key={p.d} onClick={() => preset(p.d)} className="filter-pill filter-pill-inactive btn-sm">{p.l}</button>
+        <div className="flex gap-1.5 flex-wrap">
+          {PRESETS.map((p) => (
+            <button key={p.id} onClick={() => setPreset(p.id)} className="filter-pill filter-pill-inactive btn-sm">
+              {p.label}
+            </button>
           ))}
         </div>
         <button onClick={fetch} disabled={loading} className="btn-primary ml-auto">
@@ -120,6 +190,8 @@ export default function ReportsPage() {
         </button>
       </div>
 
+      {/* ── Overview tab (existing content) ──────────────────── */}
+      {tab === 'overview' && <>
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {[
@@ -272,6 +344,19 @@ export default function ReportsPage() {
           </div>
         </div>
       )}
+      </>}
+
+      {/* ── GST tab ──────────────────────────────────────────── */}
+      {tab === 'gst' && <GstTab outletId={outletId} from={from} to={to} />}
+
+      {/* ── Categories tab ──────────────────────────────────── */}
+      {tab === 'category' && <CategoryTab outletId={outletId} from={from} to={to} />}
+
+      {/* ── Customers tab ───────────────────────────────────── */}
+      {tab === 'customers' && <CustomersTab outletId={outletId} from={from} to={to} />}
+
+      {/* ── Discounts tab ───────────────────────────────────── */}
+      {tab === 'discounts' && <DiscountsTab outletId={outletId} from={from} to={to} />}
     </div>
   );
 }
