@@ -52,5 +52,7 @@ HMAC phone-lookup path that landed with the encryption work.
 **Steps:** Login → `POST /auth/logout` with token → call `/auth/me`.
 **Expected:** First call 200; second call 401.
 **Actual Result: [GAP / FAIL]** Before logout: 200. Logout call: 201 (`Logged out successfully`). After logout: **200 (Success)**.
+
 *Explanation:* The API uses stateless JWT validation. While the logout request successfully deletes the session record from the database, the passport strategy does not verify session presence or blacklist status. Therefore, the logged-out JWT remains valid statefully until expiry.
+
 
