@@ -1,13 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
+import toast from 'react-hot-toast';
 import {
   ShoppingBag, Clock, ChevronRight, ChefHat, CheckCircle2,
-  XCircle, Package2, RefreshCw, Flame, Bell, Star, X,
+  XCircle, Package2, RefreshCw, Flame, Bell, Star, X, Download,
 } from 'lucide-react';
 import api from '../services/api';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 import { useCustomerAlerts } from '../context/CustomerAlertsContext';
+import ThermalReceipt from '../components/ThermalReceipt';
+import { downloadReceiptPdf } from '../components/downloadReceiptPdf';
 
 const STATUS = {
   CREATED:         { label: 'Placed',          cls: 'bg-blue-100 text-blue-700',      icon: Clock },
@@ -62,6 +65,34 @@ export default function HomePage() {
   const { user } = useCustomerAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Receipt-download owns the full hydrated order momentarily so we can
+  // render a hidden ThermalReceipt and rasterise it. Cleared once the
+  // download has been triggered. `downloadingId` keeps the per-row
+  // spinner state without re-rendering the whole list.
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [pdfOrder, setPdfOrder] = useState<any>(null);
+  const pdfRef = useRef<HTMLDivElement>(null);
+
+  const handleDownloadReceipt = async (orderId: string) => {
+    if (downloadingId) return;
+    setDownloadingId(orderId);
+    try {
+      const { data } = await api.get(`/orders/${orderId}`);
+      setPdfOrder(data.data);
+      // Wait one frame so React commits the off-screen ThermalReceipt
+      // into the DOM before html2pdf reads it.
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      if (pdfRef.current) {
+        await downloadReceiptPdf(pdfRef.current, `Receipt-${data.data.orderNumber}`);
+      }
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Could not download receipt');
+    } finally {
+      setPdfOrder(null);
+      setDownloadingId(null);
+    }
+  };
 
   const fetch = async () => {
     setLoading(true);
@@ -174,6 +205,8 @@ export default function HomePage() {
                         active
                         compactGroup
                         onTrack={() => navigate(`/track/${o.id}`)}
+                        onDownload={() => handleDownloadReceipt(o.id)}
+                        downloading={downloadingId === o.id}
                       />
                     ))}
                   </div>
@@ -186,6 +219,8 @@ export default function HomePage() {
                     order={o}
                     active
                     onTrack={() => navigate(`/track/${o.id}`)}
+                    onDownload={() => handleDownloadReceipt(o.id)}
+                    downloading={downloadingId === o.id}
                     onPay={() => navigate('/pay', {
                       state: {
                         outletId: o.outlet.id,
@@ -207,6 +242,16 @@ export default function HomePage() {
             permanently dismissed for this session. */}
         <FeedbackPrompt orders={past} />
 
+        {/* Off-screen thermal receipt — populated on demand when the user
+            taps Download on a row; html2pdf reads it from the DOM and
+            rasterises into a PDF. Kept off-canvas (left: -10000) instead
+            of display:none so html2canvas can actually render it. */}
+        {pdfOrder && (
+          <div style={{ position: 'fixed', left: -10000, top: 0, pointerEvents: 'none' }} aria-hidden>
+            <ThermalReceipt ref={pdfRef} order={pdfOrder} />
+          </div>
+        )}
+
         {/* Past orders */}
         <section className="pb-4">
           <h2 className="text-sm font-bold text-slate-900 mb-2">Past Orders</h2>
@@ -221,7 +266,13 @@ export default function HomePage() {
           ) : (
             <div className="space-y-2">
               {past.map(o => (
-                <OrderCard key={o.id} order={o} onTrack={() => navigate(`/track/${o.id}`)} />
+                <OrderCard
+                  key={o.id}
+                  order={o}
+                  onTrack={() => navigate(`/track/${o.id}`)}
+                  onDownload={() => handleDownloadReceipt(o.id)}
+                  downloading={downloadingId === o.id}
+                />
               ))}
             </div>
           )}
@@ -231,7 +282,15 @@ export default function HomePage() {
   );
 }
 
-function OrderCard({ order, active, compactGroup, onTrack, onPay }: { order: Order; active?: boolean; compactGroup?: boolean; onTrack: () => void; onPay?: () => void }) {
+function OrderCard({ order, active, compactGroup, onTrack, onPay, onDownload, downloading }: {
+  order: Order;
+  active?: boolean;
+  compactGroup?: boolean;
+  onTrack: () => void;
+  onPay?: () => void;
+  onDownload?: () => void;
+  downloading?: boolean;
+}) {
   const s = STATUS[order.status] || STATUS.SERVED;
   const items = order.items.map(i => `${i.item.name}${i.quantity > 1 ? ` ×${i.quantity}` : ''}`).join(', ');
   // Blink while there's a fresh unread "ready"-class alert for this
@@ -270,9 +329,24 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay }: { order: Ord
         <p className="text-[11px] text-slate-500 line-clamp-1">{items}</p>
         <div className="mt-2 flex items-center justify-between gap-2">
           <span className="text-sm font-black text-slate-900">₹{Number(order.totalAmount).toFixed(0)}</span>
-          <button onClick={onTrack} className="text-[11px] font-bold text-brand-600 inline-flex items-center gap-1 hover:text-brand-700">
-            Track <ChevronRight size={11} />
-          </button>
+          <div className="flex items-center gap-2">
+            {onDownload && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onDownload(); }}
+                disabled={downloading}
+                className="text-[11px] font-bold text-slate-500 hover:text-brand-600 inline-flex items-center gap-1 disabled:opacity-50"
+                title="Download receipt"
+              >
+                {downloading
+                  ? <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  : <Download size={11} />}
+                Receipt
+              </button>
+            )}
+            <button onClick={onTrack} className="text-[11px] font-bold text-brand-600 inline-flex items-center gap-1 hover:text-brand-700">
+              Track <ChevronRight size={11} />
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -308,20 +382,35 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay }: { order: Ord
           </span>
         </div>
         <p className="text-xs text-slate-500 line-clamp-1 mb-3">{items}</p>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <p className="text-base font-black text-slate-900">₹{Number(order.totalAmount).toFixed(0)}</p>
-          {billReady && onPay ? (
-            <button onClick={onPay}
-              className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white transition-colors">
-              Pay now <ChevronRight size={12} />
-            </button>
-          ) : (
-            <button onClick={onTrack}
-              className={clsx('flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl transition-colors',
-                active ? 'bg-brand-500 text-white hover:bg-brand-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>
-              {active ? 'Track' : 'View'} <ChevronRight size={12} />
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {onDownload && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onDownload(); }}
+                disabled={downloading}
+                className="flex items-center gap-1 text-xs font-bold px-2.5 py-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors disabled:opacity-50"
+                title="Download receipt"
+              >
+                {downloading
+                  ? <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  : <Download size={12} />}
+                Receipt
+              </button>
+            )}
+            {billReady && onPay ? (
+              <button onClick={onPay}
+                className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white transition-colors">
+                Pay now <ChevronRight size={12} />
+              </button>
+            ) : (
+              <button onClick={onTrack}
+                className={clsx('flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl transition-colors',
+                  active ? 'bg-brand-500 text-white hover:bg-brand-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>
+                {active ? 'Track' : 'View'} <ChevronRight size={12} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

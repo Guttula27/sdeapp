@@ -426,6 +426,10 @@ export default function PlaceOrderPage() {
       try { await maybeAutoPrintReceipt(data.data); }
       catch (e: any) { toast.error(`Receipt print failed: ${e?.message ?? e}`); }
       setCart([]);
+      // navigate() can unmount before the persist-cart useEffect fires
+      // with the empty array, so wipe the localStorage row directly to
+      // guarantee the next Place Order visit starts clean.
+      try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
       setCustomerPhone('');
       setIsParcel(false);
       setTableTypeId('');
@@ -444,6 +448,7 @@ export default function PlaceOrderPage() {
       if (isNetwork) {
         await placeOfflineOrder(provisional, isTableOrder, body, mode);
         setCart([]);
+        try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
         setCustomerPhone('');
         setIsParcel(false);
         setTableTypeId('');
@@ -574,6 +579,7 @@ export default function PlaceOrderPage() {
         toast.success('Order placed — bill stays open');
       }
       setCart([]);
+      try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
       await refreshOpenOrder();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to place order');
@@ -614,6 +620,7 @@ export default function PlaceOrderPage() {
       setOpenOrder(null);
       setBillingState('idle');
       setCart([]);
+      try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
       setTableTypeId('');
       setTableId('');
       navigate('/orders');

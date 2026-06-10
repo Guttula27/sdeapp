@@ -34,10 +34,14 @@ interface CartItem {
 }
 
 export default function OrderPage() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const navigate  = useNavigate();
   const outletId  = params.get('outlet') || '';
   const tableId   = params.get('table');
+  // QR codes for individual items deeplink here with ?item=<id>. We pop the
+  // matching item's detail modal on first menu load, then strip the param
+  // so the modal doesn't reopen if the user closes it and navigates around.
+  const deeplinkItemId = params.get('item');
   const { user, isLoggedIn } = useCustomerAuth();
 
   const [menu, setMenu]           = useState<any[]>([]);
@@ -261,6 +265,25 @@ export default function OrderPage() {
     const cat = menu.find(c => c.id === activeCategory);
     if (cat?.subcategories?.length) setActiveSub(cat.subcategories[0].id);
   }, [activeCategory, menu]);
+
+  // Item QR deeplink: once the menu has loaded, find the requested item
+  // and pop the detail sheet. Then drop the param so a back-nav or sheet
+  // close doesn't re-open it.
+  useEffect(() => {
+    if (!deeplinkItemId || !menu.length) return;
+    for (const cat of menu) {
+      for (const sub of cat.subcategories || []) {
+        const found = (sub.items || []).find((i: any) => i.id === deeplinkItemId);
+        if (found) {
+          setDetailItem(found);
+          const next = new URLSearchParams(params);
+          next.delete('item');
+          setParams(next, { replace: true });
+          return;
+        }
+      }
+    }
+  }, [deeplinkItemId, menu]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist cart across navigation (Pay page → back)
   useEffect(() => {

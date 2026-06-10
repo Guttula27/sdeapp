@@ -1370,11 +1370,11 @@ export default function MenuPage() {
                               </div>
                               {!isReadOnly && (
                                 <div className="flex items-center gap-1 shrink-0">
-                                  {customerTags.length > 0 && (
+                                  {(customerTags.length > 0 || tableTypesList.length > 0 || (item.variants?.length ?? 0) > 0) && (
                                     <button
                                       onClick={() => openTagPrices(item)}
                                       className="btn-ghost p-1.5 text-violet-500 hover:bg-violet-50"
-                                      title="Tag prices"
+                                      title="Per-tag / section / variant pricing"
                                     >
                                       <IndianRupee size={13} />
                                     </button>

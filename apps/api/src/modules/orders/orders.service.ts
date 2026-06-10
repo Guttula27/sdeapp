@@ -140,7 +140,7 @@ export class OrdersService {
 
     const items = await this.resolveOrderItems(
       expanded.map((e) => e.dto) as any,
-      gstOn ? { viewerTagId, tableTypeId, outletDefaultPct } : null,
+      { viewerTagId, tableTypeId, gstEnabled: gstOn, outletDefaultPct },
     );
 
     // Override prices for bundle child rows so the bundle's fixed price wins
@@ -1241,8 +1241,18 @@ export class OrdersService {
 
   private async resolveOrderItems(
     items: CreateOrderDto['items'],
-    gstCtx: { viewerTagId: string | null; tableTypeId: string | null; outletDefaultPct: number } | null,
+    ctx: {
+      viewerTagId: string | null;
+      tableTypeId: string | null;
+      // Outlet GST master toggle. When false, the helper skips GST rate
+      // resolution entirely but still applies price overrides.
+      gstEnabled: boolean;
+      outletDefaultPct: number;
+    },
   ) {
+    // Pricing context is independent of GST: a tagged customer's tag price
+    // must apply even when the outlet has GST disabled.
+    const { viewerTagId, tableTypeId, gstEnabled, outletDefaultPct } = ctx;
     return Promise.all(
       items.map(async (i) => {
         const item = await this.prisma.item.findUnique({
@@ -1252,11 +1262,11 @@ export class OrdersService {
             // OrderItem — keeps historical receipt grouping stable even if
             // the category is later moved to a different menu.
             subcategory: { select: { category: { select: { menuId: true } } } },
-            customerTagPrices: gstCtx?.viewerTagId
-              ? { where: { customerTagId: gstCtx.viewerTagId } }
+            customerTagPrices: viewerTagId
+              ? { where: { customerTagId: viewerTagId } }
               : false,
-            tableTypePrices: gstCtx?.tableTypeId
-              ? { where: { tableTypeId: gstCtx.tableTypeId } }
+            tableTypePrices: tableTypeId
+              ? { where: { tableTypeId: tableTypeId } }
               : false,
           },
         });
@@ -1282,25 +1292,36 @@ export class OrdersService {
           if (variant) unitPrice = Number(variant.price);
         }
 
-        // Resolve GST rate: table-type > customer-tag > item default > outlet fallback.
-        // Each rung also overrides price the same way (in pickItemPrice for menu);
-        // here we only resolve the rate to capture for the line.
+        // Price overrides (always applied — independent of GST). Precedence
+        // mirrors the customer-facing menu: CustomerTag > TableType > variant
+        // > basePrice. Without this, a tagged customer would see the tag
+        // price in their cart but be billed the base price.
+        const ttPrice = viewerTagId || tableTypeId
+          ? (item as any).tableTypePrices?.find(
+              (p: any) =>
+                p.tableTypeId === tableTypeId &&
+                (i.variantId ? p.variantId === i.variantId : !p.variantId),
+            )
+          : null;
+        const ctPrice = viewerTagId
+          ? (item as any).customerTagPrices?.find(
+              (p: any) =>
+                p.customerTagId === viewerTagId &&
+                (i.variantId ? p.variantId === i.variantId : !p.variantId),
+            )
+          : null;
+        if (ctPrice?.price != null) unitPrice = Number(ctPrice.price);
+        else if (ttPrice?.price != null) unitPrice = Number(ttPrice.price);
+
+        // GST rate precedence (only when the outlet has GST enabled):
+        // TableType > CustomerTag > item default > outlet fallback. Tax
+        // rules typically follow the dine-in section, not the customer.
         let gstRate = 0;
-        if (gstCtx) {
-          const ttPrice = (item as any).tableTypePrices?.find(
-            (p: any) =>
-              p.tableTypeId === gstCtx.tableTypeId &&
-              (i.variantId ? p.variantId === i.variantId : !p.variantId),
-          );
-          const ctPrice = (item as any).customerTagPrices?.find(
-            (p: any) =>
-              p.customerTagId === gstCtx.viewerTagId &&
-              (i.variantId ? p.variantId === i.variantId : !p.variantId),
-          );
+        if (gstEnabled) {
           if (ttPrice?.gstRate != null) gstRate = Number(ttPrice.gstRate);
           else if (ctPrice?.gstRate != null) gstRate = Number(ctPrice.gstRate);
           else if (item.gstRate != null) gstRate = Number(item.gstRate);
-          else gstRate = gstCtx.outletDefaultPct;
+          else gstRate = outletDefaultPct;
         }
 
         // Toppings: validate against item's available toppings, sum the price add,
@@ -1585,7 +1606,7 @@ export class OrdersService {
 
     const newItems = await this.resolveOrderItems(
       dto.items as any,
-      gstOn ? { viewerTagId, tableTypeId, outletDefaultPct } : null,
+      { viewerTagId, tableTypeId, gstEnabled: gstOn, outletDefaultPct },
     );
 
     // Persist new items, then recompute totals across every line on the order.
