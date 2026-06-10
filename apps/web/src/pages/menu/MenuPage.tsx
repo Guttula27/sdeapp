@@ -140,6 +140,10 @@ export default function MenuPage() {
   };
   const [menus, setMenus] = useState<MenuRow[]>([]);
   const [multipleMenusEnabled, setMultipleMenusEnabled] = useState(false);
+  // Business identity for the page header — populated alongside the menu
+  // fetch so the header carries the brand context (logo + name) instead of
+  // a generic "Menu Management" title.
+  const [business, setBusiness] = useState<{ name?: string; logoUrl?: string | null } | null>(null);
   const [activeMenuId, setActiveMenuId] = useState<string>('');
   const [menuModal, setMenuModal] = useState<{ open: boolean; editing?: MenuRow }>({ open: false });
   const [timingsModal, setTimingsModal] = useState<{ open: boolean; menu?: MenuRow }>({ open: false });
@@ -226,7 +230,11 @@ export default function MenuPage() {
         ]);
         setCategories(menuRes.data.data);
         setCustomerTags([]); setOutletToppings([]); setTableTypesList([]);
-        if (bizRes) setMultipleMenusEnabled(!!bizRes.data.data?.multipleMenusEnabled);
+        if (bizRes) {
+          const b = bizRes.data.data || {};
+          setMultipleMenusEnabled(!!b.multipleMenusEnabled);
+          setBusiness({ name: b.name, logoUrl: b.logoUrl });
+        }
         const list: MenuRow[] = menusRes?.data?.data || [];
         setMenus(list);
         // Land on the previously-selected menu if it's still present,
@@ -967,15 +975,41 @@ export default function MenuPage() {
 
   return (
     <div className="space-y-5">
-      {/* Header */}
+      {/* Header — brand identity (business or outlet) leads, with the
+          subtitle calling out scope + counts. Falls back to a plain title
+          when the upload hasn't been done yet. */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="page-title">{isTemplate ? 'Business Menu (Template)' : 'Menu Management'}</h1>
-          <p className="page-subtitle">
-            {isTemplate
-              ? `${categories.length} categories · ${totalItems} items — outlets can import from this template`
-              : `${categories.length} categories · ${totalItems} items`}
-          </p>
+        <div className="flex items-center gap-3 min-w-0">
+          {(() => {
+            const brandName = isTemplate
+              ? (business?.name || 'Business Menu')
+              : (currentOutlet?.name || 'Menu');
+            const brandLogo = isTemplate ? business?.logoUrl : currentOutlet?.logoUrl;
+            const initial = (brandName || '?').charAt(0).toUpperCase();
+            return brandLogo ? (
+              <img
+                src={brandLogo}
+                alt={brandName}
+                className="w-12 h-12 rounded-2xl object-cover border border-slate-200 shrink-0"
+              />
+            ) : (
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-brand-600 to-brand-500 text-white font-black text-lg flex items-center justify-center shrink-0">
+                {initial}
+              </div>
+            );
+          })()}
+          <div className="min-w-0">
+            <h1 className="page-title truncate">
+              {isTemplate
+                ? (business?.name || 'Business Menu (Template)')
+                : (currentOutlet?.name || 'Menu Management')}
+            </h1>
+            <p className="page-subtitle">
+              {isTemplate
+                ? `Master template · ${categories.length} categories · ${totalItems} items — outlets import from here`
+                : `Menu management · ${categories.length} categories · ${totalItems} items`}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {!isTemplate && canSwitchOutlet && isMultiOutlet && (

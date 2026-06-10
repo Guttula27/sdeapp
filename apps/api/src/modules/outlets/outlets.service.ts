@@ -274,11 +274,15 @@ export class OutletsService {
     const outlet = await this.prisma.outlet.findUnique({
       where: { id: outletId },
       select: {
-        id: true, isActive: true, name: true, outletType: true, hours: true,
+        id: true, isActive: true, name: true, logoUrl: true, outletType: true, hours: true,
         // razorpayLinkedAccountId selected only to derive razorpayEnabled
         // (a boolean) below — we never echo the actual LA id to the
         // customer PWA; that's an internal Razorpay reference.
         razorpayLinkedAccountId: true,
+        // Business name + logo travel alongside so the customer menu
+        // header can show the brand identity (logo + name) without an
+        // extra round-trip to /businesses/:id.
+        business: { select: { name: true, logoUrl: true } },
         clusterMembership: {
           select: {
             clusterBusiness: { select: { id: true, publicCode: true, name: true } },
@@ -289,6 +293,10 @@ export class OutletsService {
     if (!outlet) throw new NotFoundException('Outlet not found');
 
     const base = {
+      outletName: outlet.name,
+      outletLogoUrl: outlet.logoUrl,
+      businessName: outlet.business?.name ?? null,
+      businessLogoUrl: outlet.business?.logoUrl ?? null,
       outletType: outlet.outletType,
       // Razorpay routing is enabled for this outlet iff a Linked Account
       // is configured. The customer PWA uses this to hide the Razorpay

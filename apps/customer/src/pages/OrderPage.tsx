@@ -45,7 +45,13 @@ export default function OrderPage() {
   const [openStatus, setOpenStatus] = useState<{ isOpen: boolean; reason: string | null } | null>(null);
   // Outlet meta drives whether we route to /pay (prepaid) or use the open-tab
   // postpaid flow inline. Loaded once on mount.
-  const [outletMeta, setOutletMeta] = useState<{ outletType?: string } | null>(null);
+  const [outletMeta, setOutletMeta] = useState<{
+    outletType?: string;
+    outletName?: string;
+    outletLogoUrl?: string | null;
+    businessName?: string | null;
+    businessLogoUrl?: string | null;
+  } | null>(null);
   // The open postpaid order on this table — items already submitted, locked
   // from edits, waiting for Bill Now.
   const [openOrder, setOpenOrder] = useState<any | null>(null);
@@ -146,10 +152,18 @@ export default function OrderPage() {
         setMenuCachedAt(menuResult.cachedAt);
         if (statusRes) {
           setOpenStatus(statusRes.data.data);
-          // open-status now carries outletType so we don't need an authed
-          // /outlets/:id call to know whether this is a postpaid outlet.
-          if (statusRes.data.data?.outletType) {
-            setOutletMeta({ outletType: statusRes.data.data.outletType });
+          // open-status carries outletType (gates postpaid flow) plus the
+          // outlet+business name/logo for the sticky brand header. No
+          // separate /outlets/:id call needed.
+          const d = statusRes.data.data || {};
+          if (d.outletType || d.outletName) {
+            setOutletMeta({
+              outletType: d.outletType,
+              outletName: d.outletName,
+              outletLogoUrl: d.outletLogoUrl,
+              businessName: d.businessName,
+              businessLogoUrl: d.businessLogoUrl,
+            });
           }
         }
         // Build the menu-tab list. Filter to enabled menus that actually
@@ -524,21 +538,40 @@ export default function OrderPage() {
       <div className={clsx('bg-white sticky z-20 shadow-sm', isPostpaidTable && openOrder ? 'top-[52px]' : 'top-0')}>
         {/* Top bar */}
         <div className="px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <button
               onClick={() => {
                 if (cart.length > 0 && !window.confirm('Leave and clear cart?')) return;
                 navigate('/');
               }}
-              className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 shrink-0"
             >
               <LogOut size={17} />
             </button>
-            <div>
-              <p className="font-bold text-slate-900 text-base leading-tight">Menu</p>
-              {tableId && (
-                <p className="text-xs text-slate-400">Table {tableId.replace('table-', 'T')}</p>
-              )}
+            {/* Outlet logo (or business logo as fallback) shown alongside the
+                outlet name so the customer is anchored in the brand context.
+                Falls back to a brand-tinted tile with the initial when no
+                logo has been uploaded. */}
+            {(outletMeta?.outletLogoUrl || outletMeta?.businessLogoUrl) ? (
+              <img
+                src={outletMeta.outletLogoUrl || outletMeta.businessLogoUrl || ''}
+                alt={outletMeta?.outletName || ''}
+                className="w-9 h-9 rounded-xl object-cover shrink-0 border border-slate-200"
+              />
+            ) : outletMeta?.outletName ? (
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-brand-400 text-white font-black text-sm flex items-center justify-center shrink-0">
+                {outletMeta.outletName.charAt(0).toUpperCase()}
+              </div>
+            ) : null}
+            <div className="min-w-0">
+              <p className="font-bold text-slate-900 text-sm leading-tight truncate">
+                {outletMeta?.outletName || 'Menu'}
+              </p>
+              <p className="text-[11px] text-slate-400 truncate">
+                {outletMeta?.businessName && <span>{outletMeta.businessName}</span>}
+                {outletMeta?.businessName && tableId && <span> · </span>}
+                {tableId && <span>Table {tableId.replace('table-', 'T')}</span>}
+              </p>
             </div>
           </div>
 
