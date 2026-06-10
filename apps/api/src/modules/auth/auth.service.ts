@@ -89,7 +89,12 @@ export class AuthService {
       },
     });
 
-    const { passwordHash, ...safeUser } = user;
+    // Strip internal encryption columns too — `phoneHash` would let
+    // a client reverse-lookup a phone by brute-forcing HMACs, and
+    // `phoneEnc` leaks the ciphertext format. The client only needs
+    // the decrypted `phone` field for display.
+    const { passwordHash, phoneEnc, phoneHash, ...safeUser } = user as any;
+    void passwordHash; void phoneEnc; void phoneHash; // strip-only
     const tokens = this.generateTokens(user.id, user.phone);
     return { user: safeUser, ...tokens };
   }

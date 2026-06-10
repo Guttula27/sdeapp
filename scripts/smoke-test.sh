@@ -67,7 +67,7 @@ if [ -z "${STAFF_PHONE:-}" ] || [ -z "${STAFF_PASS:-}" ]; then
 else
   body=$(printf '{"phone":"%s","password":"%s"}' "$STAFF_PHONE" "$STAFF_PASS")
   status=$(http POST /api/v1/auth/login "$body")
-  if [ "$status" = "200" ]; then
+  if [ "$status" = "200" ] || [ "$status" = "201" ]; then
     TOKEN=$(grep -o '"accessToken":"[^"]*"' /tmp/smoke.body | head -1 | sed 's/.*:"//; s/"$//')
     if [ -n "$TOKEN" ]; then
       ok "staff login succeeded (phone HMAC lookup works)"
@@ -130,7 +130,8 @@ fi
 echo "── Write tests (opt-in via --write) ──"
 if [ "$WRITE" = "1" ] && [ -n "$TOKEN" ]; then
   testphone="99$(date +%s | tail -c 8)"
-  body=$(printf '{"name":"smoke","phone":"%s"}' "$testphone")
+  # OTP request DTO is `{ phone }` only — no `name` (verify-otp takes a name).
+  body=$(printf '{"phone":"%s"}' "$testphone")
   status=$(http POST /api/v1/auth/customer/request-otp "$body")
   if [ "$status" = "200" ] || [ "$status" = "201" ]; then
     ok "customer OTP request succeeded for new phone (encryption write path works)"
