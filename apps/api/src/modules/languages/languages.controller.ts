@@ -39,6 +39,17 @@ export class LanguagesController {
     return this.service.update(user, code, dto);
   }
 
+  // Admin-triggered re-run of the backfill — used when an earlier
+  // create-time backfill couldn't reach the translation provider
+  // (e.g. a Lingva outage) or when new entities have piled up since
+  // the language was added.
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Post(':code/regenerate')
+  regenerate(@CurrentUser() user: any, @Param('code') code: string) {
+    return this.service.regenerate(user, code);
+  }
+
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @Delete(':code')

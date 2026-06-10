@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { Plus, Languages as LangIcon, Trash2, Lock } from 'lucide-react';
+import { Plus, Languages as LangIcon, Trash2, Lock, RefreshCw } from 'lucide-react';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
@@ -59,10 +59,25 @@ export default function LanguagesPage() {
       });
       setLanguages((ls) => [...ls, data.data]);
       setModal(false);
-      toast.success('Language added');
+      toast.success(
+        'Language added — translations are being generated in the background. Refresh in a minute.',
+        { duration: 6000 },
+      );
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to add language');
     } finally { setSaving(false); }
+  };
+
+  const regenerate = async (lang: Language) => {
+    try {
+      await api.post(`/languages/${lang.code}/regenerate`);
+      toast.success(
+        `Regenerating ${lang.name} translations — check API logs for progress.`,
+        { duration: 6000 },
+      );
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Failed to start regeneration');
+    }
   };
 
   const remove = async () => {
@@ -133,12 +148,22 @@ export default function LanguagesPage() {
                         <Lock size={10} /> source
                       </span>
                     ) : (
-                      <button
-                        onClick={() => setDeleteTarget(l)}
-                        className="inline-flex items-center gap-1 text-xs text-red-600 hover:bg-red-50 px-2 py-1 rounded-md"
-                      >
-                        <Trash2 size={12} /> {t('common.delete')}
-                      </button>
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          onClick={() => regenerate(l)}
+                          disabled={!l.isEnabled}
+                          className="inline-flex items-center gap-1 text-xs text-brand-600 hover:bg-brand-50 px-2 py-1 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                          title={l.isEnabled ? 'Re-run translation backfill for every existing entity' : 'Enable the language first'}
+                        >
+                          <RefreshCw size={12} /> Regenerate
+                        </button>
+                        <button
+                          onClick={() => setDeleteTarget(l)}
+                          className="inline-flex items-center gap-1 text-xs text-red-600 hover:bg-red-50 px-2 py-1 rounded-md"
+                        >
+                          <Trash2 size={12} /> {t('common.delete')}
+                        </button>
+                      </div>
                     )}
                   </td>
                 </tr>
