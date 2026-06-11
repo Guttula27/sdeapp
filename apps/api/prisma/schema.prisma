@@ -59,6 +59,11 @@ enum OrderItemStatus {
   PENDING
   PREPARING
   READY
+  // Parcel-only intermediate: kitchen finished a dish (READY) and the
+  // parcel desk has boxed it. Once every live item is PACKED the order
+  // auto-rolls to READY_FOR_PICKUP and the customer is notified.
+  // Non-parcel orders skip this state — items go READY → SERVED.
+  PACKED
   SERVED
   CANCELLED
 }

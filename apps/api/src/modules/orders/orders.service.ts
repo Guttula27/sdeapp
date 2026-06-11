@@ -1067,6 +1067,13 @@ export class OrdersService {
 
     this.validateItemTransition(item.status, status);
 
+    // PACKED only makes sense on a parcel-lane order — non-parcel paths
+    // never need an intermediate packed step (table-service runners go
+    // READY → SERVED, self-service goes READY → SERVED on release).
+    if (status === OrderItemStatus.PACKED && !item.order.isParcel) {
+      throw new BadRequestException('PACKED only applies to parcel orders');
+    }
+
     await this.prisma.orderItem.update({
       where: { id: orderItemId },
       data: { status },
@@ -1110,32 +1117,35 @@ export class OrdersService {
       });
     }
 
-    // Fan-out the service-desk "kitchen done" nudge whenever the rollup
-    // pushes the order onto the lane the service desk owns: OUT_FOR_SERVICE
-    // for self-service (release lane) or READY for table-service (pickup
-    // lane). The same status transitions hit a different alert kind so
-    // the UI can lane-route them.
-    if (updated && rolledUp) {
+    // Fan-out the service-desk / parcel-desk nudge whenever *any* item
+    // transitions to READY — the desk's queue treats orders with at
+    // least one ready item as actionable so partial-ready orders get
+    // released the moment the first dish lands, not only after the
+    // whole order rolls up. Lane shape (self-service release vs
+    // table-service pickup vs parcel pack) is derived from the order.
+    if (
+      updated
+      && status === OrderItemStatus.READY
+      && item.status !== OrderItemStatus.READY
+    ) {
       const shape = this.flowShape(
         updated.outlet?.outletType,
         updated.tableId,
         updated.isParcel,
       );
-      if (rolledUp === OrderStatus.OUT_FOR_SERVICE && shape === 'self-service') {
+      if (shape === 'self-service') {
         this.ordersGateway.emitServiceDeskAlert(updated.outletId, {
           kind: 'release',
           orderId: updated.id,
           orderNumber: updated.orderNumber,
         });
-      } else if (rolledUp === OrderStatus.READY && shape === 'table-service') {
+      } else if (shape === 'table-service') {
         this.ordersGateway.emitServiceDeskAlert(updated.outletId, {
           kind: 'pickup',
           orderId: updated.id,
           orderNumber: updated.orderNumber,
         });
-      } else if (rolledUp === OrderStatus.READY && shape === 'parcel') {
-        // Parcel orders rolling up from item-status updates → parcel
-        // desk gets the "ready to pack" nudge.
+      } else if (shape === 'parcel') {
         this.ordersGateway.emitParcelDeskAlert(updated.outletId, {
           kind: 'pack',
           orderId: updated.id,
@@ -1179,6 +1189,41 @@ export class OrdersService {
         }).catch(() => {});
       }
     }
+
+    // Parcel: when the rollup advances the order to READY_FOR_PICKUP
+    // (because every live item is PACKED), notify the customer that
+    // the parcel is ready to collect. Same dispatcher template that
+    // fires from the order-level READY_FOR_PICKUP transition in
+    // updateStatus() — covers both paths consistently.
+    if (
+      updated
+      && rolledUp === OrderStatus.READY_FOR_PICKUP
+      && updated.customerId
+    ) {
+      const outletForBiz = await this.prisma.outlet.findUnique({
+        where: { id: updated.outletId },
+        select: { name: true, businessId: true },
+      });
+      this.dispatcher.fire('PICKUP_READY', {
+        customerId: updated.customerId,
+        customerName: updated.customer?.name,
+        customerPhone: updated.customer?.phone,
+        businessId: outletForBiz?.businessId ?? null,
+        outletId: updated.outletId,
+        outletName: outletForBiz?.name,
+        orderId: updated.id,
+        orderNumber: updated.orderNumber,
+      }).catch(() => {});
+
+      // Parcel desk should also hear about it (lane label changes from
+      // pack → handover for this order).
+      this.ordersGateway.emitParcelDeskAlert(updated.outletId, {
+        kind: 'handover',
+        orderId: updated.id,
+        orderNumber: updated.orderNumber,
+      });
+    }
+
     return { order: updated, rolledUp };
   }
 
@@ -1189,7 +1234,13 @@ export class OrdersService {
       PENDING_VERIFICATION: [OrderItemStatus.PENDING, OrderItemStatus.CANCELLED],
       PENDING:   [OrderItemStatus.PREPARING, OrderItemStatus.CANCELLED],
       PREPARING: [OrderItemStatus.READY, OrderItemStatus.CANCELLED],
-      READY:     [OrderItemStatus.SERVED, OrderItemStatus.CANCELLED],
+      // READY → PACKED on parcel lanes (parcel desk boxes a dish), or
+      // READY → SERVED on table-service / self-service (runner serves /
+      // counter releases). The lane gate is enforced server-side in
+      // updateItemStatus by checking the order's isParcel flag before
+      // accepting PACKED.
+      READY:     [OrderItemStatus.PACKED, OrderItemStatus.SERVED, OrderItemStatus.CANCELLED],
+      PACKED:    [OrderItemStatus.SERVED, OrderItemStatus.CANCELLED],
       SERVED:    [],
       CANCELLED: [],
     };
@@ -1253,6 +1304,34 @@ export class OrdersService {
         },
       });
       return OrderStatus.SERVED;
+    }
+
+    // Parcel-only: when every live item is PACKED (or already SERVED —
+    // counts the same here), the order is ready for the customer to
+    // collect. Advance to READY_FOR_PICKUP regardless of where the
+    // order is currently parked; the post-rollup hook fires the
+    // PICKUP_READY notification so the customer knows to swing by.
+    if (
+      order.isParcel
+      && order.status !== OrderStatus.READY_FOR_PICKUP
+      && live.every((i) =>
+        i.status === OrderItemStatus.PACKED || i.status === OrderItemStatus.SERVED,
+      )
+    ) {
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: {
+          status: OrderStatus.READY_FOR_PICKUP,
+          statusHistory: {
+            create: {
+              status: OrderStatus.READY_FOR_PICKUP,
+              changedBy: userId,
+              notes: 'Auto-rolled up — every parcel item packed',
+            },
+          },
+        },
+      });
+      return OrderStatus.READY_FOR_PICKUP;
     }
 
     // Below here we drive the early-lane rollup (CREATED → QUEUED →
@@ -1892,9 +1971,26 @@ export class OrdersService {
       table:    { select: { id: true, number: true, sectionId: true } },
       customer: { select: { id: true, name: true, phone: true } },
     };
+    // Pack lane = any non-terminal parcel order with at least one item
+    // the desk can still action (READY = blink-to-pack, PACKED = packed
+    // but waiting for siblings). Once every live item is PACKED, the
+    // rollup advances the order to READY_FOR_PICKUP and it drops off
+    // this lane into Handover.
+    const packableItemStatuses: OrderItemStatus[] = [
+      OrderItemStatus.READY,
+      OrderItemStatus.PACKED,
+    ];
+    const nonTerminalOrderStatuses: OrderStatus[] = [
+      OrderStatus.CREATED, OrderStatus.QUEUED, OrderStatus.PREPARING,
+      OrderStatus.READY, OrderStatus.OUT_FOR_SERVICE,
+    ];
     const [packRows, handoverRows] = await Promise.all([
       this.prisma.order.findMany({
-        where: { outletId, isParcel: true, status: OrderStatus.READY },
+        where: {
+          outletId, isParcel: true,
+          status: { in: nonTerminalOrderStatuses },
+          items: { some: { status: { in: packableItemStatuses } } },
+        },
         include,
         orderBy: { createdAt: 'asc' },
       }),
@@ -1926,7 +2022,15 @@ export class OrdersService {
     });
     if (!outlet) throw new NotFoundException('Outlet not found');
 
-    const [verifyRows, readyRows, outForServiceRows] = await Promise.all([
+    // Terminal / refund / dispute statuses — once an order lands here
+    // the service desk has nothing left to do regardless of item state.
+    const terminalOrderStatuses: OrderStatus[] = [
+      OrderStatus.SERVED, OrderStatus.CANCELLED,
+      OrderStatus.DISPUTED, OrderStatus.RESOLVED,
+      OrderStatus.FOR_REFUND, OrderStatus.REFUND_COMPLETE,
+    ];
+
+    const [verifyRows, partialReadyRows] = await Promise.all([
       this.prisma.order.findMany({
         where: {
           outletId,
@@ -1935,28 +2039,31 @@ export class OrdersService {
         include,
         orderBy: { createdAt: 'asc' },
       }),
-      // table-service "pickup" lane is fed by orders at READY whose
-      // shape resolves to table-service. We pull all READY orders and
-      // partition by shape below to keep the SQL simple.
+      // "Partial-ready" orders — any non-terminal order with at least
+      // one READY item. A 3-item order whose first dish lands READY
+      // while the other two are still PREPARING shows up in the
+      // appropriate lane immediately so the runner / counter staff
+      // can release the ready one. Order-level status stays where the
+      // rollup left it (typically PREPARING until every item lands).
       this.prisma.order.findMany({
-        where: { outletId, status: OrderStatus.READY, isParcel: false },
-        include,
-        orderBy: { createdAt: 'asc' },
-      }),
-      this.prisma.order.findMany({
-        where: { outletId, status: OrderStatus.OUT_FOR_SERVICE, isParcel: false },
+        where: {
+          outletId,
+          isParcel: false,
+          status: { notIn: terminalOrderStatuses },
+          items: { some: { status: OrderItemStatus.READY } },
+        },
         include,
         orderBy: { createdAt: 'asc' },
       }),
     ]);
 
-    const partition = (rows: typeof readyRows, want: 'self-service' | 'table-service') =>
+    const partition = (rows: typeof partialReadyRows, want: 'self-service' | 'table-service') =>
       rows.filter((o) => this.flowShape(outlet.outletType, o.tableId, o.isParcel) === want);
 
     return {
       verify: verifyRows,
-      pickup: partition(readyRows, 'table-service'),
-      release: partition(outForServiceRows, 'self-service'),
+      pickup: partition(partialReadyRows, 'table-service'),
+      release: partition(partialReadyRows, 'self-service'),
     };
   }
 }

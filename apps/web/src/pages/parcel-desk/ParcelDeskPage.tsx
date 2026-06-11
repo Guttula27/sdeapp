@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 import { Navigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
-import { Package, ShoppingBag, Clock, CheckCircle2 } from 'lucide-react';
+import { Package, ShoppingBag, Clock, CheckCircle2, ChefHat, ChevronDown, Maximize2 } from 'lucide-react';
 import { RootState } from '../../store';
 import { getSocket } from '../../services/socket';
 import { useUserRole } from '../../hooks/useUserRole';
@@ -153,6 +153,22 @@ export default function ParcelDeskPage() {
     }
   };
 
+  // Per-item status flip — used by the per-row "Mark packed" button. The
+  // rollup on the API side advances the order to READY_FOR_PICKUP and
+  // fires the customer notification once every live item is PACKED, so
+  // the row simply moves to the Handover lane on its own.
+  const advanceItemStatus = async (orderId: string, itemId: string, next: string) => {
+    try {
+      await api.patch(
+        `/outlets/${outletId}/orders/${orderId}/items/${itemId}/status`,
+        { status: next },
+      );
+      fetchQueue();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Could not update item');
+    }
+  };
+
   const liveItemsFor = (o: OrderRow) =>
     o.items.filter((i) => i.status !== 'CANCELLED' && i.status !== 'PENDING_VERIFICATION');
 
@@ -160,6 +176,18 @@ export default function ParcelDeskPage() {
     () => ({ pack: queue.pack.length, handover: queue.handover.length }),
     [queue],
   );
+
+  // Mirror of ServiceDeskPage: lane focus + per-card open/close so the
+  // two operator screens look and behave identically.
+  const [expandedLane, setExpandedLane] = useState<Lane | null>(null);
+  const [openCards, setOpenCards] = useState<Set<string>>(new Set());
+  const toggleCard = (id: string) =>
+    setOpenCards((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   if (!outletId) {
     return (
@@ -192,15 +220,56 @@ export default function ParcelDeskPage() {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Same flex / expand pattern as the Service desk. Pack vs Handover
+          are equal columns by default; click a lane's Maximize button to
+          stretch it to ~80% of the row, the other lane shrinks into a
+          vertical diary-tab spine that's still clickable. */}
+      <div className="flex flex-col lg:flex-row gap-3 lg:gap-4 min-h-[60vh]">
         {(Object.keys(LANE_META) as Lane[]).map((lane) => {
           const meta = LANE_META[lane];
           const rows = queue[lane];
           const Icon = meta.icon;
+          const isExpanded = expandedLane === lane;
+          const isCollapsedTab = expandedLane !== null && !isExpanded;
+          const flexBasis = expandedLane === null ? 1 : isExpanded ? 8 : 1;
+
+          if (isCollapsedTab) {
+            return (
+              <button
+                key={lane}
+                onClick={() => setExpandedLane(lane)}
+                style={{ flex: flexBasis }}
+                className={clsx(
+                  'hidden lg:flex flex-col items-center justify-center gap-3 rounded-2xl border p-3 transition-all hover:brightness-95',
+                  meta.tint,
+                )}
+                title={`Expand ${meta.title}`}
+              >
+                <Icon size={18} className={meta.accent} />
+                <span
+                  className={clsx('text-[11px] font-bold uppercase tracking-wider', meta.accent)}
+                  style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+                >
+                  {meta.title}
+                </span>
+                <span className="text-xs font-bold bg-white/80 rounded-full px-2 py-0.5 text-slate-700">
+                  {rows.length}
+                </span>
+              </button>
+            );
+          }
+
           return (
-            <section key={lane} className={clsx('rounded-2xl border p-3 min-h-[60vh]', meta.tint)}>
+            <section
+              key={lane}
+              style={{ flex: flexBasis }}
+              className={clsx(
+                'rounded-2xl border p-3 min-h-[60vh] flex flex-col min-w-0',
+                meta.tint,
+              )}
+            >
               <header className="flex items-center justify-between mb-2 px-1">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <Icon size={16} className={meta.accent} />
                   <h2 className={clsx('text-sm font-bold uppercase tracking-wider', meta.accent)}>
                     {meta.title}
@@ -209,73 +278,147 @@ export default function ParcelDeskPage() {
                     {rows.length}
                   </span>
                 </div>
+                <button
+                  onClick={() => setExpandedLane(isExpanded ? null : lane)}
+                  className={clsx(
+                    'inline-flex items-center justify-center w-7 h-7 rounded-lg transition-colors',
+                    isExpanded
+                      ? 'bg-white/80 text-slate-700 hover:bg-white'
+                      : 'bg-white/50 text-slate-500 hover:bg-white/80',
+                  )}
+                  title={isExpanded ? 'Collapse to equal columns' : 'Expand this lane'}
+                >
+                  <Maximize2 size={13} />
+                </button>
               </header>
-              <p className="text-[11px] text-slate-500 px-1 mb-3">{meta.subtitle}</p>
+              {!isExpanded && (
+                <p className="text-[11px] text-slate-500 px-1 mb-3">{meta.subtitle}</p>
+              )}
 
               {rows.length === 0 && (
                 <p className="text-xs text-slate-400 italic px-2 py-6 text-center">Nothing in this lane.</p>
               )}
 
-              <div className="space-y-2">
+              <div
+                className={clsx(
+                  'space-y-2 overflow-y-auto pr-1',
+                  isExpanded && 'lg:grid lg:grid-cols-2 lg:gap-2 lg:space-y-0',
+                )}
+              >
                 {rows.map((o) => {
                   const items = liveItemsFor(o);
                   const mins = elapsedMins(o.createdAt);
                   const flashing = flash.has(o.id);
+                  const isCardOpen = openCards.has(o.id);
+                  const readyCount = items.filter((i) => i.status === 'READY').length;
+                  const packedCount = items.filter((i) => i.status === 'PACKED').length;
                   return (
                     <article
                       key={o.id}
+                      onClick={() => toggleCard(o.id)}
                       className={clsx(
-                        'bg-white rounded-xl border p-3 transition-all',
+                        'bg-white rounded-xl border p-2.5 transition-all cursor-pointer hover:border-slate-300',
                         flashing
                           ? 'border-amber-300 shadow-[0_0_0_3px_rgba(245,158,11,0.25)] animate-pulse'
                           : 'border-slate-200',
                       )}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-bold text-slate-900 text-sm">#{o.orderNumber}</span>
-                            <span className="text-[10px] font-semibold bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">
-                              Parcel
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                          <span className="font-bold text-slate-900 text-sm">#{o.orderNumber}</span>
+                          <span className="text-[10px] font-semibold bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">
+                            Parcel
+                          </span>
+                          <span className="text-[10px] font-semibold text-slate-500">
+                            {items.length} item{items.length === 1 ? '' : 's'}
+                          </span>
+                          {readyCount > 0 && lane === 'pack' && (
+                            <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded animate-pulse">
+                              {readyCount} to pack
                             </span>
-                          </div>
-                          {o.customer?.name && (
-                            <p className="text-xs text-slate-500 truncate">{o.customer.name}</p>
                           )}
-                          {o.customer?.phone && (
-                            <p className="text-[11px] text-slate-400 font-mono">{o.customer.phone}</p>
+                          {packedCount > 0 && lane === 'pack' && (
+                            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">
+                              {packedCount} packed
+                            </span>
                           )}
                         </div>
-                        <span className="text-[11px] text-slate-400 inline-flex items-center gap-1 whitespace-nowrap">
-                          <Clock size={11} /> {mins}m
-                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[11px] text-slate-400 inline-flex items-center gap-1 whitespace-nowrap">
+                            <Clock size={11} /> {mins}m
+                          </span>
+                          <ChevronDown
+                            size={14}
+                            className={clsx(
+                              'text-slate-400 transition-transform',
+                              isCardOpen && 'rotate-180',
+                            )}
+                          />
+                        </div>
                       </div>
+                      {(o.customer?.name || o.customer?.phone) && (
+                        <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                          {o.customer?.name}{o.customer?.phone ? ` · ${o.customer.phone}` : ''}
+                        </p>
+                      )}
 
-                      <ul className="mt-2 space-y-0.5 text-sm text-slate-700">
-                        {items.map((it) => (
-                          <li key={it.id} className="flex items-start gap-2">
-                            <span className="font-semibold text-slate-900 min-w-[1.5rem]">×{it.quantity}</span>
-                            <span className="truncate">
-                              {it.item?.name || 'Item'}
-                              {it.variant?.name ? ` — ${it.variant.name}` : ''}
-                              {it.notes ? <span className="text-slate-400"> · {it.notes}</span> : null}
-                            </span>
-                          </li>
-                        ))}
+                      {isCardOpen && (
+                        <>
+
+                      <ul className="mt-2 space-y-1 text-sm text-slate-700">
+                        {items.map((it) => {
+                          // Item status drives the row UX in the pack lane:
+                          // READY blinks (kitchen just finished — desk to box
+                          // it now), PACKED is subdued with a ✓, everything
+                          // earlier shows the chef icon as "still cooking".
+                          const isReady = it.status === 'READY';
+                          const isPacked = it.status === 'PACKED';
+                          const isPreReady = it.status === 'PENDING' || it.status === 'PREPARING';
+                          return (
+                            <li
+                              key={it.id}
+                              className={clsx(
+                                'flex items-center gap-2 rounded-lg px-2 py-1.5 border',
+                                isReady && lane === 'pack'
+                                  ? 'bg-amber-50 border-amber-300 animate-pulse'
+                                  : isPacked
+                                    ? 'bg-emerald-50/60 border-emerald-200 text-emerald-700'
+                                    : 'bg-slate-50 border-slate-200',
+                              )}
+                            >
+                              <span className="font-semibold text-slate-900 min-w-[1.5rem]">×{it.quantity}</span>
+                              <span className="flex-1 truncate">
+                                {it.item?.name || 'Item'}
+                                {it.variant?.name ? ` — ${it.variant.name}` : ''}
+                                {it.notes ? <span className="text-slate-400"> · {it.notes}</span> : null}
+                              </span>
+                              {isPreReady && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 px-2 py-0.5 rounded-full bg-white border border-slate-200">
+                                  <ChefHat size={10} /> cooking
+                                </span>
+                              )}
+                              {isReady && lane === 'pack' && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); advanceItemStatus(o.id, it.id, 'PACKED'); }}
+                                  className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-bold rounded-md px-2.5 py-1 transition-colors"
+                                >
+                                  <Package size={11} /> Mark packed
+                                </button>
+                              )}
+                              {isPacked && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                                  <CheckCircle2 size={10} /> packed
+                                </span>
+                              )}
+                            </li>
+                          );
+                        })}
                         {items.length === 0 && (
                           <li className="text-xs italic text-slate-400">No items in this lane.</li>
                         )}
                       </ul>
 
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {lane === 'pack' && (
-                          <button
-                            onClick={() => advanceStatus(o.id, 'READY_FOR_PICKUP', 'Marked packed — moved to Handover')}
-                            className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
-                          >
-                            <Package size={13} /> Mark packed
-                          </button>
-                        )}
+                      <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                         {lane === 'handover' && (
                           <button
                             onClick={() => advanceStatus(o.id, 'SERVED', 'Handed over to customer')}
@@ -285,6 +428,8 @@ export default function ParcelDeskPage() {
                           </button>
                         )}
                       </div>
+                        </>
+                      )}
                     </article>
                   );
                 })}

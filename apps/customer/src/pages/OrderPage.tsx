@@ -739,9 +739,13 @@ export default function OrderPage() {
                   onOpen={() => setDetailItem(item)}
                   onQuickAdd={(e) => {
                     e.stopPropagation();
-                    // Customer-choice bundles + variant items both need a
-                    // picker — route to the detail modal.
+                    // Open the detail modal whenever the item has anything
+                    // configurable — variants, toppings, or a customer-choice
+                    // bundle. Without the toppings clause, the +Add button
+                    // silently dropped toppings on no-variant items, leaving
+                    // every add stacking into a single un-customised line.
                     const needsPicker = item.variants?.length
+                      || item.itemToppings?.length
                       || (item.isBundle && Number(item.maxBundleSelections) > 0);
                     if (needsPicker) {
                       setDetailItem(item);
