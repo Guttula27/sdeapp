@@ -18,6 +18,9 @@ type OrderItem = {
   unitPrice: number | string;
   totalPrice: number | string;
   gstRate?: number | string | null;
+  // Per-line tax snapshot — sum across same-rate items to print one
+  // Tax-Summary row per slab when the cart mixes rates.
+  gstAmount?: number | string | null;
   notes?: string | null;
   // Frozen names captured at order creation. Prefer these on a reprint
   // so the bill always shows what the customer actually ordered, even
@@ -135,15 +138,38 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
   const discount = Number(order.discountAmount || 0);
   const total = Number(order.totalAmount);
   const taxAmount = Number(order.taxAmount);
-  const cgst = Number(order.cgstAmount ?? taxAmount / 2);
-  const sgst = Number(order.sgstAmount ?? taxAmount / 2);
 
-  const taxable = Math.max(0, subtotal - discount);
-  const firstItemRate = Number(items[0]?.gstRate ?? 0);
-  const totalGstPct = taxable > 0
-    ? Math.round(((taxAmount / taxable) * 100) * 100) / 100
-    : firstItemRate;
-  const halfGstPct = Math.round((totalGstPct / 2) * 100) / 100;
+  // Group OrderItems by GST rate so mixed-rate carts (food at 5% +
+  // beverages at 18%, AC section at 9% vs non-AC at 5%, etc.) print
+  // one CGST + SGST row per slab on the bill.
+  // OrderItem.gstRate was snapshotted at order creation under the
+  // TableType > CustomerTag > Item.gstRate > outlet default precedence,
+  // so this single grouping handles every override flavour transparently.
+  const taxGroups = (() => {
+    const map = new Map<string, { rate: number; base: number; gstAmount: number }>();
+    for (const it of items) {
+      const rate = Math.round(Number(it.gstRate ?? 0) * 100) / 100;
+      if (rate <= 0) continue;
+      const base = Number(it.totalPrice ?? 0);
+      const gst = Number(it.gstAmount ?? (base * rate) / 100);
+      const key = rate.toFixed(2);
+      const entry = map.get(key) || { rate, base: 0, gstAmount: 0 };
+      entry.base += base;
+      entry.gstAmount += gst;
+      map.set(key, entry);
+    }
+    const rows = Array.from(map.values()).sort((a, b) => a.rate - b.rate);
+    const sumGroupGst = rows.reduce((s, g) => s + g.gstAmount, 0);
+    if (sumGroupGst > 0 && taxAmount > 0 && Math.abs(taxAmount - sumGroupGst) > 0.01) {
+      const ratio = taxAmount / sumGroupGst;
+      for (const g of rows) g.gstAmount = g.gstAmount * ratio;
+    }
+    return rows;
+  })();
+  // Inter-state detection (CGST/SGST=0 but tax>0). Drives label per group.
+  const isIgst = (Number(order.sgstAmount ?? 0) === 0)
+    && (Number(order.cgstAmount ?? 0) === 0)
+    && taxAmount > 0;
   const fmtPct = (n: number) => Number.isFinite(n) && n > 0
     ? (n % 1 === 0 ? n.toFixed(0) : n.toFixed(2).replace(/\.?0+$/, ''))
     : '0';
@@ -331,23 +357,44 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
       <Divider />
 
       {/* ── Tax Summary ────────────────────────────────────────── */}
+      {/* One row per unique GST rate. Multi-rate carts (e.g. food at 5%
+          + beverages at 18%, or items billed at an AC section's higher
+          rate alongside non-AC items) print every slab on its own line.
+          Header columns swap to IGST for inter-state orders. */}
       <p style={{ margin: 0, fontWeight: 700, textDecoration: 'underline' }}>Tax Summary</p>
       <div style={{
         display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr',
         gap: 2, fontSize: 10, marginTop: 2,
       }}>
-        <span>CGST%</span>
-        <span style={{ textAlign: 'right' }}>CGSTAMT</span>
-        <span style={{ textAlign: 'right' }}>SGST%</span>
-        <span style={{ textAlign: 'right' }}>SGSTAMT</span>
+        <span>{isIgst ? 'IGST%' : 'CGST%'}</span>
+        <span style={{ textAlign: 'right' }}>{isIgst ? 'IGSTAMT' : 'CGSTAMT'}</span>
+        <span style={{ textAlign: 'right' }}>{isIgst ? '' : 'SGST%'}</span>
+        <span style={{ textAlign: 'right' }}>{isIgst ? '' : 'SGSTAMT'}</span>
         <span style={{ textAlign: 'right' }}>TAX%</span>
         <span style={{ textAlign: 'right' }}>TTA</span>
-        <span>{fmtPct(halfGstPct)}</span>
-        <span style={{ textAlign: 'right' }}>{cgst.toFixed(2)}</span>
-        <span style={{ textAlign: 'right' }}>{fmtPct(halfGstPct)}</span>
-        <span style={{ textAlign: 'right' }}>{sgst.toFixed(2)}</span>
-        <span style={{ textAlign: 'right' }}>{fmtPct(totalGstPct)}</span>
-        <span style={{ textAlign: 'right' }}>{taxAmount.toFixed(2)}</span>
+        {taxGroups.length === 0 ? (
+          <FragmentRow cgstPct="0" cgstAmt="0.00" sgstPct="0" sgstAmt="0.00" taxPct="0" tta="0.00" />
+        ) : taxGroups.map((g) => (
+          isIgst ? (
+            <FragmentRow key={g.rate.toFixed(2)}
+              cgstPct={fmtPct(g.rate)}
+              cgstAmt={g.gstAmount.toFixed(2)}
+              sgstPct=""
+              sgstAmt=""
+              taxPct={fmtPct(g.rate)}
+              tta={g.gstAmount.toFixed(2)}
+            />
+          ) : (
+            <FragmentRow key={g.rate.toFixed(2)}
+              cgstPct={fmtPct(g.rate / 2)}
+              cgstAmt={(g.gstAmount / 2).toFixed(2)}
+              sgstPct={fmtPct(g.rate / 2)}
+              sgstAmt={(g.gstAmount / 2).toFixed(2)}
+              taxPct={fmtPct(g.rate)}
+              tta={g.gstAmount.toFixed(2)}
+            />
+          )
+        ))}
       </div>
 
       <Divider />
@@ -390,5 +437,25 @@ function Row({ label, value, bold }: { label: string; value: string | number; bo
       <span>{label}</span>
       <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{value || ' '}</span>
     </div>
+  );
+}
+
+// One Tax-Summary "row" rendered as six cells in the parent grid.
+// Wrapped in a Fragment so multiple groups (one per GST rate) stack
+// vertically inside the same 6-column grid.
+function FragmentRow(props: {
+  cgstPct: string; cgstAmt: string;
+  sgstPct: string; sgstAmt: string;
+  taxPct: string;  tta: string;
+}) {
+  return (
+    <>
+      <span>{props.cgstPct}</span>
+      <span style={{ textAlign: 'right' }}>{props.cgstAmt}</span>
+      <span style={{ textAlign: 'right' }}>{props.sgstPct}</span>
+      <span style={{ textAlign: 'right' }}>{props.sgstAmt}</span>
+      <span style={{ textAlign: 'right' }}>{props.taxPct}</span>
+      <span style={{ textAlign: 'right' }}>{props.tta}</span>
+    </>
   );
 }
