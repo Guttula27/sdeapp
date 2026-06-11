@@ -695,7 +695,7 @@ export class OrdersService {
       this.prisma.order.findMany({
         where,
         include: {
-          items:  { include: { item: true, variant: true } },
+          items:  { include: { item: true, variant: true, bundleParent: { select: { id: true, name: true } } } },
           table:  true,
           outlet: { select: { id: true, name: true, outletType: true, business: { select: { id: true, name: true } } } },
           customer: {
@@ -728,6 +728,12 @@ export class OrdersService {
             // Include the snapshot menu so receipts can group by it without
             // having to walk back through subcategory → category.
             menu: { select: { id: true, name: true } },
+            // Combo (bundle) parent — surfaced on every expanded child
+            // so customer-facing surfaces (receipt + track-order) can
+            // collapse N child OrderItems back into one "combo" line
+            // showing the parent name. Kitchen / service / parcel desk
+            // ignore this and keep operating on the children individually.
+            bundleParent: { select: { id: true, name: true } },
             review: {
               include: {
                 paybackPayment: { select: { id: true, mode: true, amount: true, status: true, createdAt: true } },

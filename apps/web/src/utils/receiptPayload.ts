@@ -11,13 +11,60 @@ import type { CustomerReceiptPayload, ReceiptDiscountLine, ReceiptItemLine } fro
  * Missing fields collapse gracefully.
  */
 export function buildReceiptPayload(order: any): CustomerReceiptPayload {
-  const items: ReceiptItemLine[] = (order.items ?? []).map((it: any) => ({
-    itemName: it.item?.name ?? 'Item',
-    variantName: it.variant?.name ?? null,
-    quantity: Number(it.quantity),
-    unitPrice: Number(it.unitPrice),
-    totalPrice: Number(it.totalPrice),
-  }));
+  // Collapse expanded combo children back under their parent so the
+  // printed bill mirrors the customer's mental model: one line per
+  // combo, with sub-items indented. Standalone items pass through.
+  const items: ReceiptItemLine[] = (() => {
+    const out: ReceiptItemLine[] = [];
+    const seen = new Map<string, ReceiptItemLine>();
+    for (const it of (order.items ?? [])) {
+      const itemName = it.itemNameSnapshot || it.item?.name || 'Item';
+      const variantName = it.variantNameSnapshot ?? it.variant?.name ?? null;
+      if (it.bundleId) {
+        let bundle = seen.get(it.bundleId);
+        if (!bundle) {
+          bundle = {
+            itemName: it.bundleParent?.name || 'Combo',
+            variantName: null,
+            quantity: 0,
+            unitPrice: 0,
+            totalPrice: 0,
+            bundleChildren: [],
+          };
+          seen.set(it.bundleId, bundle);
+          out.push(bundle);
+        }
+        bundle.totalPrice += Number(it.totalPrice ?? 0);
+        // Primary row carries the combo qty + price; siblings have
+        // totalPrice = 0 and we just track their names for display.
+        if (Number(it.totalPrice ?? 0) > 0) {
+          bundle.quantity += Number(it.quantity);
+          bundle.unitPrice = bundle.quantity > 0 ? bundle.totalPrice / bundle.quantity : Number(it.unitPrice);
+        }
+        bundle.bundleChildren!.push({
+          itemName,
+          variantName,
+          quantity: Number(it.quantity),
+        });
+      } else {
+        out.push({
+          itemName,
+          variantName,
+          quantity: Number(it.quantity),
+          unitPrice: Number(it.unitPrice),
+          totalPrice: Number(it.totalPrice),
+        });
+      }
+    }
+    // Fallback: free combos (every child totalPrice=0) — use the
+    // first child's qty so the line still prints something sensible.
+    for (const b of out) {
+      if (b.bundleChildren && b.quantity === 0 && b.bundleChildren.length > 0) {
+        b.quantity = b.bundleChildren[0].quantity;
+      }
+    }
+    return out;
+  })();
 
   // Discount lines: coupons first (named with their code), then reward
   // redemptions, then any leftover aggregate as a generic "Discount" so

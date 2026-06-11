@@ -29,9 +29,62 @@ type OrderItem = {
   // for legacy rows from before the snapshot column existed.
   itemNameSnapshot?: string | null;
   variantNameSnapshot?: string | null;
+  // Combo (bundle) parent — when set, this OrderItem is one of N
+  // expansions of a combo placed in the cart. The customer-facing
+  // receipt collapses all OrderItems sharing the same bundleId back
+  // into one "combo" line with sub-items indented beneath; kitchen
+  // / service / parcel still process the children individually.
+  bundleId?: string | null;
+  bundleParent?: { id?: string; name?: string } | null;
   item?: { name?: string; hsnCode?: string | null } | null;
   variant?: { name?: string } | null;
 };
+
+// Group expanded bundle children back under their parent. Standalone
+// items pass through unchanged so the existing layout is preserved
+// for non-combo orders. Order is preserved from the input array.
+type ReceiptRow =
+  | { kind: 'item'; item: OrderItem }
+  | { kind: 'bundle'; bundleId: string; name: string; children: OrderItem[]; quantity: number; totalPrice: number };
+
+function groupBundles(items: OrderItem[]): ReceiptRow[] {
+  const out: ReceiptRow[] = [];
+  const seen = new Map<string, Extract<ReceiptRow, { kind: 'bundle' }>>();
+  for (const it of items) {
+    if (it.bundleId) {
+      let bundle = seen.get(it.bundleId);
+      if (!bundle) {
+        bundle = {
+          kind: 'bundle',
+          bundleId: it.bundleId,
+          name: it.bundleParent?.name || 'Combo',
+          children: [],
+          quantity: 0,
+          totalPrice: 0,
+        };
+        seen.set(it.bundleId, bundle);
+        out.push(bundle);
+      }
+      bundle.children.push(it);
+      bundle.totalPrice += Number(it.totalPrice ?? 0);
+      // Primary row carries the combo's price (and its quantity is the
+      // scaled order qty). Siblings have totalPrice=0. Summing
+      // primaries' qty handles the rare case of the same combo placed
+      // twice in one order.
+      if (Number(it.totalPrice ?? 0) > 0) {
+        bundle.quantity += Number(it.quantity ?? 0);
+      }
+    } else {
+      out.push({ kind: 'item', item: it });
+    }
+  }
+  for (const row of out) {
+    if (row.kind === 'bundle' && row.quantity === 0 && row.children.length > 0) {
+      row.quantity = Number(row.children[0].quantity ?? 1);
+    }
+  }
+  return out;
+}
 
 // Frozen outlet header — populated on every Order from 2026-06-11 on.
 // Falls back to the live `order.outlet` relation when null (legacy
@@ -123,7 +176,15 @@ function maskMobile(phone?: string | null) {
 
 const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt({ order }, ref) {
   const items = order.items || [];
-  const totalQty = items.reduce((s, it) => s + Number(it.quantity), 0);
+  // Group bundles up-front so the totals row reflects the same
+  // collapsed view the items table prints. A 3-child combo counts as
+  // one item / one qty for the customer-facing count.
+  const grouped = groupBundles(items);
+  const totalItemCount = grouped.length;
+  const totalQty = grouped.reduce((s, r) => {
+    if (r.kind === 'bundle') return s + r.quantity;
+    return s + Number(r.item.quantity);
+  }, 0);
   const subtotal = Number(order.subtotal);
   const total = Number(order.totalAmount);
   const taxAmount = Number(order.taxAmount);
@@ -157,9 +218,12 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
     }
     return rows;
   })();
-  const fmtPct = (n: number) => Number.isFinite(n) && n > 0
-    ? (n % 1 === 0 ? n.toFixed(0) : n.toFixed(2).replace(/\.?0+$/, ''))
-    : '0';
+  // Always two decimals on the printed GST rate. Half-rates like 2.5%
+  // were previously formatted with (2.5).toFixed(0) === "3", which is
+  // the bug behind the old "CGST 3% / SGST 3%" prints. Two decimals
+  // both prevents that rounding and matches Indian GST receipt
+  // conventions (e.g. "CGST 2.50%").
+  const fmtPct = (n: number) => Number.isFinite(n) && n > 0 ? n.toFixed(2) : '0.00';
 
   const placedAt = dayjs(order.createdAt);
   // Prefer the frozen outletSnapshot when present so a historical
@@ -243,10 +307,35 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
         <span style={{ textAlign: 'right' }}>Amount</span>
       </div>
       <Divider thin />
-      {items.map((it) => {
+      {grouped.map((row) => {
+        if (row.kind === 'bundle') {
+          const rate = row.quantity > 0 ? row.totalPrice / row.quantity : row.totalPrice;
+          return (
+            <div key={`b-${row.bundleId}`} style={{ marginTop: 3 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 32px 44px 50px', gap: 4 }}>
+                <span style={{ wordBreak: 'break-word', textTransform: 'uppercase', fontWeight: 700 }}>
+                  {row.name}
+                </span>
+                <span style={{ textAlign: 'right' }}>{row.quantity}</span>
+                <span style={{ textAlign: 'right' }}>{rate.toFixed(0)}</span>
+                <span style={{ textAlign: 'right' }}>{row.totalPrice.toFixed(0)}</span>
+              </div>
+              {/* Sub-items inside the combo, indented so the customer can
+                  see what they got but the bundle reads as one bill line. */}
+              {row.children.map((c) => {
+                const childLabel = c.itemNameSnapshot || c.item?.name || 'Item';
+                const childVariant = c.variantNameSnapshot || c.variant?.name;
+                return (
+                  <div key={c.id} style={{ fontSize: 10, color: '#444', marginLeft: 10, lineHeight: 1.35 }}>
+                    • {childLabel}{childVariant ? ` (${childVariant})` : ''} × {c.quantity}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        }
+        const it = row.item;
         const hsn = it.item?.hsnCode;
-        // Prefer the frozen names — they reflect what the customer
-        // actually saw and ordered, even after a later rename.
         const itemLabel = it.itemNameSnapshot || it.item?.name || 'Item';
         const variantLabel = it.variantNameSnapshot || it.variant?.name;
         return (
@@ -270,7 +359,7 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
 
       {/* ── Totals row ─────────────────────────────────────────── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-        <span>Tot Items : <strong>{items.length}</strong></span>
+        <span>Tot Items : <strong>{totalItemCount}</strong></span>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
         <span>Tot Qty &nbsp;: <strong>{totalQty}</strong></span>

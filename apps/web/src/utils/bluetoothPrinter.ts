@@ -157,6 +157,15 @@ export type ReceiptItemLine = {
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+  // When set, this line represents a combo / bundle — the children
+  // are listed beneath the parent line, indented, and the parent's
+  // quantity / amount are the combo's totals (children are display-
+  // only, no separate price column).
+  bundleChildren?: Array<{
+    itemName: string;
+    variantName?: string | null;
+    quantity: number;
+  }>;
 };
 
 export type ReceiptDiscountLine = {
@@ -250,6 +259,15 @@ function buildCustomerEscPos(r: CustomerReceiptPayload): Uint8Array {
     push(`${it.quantity} x ${it.itemName}\n`);
     if (it.variantName) push(`   ${it.variantName}\n`);
     push(pad(`   @ ${fmt(it.unitPrice)}`, fmt(it.totalPrice)) + '\n');
+    // Combo expansion — indent each sub-item beneath its combo line
+    // so the customer sees what came in the combo without the bill
+    // listing every child as a separate priced row.
+    if (it.bundleChildren?.length) {
+      for (const ch of it.bundleChildren) {
+        const variant = ch.variantName ? ` (${ch.variantName})` : '';
+        push(`     - ${ch.itemName}${variant} x ${ch.quantity}\n`);
+      }
+    }
   }
   push(dash() + '\n');
 
@@ -266,7 +284,9 @@ function buildCustomerEscPos(r: CustomerReceiptPayload): Uint8Array {
   // GST split — per-rate when the order has items snapshotted at
   // different rates (food at 5% + beverages at 18%), single-rate
   // fallback for the common case + legacy payloads.
-  const fmtPct = (n: number) => n.toFixed(2).replace(/\.?0+$/, '');
+  // Always two decimals so half-rates like 2.5% never round up to 3%
+  // and the printed rate matches the Indian GST receipt convention.
+  const fmtPct = (n: number) => n.toFixed(2);
   if (r.taxLines && r.taxLines.length > 0) {
     for (const tl of r.taxLines) {
       if (tl.cgst != null && tl.sgst != null) {
@@ -279,11 +299,13 @@ function buildCustomerEscPos(r: CustomerReceiptPayload): Uint8Array {
       }
     }
   } else if (r.cgst != null && r.sgst != null && (r.cgst > 0 || r.sgst > 0)) {
-    const half = ((r.gstPct ?? 0) / 2).toFixed(1).replace(/\.0$/, '');
+    // Legacy single-rate fallback. Same 2-decimal rule as the
+    // multi-rate path so a half-rate (2.5%) never prints as 3%.
+    const half = ((r.gstPct ?? 0) / 2).toFixed(2);
     push(pad(`CGST ${half}%`, fmt(r.cgst)) + '\n');
     push(pad(`SGST ${half}%`, fmt(r.sgst)) + '\n');
   } else if (r.igst && r.igst > 0) {
-    const full = (r.gstPct ?? 0).toFixed(1).replace(/\.0$/, '');
+    const full = (r.gstPct ?? 0).toFixed(2);
     push(pad(`IGST ${full}%`, fmt(r.igst)) + '\n');
   }
   if (r.roundOff && r.roundOff !== 0) {

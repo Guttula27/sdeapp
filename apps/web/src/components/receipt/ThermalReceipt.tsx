@@ -27,9 +27,53 @@ type OrderItem = {
   // after the menu item is renamed or removed.
   itemNameSnapshot?: string | null;
   variantNameSnapshot?: string | null;
+  // Combo (bundle) parent — when set, this OrderItem is one expansion
+  // of a combo. The customer-facing print collapses all OrderItems
+  // sharing the same bundleId back into one combo line.
+  bundleId?: string | null;
+  bundleParent?: { id?: string; name?: string } | null;
   item?: { name?: string; hsnCode?: string | null } | null;
   variant?: { name?: string } | null;
 };
+
+type ReceiptRow =
+  | { kind: 'item'; item: OrderItem }
+  | { kind: 'bundle'; bundleId: string; name: string; children: OrderItem[]; quantity: number; totalPrice: number };
+
+function groupBundles(items: OrderItem[]): ReceiptRow[] {
+  const out: ReceiptRow[] = [];
+  const seen = new Map<string, Extract<ReceiptRow, { kind: 'bundle' }>>();
+  for (const it of items) {
+    if (it.bundleId) {
+      let bundle = seen.get(it.bundleId);
+      if (!bundle) {
+        bundle = {
+          kind: 'bundle',
+          bundleId: it.bundleId,
+          name: it.bundleParent?.name || 'Combo',
+          children: [],
+          quantity: 0,
+          totalPrice: 0,
+        };
+        seen.set(it.bundleId, bundle);
+        out.push(bundle);
+      }
+      bundle.children.push(it);
+      bundle.totalPrice += Number(it.totalPrice ?? 0);
+      if (Number(it.totalPrice ?? 0) > 0) {
+        bundle.quantity += Number(it.quantity ?? 0);
+      }
+    } else {
+      out.push({ kind: 'item', item: it });
+    }
+  }
+  for (const row of out) {
+    if (row.kind === 'bundle' && row.quantity === 0 && row.children.length > 0) {
+      row.quantity = Number(row.children[0].quantity ?? 1);
+    }
+  }
+  return out;
+}
 
 // Frozen outlet header captured on Order at create time (column added
 // 2026-06-11). Legacy orders missing this fall back to the live
@@ -132,7 +176,13 @@ function maskMobile(phone?: string | null) {
 
 const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt({ order, paperWidth = '80mm' }, ref) {
   const items = order.items || [];
-  const totalQty = items.reduce((s, it) => s + Number(it.quantity), 0);
+  // Collapse expanded bundle children for the customer-facing bill.
+  const grouped = groupBundles(items);
+  const totalItemCount = grouped.length;
+  const totalQty = grouped.reduce((s, r) => {
+    if (r.kind === 'bundle') return s + r.quantity;
+    return s + Number(r.item.quantity);
+  }, 0);
   const subtotal = Number(order.subtotal);
   const parcel = Number(order.parcelAmount || 0);
   const discount = Number(order.discountAmount || 0);
@@ -170,9 +220,9 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
   const isIgst = (Number(order.sgstAmount ?? 0) === 0)
     && (Number(order.cgstAmount ?? 0) === 0)
     && taxAmount > 0;
-  const fmtPct = (n: number) => Number.isFinite(n) && n > 0
-    ? (n % 1 === 0 ? n.toFixed(0) : n.toFixed(2).replace(/\.?0+$/, ''))
-    : '0';
+  // Two decimals on every printed GST rate so half-rates like 2.5%
+  // never get rounded up to 3%, matching Indian GST receipt convention.
+  const fmtPct = (n: number) => Number.isFinite(n) && n > 0 ? n.toFixed(2) : '0.00';
 
   // Discount breakdown — line per coupon / reward, then the leftover as
   // a single auto-discount line. Same logic the previous layout used.
@@ -285,10 +335,33 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
         <span style={{ textAlign: 'right' }}>Amount</span>
       </div>
       <Divider thin />
-      {items.map((it) => {
+      {grouped.map((row) => {
+        if (row.kind === 'bundle') {
+          const rate = row.quantity > 0 ? row.totalPrice / row.quantity : row.totalPrice;
+          return (
+            <div key={`b-${row.bundleId}`} style={{ padding: '4px 0', borderBottom: '1px dotted #ccc' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 32px 44px 56px', gap: 6 }}>
+                <div style={{ wordBreak: 'break-word', textTransform: 'uppercase', fontWeight: 700 }}>
+                  {row.name}
+                </div>
+                <span style={{ textAlign: 'right' }}>{row.quantity}</span>
+                <span style={{ textAlign: 'right' }}>{rate.toFixed(0)}</span>
+                <span style={{ textAlign: 'right' }}>{row.totalPrice.toFixed(0)}</span>
+              </div>
+              {row.children.map((c) => {
+                const childLabel = c.itemNameSnapshot || c.item?.name || 'Item';
+                const childVariant = c.variantNameSnapshot || c.variant?.name;
+                return (
+                  <div key={c.id} style={{ fontSize: 10.5, color: '#444', marginLeft: 12, lineHeight: 1.4 }}>
+                    • {childLabel}{childVariant ? ` (${childVariant})` : ''} × {c.quantity}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        }
+        const it = row.item;
         const hsn = it.item?.hsnCode;
-        // Frozen names win over the live relation so renames don't
-        // rewrite historical bills.
         const itemLabel = it.itemNameSnapshot || it.item?.name || 'Item';
         const variantLabel = it.variantNameSnapshot || it.variant?.name;
         return (
@@ -317,7 +390,7 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
 
       {/* ── Totals + discounts + parcel ─────────────────────────── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-        <span>Tot Items : <strong>{items.length}</strong></span>
+        <span>Tot Items : <strong>{totalItemCount}</strong></span>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
         <span>Tot Qty &nbsp;: <strong>{totalQty}</strong></span>

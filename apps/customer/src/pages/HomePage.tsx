@@ -50,7 +50,14 @@ interface Order {
   billRequestedAt?: string | null;
   tableId?: string | null;
   outlet: { id: string; name: string };
-  items: Array<{ id: string; quantity: number; item: { name: string }; review?: { id: string; rating: number } | null }>;
+  items: Array<{
+    id: string;
+    quantity: number;
+    item: { name: string };
+    bundleId?: string | null;
+    bundleParent?: { id?: string; name?: string } | null;
+    review?: { id: string; rating: number } | null;
+  }>;
   clusterOrderId?: string | null;
   clusterOrder?: {
     id: string;
@@ -292,7 +299,23 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay, onDownload, do
   downloading?: boolean;
 }) {
   const s = STATUS[order.status] || STATUS.SERVED;
-  const items = order.items.map(i => `${i.item.name}${i.quantity > 1 ? ` ×${i.quantity}` : ''}`).join(', ');
+  // Collapse expanded combo children under the parent name so the one-
+  // line preview reads "Thali, Lassi" instead of every child of the combo.
+  const items = (() => {
+    const seen = new Set<string>();
+    const parts: string[] = [];
+    for (const i of order.items) {
+      if (i.bundleId) {
+        if (seen.has(i.bundleId)) continue;
+        seen.add(i.bundleId);
+        const name = i.bundleParent?.name || 'Combo';
+        parts.push(name);
+      } else {
+        parts.push(`${i.item.name}${i.quantity > 1 ? ` ×${i.quantity}` : ''}`);
+      }
+    }
+    return parts.join(', ');
+  })();
   // Blink while there's a fresh unread "ready"-class alert for this
   // order AND the order is still in an active phase. Past/served
   // orders never blink even if they had unread alerts.
