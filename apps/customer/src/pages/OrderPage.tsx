@@ -987,8 +987,14 @@ export default function OrderPage() {
             // optimistically; we mirror that single field on the open item.
             setDetailItem((it: any) => (it ? { ...it, isFavorite: !it.isFavorite } : it));
           }}
-          onAdd={(variant, toppings, qty, bundlePicks) => {
-            for (let i = 0; i < qty; i++) addToCart(detailItem, variant, toppings, bundlePicks);
+          onAdd={(picks, toppings, bundlePicks) => {
+            // Each pick = (variant?, qty). Same toppings + bundle
+            // picks apply to every entry.
+            for (const pick of picks) {
+              for (let i = 0; i < pick.qty; i++) {
+                addToCart(detailItem, pick.variant, toppings, bundlePicks);
+              }
+            }
             setDetailItem(null);
             setShowCart(true);
           }}
@@ -1022,9 +1028,26 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
   disabledReason?: string | null;
 }) {
   const hasVariants = !!item.variants?.length;
+  // Resolve the lowest sticker price (`from ₹X`) the customer sees on
+  // the row. For discount-aware display we also track the lowest
+  // discounted price + matching savings so we can render strikethrough +
+  // a "Save ₹Y" pill when an active line-level discount targets the item.
   const lowPrice = hasVariants
     ? Math.min(...item.variants.map((v: any) => Number(v.effectivePrice ?? v.price)))
     : Number(item.effectivePrice ?? item.basePrice);
+  const lowDiscounted = hasVariants
+    ? Math.min(
+        ...item.variants.map((v: any) =>
+          v.discountInfo?.discountedPrice != null
+            ? Number(v.discountInfo.discountedPrice)
+            : Number(v.effectivePrice ?? v.price),
+        ),
+      )
+    : item.discountInfo?.discountedPrice != null
+      ? Number(item.discountInfo.discountedPrice)
+      : lowPrice;
+  const hasDiscount = lowDiscounted < lowPrice - 0.005;
+  const saveAmount = hasDiscount ? Math.round((lowPrice - lowDiscounted) * 100) / 100 : 0;
   return (
     <div
       onClick={disabled ? undefined : onOpen}
@@ -1068,8 +1091,22 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
           {item.shortDescription && (
             <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">{item.shortDescription}</p>
           )}
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-sm font-black text-slate-900">{hasVariants ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}</span>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            {hasDiscount ? (
+              <>
+                <span className="text-sm font-black text-emerald-700">
+                  {hasVariants ? `from ₹${lowDiscounted.toFixed(0)}` : `₹${lowDiscounted.toFixed(0)}`}
+                </span>
+                <span className="text-xs text-slate-400 line-through">
+                  ₹{lowPrice.toFixed(0)}
+                </span>
+                <span className="inline-flex items-center text-[10px] font-bold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-full">
+                  Save ₹{saveAmount.toFixed(0)}
+                </span>
+              </>
+            ) : (
+              <span className="text-sm font-black text-slate-900">{hasVariants ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}</span>
+            )}
             {item.ratingCount > 0 && (
               <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700">
                 <Star size={9} fill="currentColor" className="text-amber-500" />
@@ -1106,6 +1143,11 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
           >
             <Plus size={12} /> Add{qty > 0 && ` · ${qty}`}
           </button>
+          {hasVariants && (
+            <span className="text-[9px] font-bold uppercase tracking-wider text-brand-600">
+              {item.variants.length} variants
+            </span>
+          )}
         </div>
       </div>
     </div>
@@ -1119,14 +1161,38 @@ function ItemDetailModal({
   item: any;
   onClose: () => void;
   onToggleFavorite?: () => void;
+  // picks carries one entry per (variant, qty) the customer wants to
+  // add. For an item without variants the list has a single entry with
+  // variant=undefined. Toppings + bundlePicks apply to every entry.
   onAdd: (
-    variant: any | undefined,
+    picks: Array<{ variant?: any; qty: number }>,
     toppings: CartTopping[],
-    qty: number,
     bundlePicks?: { selections: string[]; labels: string[] },
   ) => void;
 }) {
+  // Customer-choice bundle picker state — must run BEFORE variant state
+  // because `usePerVariantQty` (below) is gated on it.
+  const maxBundlePicks = item.isBundle && item.maxBundleSelections
+    ? Number(item.maxBundleSelections) || 0
+    : 0;
+  // Multi-variant flow: each variant gets its own +/- counter so the
+  // customer can pick "Small × 2, Large × 1" in one shot. Disabled for
+  // customer-choice bundles where the parent variant decides the bundle
+  // price — those keep the single-variant + single-qty path.
+  const hasVariants = !!item.variants?.length;
+  const usePerVariantQty = hasVariants && maxBundlePicks === 0;
+
+  // Per-variant qty map (used when usePerVariantQty=true). Initialised
+  // with 0 for every variant; customer dials up the ones they want.
+  const [variantQty, setVariantQty] = useState<Record<string, number>>(() => {
+    const init: Record<string, number> = {};
+    (item.variants || []).forEach((v: any) => { init[v.id] = 0; });
+    return init;
+  });
+  // Single-variant selection — used only on bundle items where we keep
+  // the original modal flow. The first variant is preselected.
   const [variantId, setVariantId] = useState<string | ''>(item.variants?.[0]?.id || '');
+  // Quantity for non-variant items (and for the bundle/single-variant path).
   const [qty, setQty] = useState(1);
   const [topSel, setTopSel] = useState<Record<string, { selected: boolean; optionId?: string }>>(() => {
     const init: Record<string, { selected: boolean; optionId?: string }> = {};
@@ -1139,11 +1205,6 @@ function ItemDetailModal({
     });
     return init;
   });
-  // Customer-choice bundle picker state. Picked ItemBundleChild ids; the
-  // server expands only these at order time.
-  const maxBundlePicks = item.isBundle && item.maxBundleSelections
-    ? Number(item.maxBundleSelections) || 0
-    : 0;
   const [bundleSel, setBundleSel] = useState<Set<string>>(new Set());
   const toggleBundlePick = (id: string) => setBundleSel((prev) => {
     const next = new Set(prev);
@@ -1153,8 +1214,7 @@ function ItemDetailModal({
     return next;
   });
 
-  const variant = item.variants?.find((v: any) => v.id === variantId);
-  const basePrice = variant ? Number(variant.effectivePrice ?? variant.price) : Number(item.effectivePrice ?? item.basePrice);
+  // Compose the topping list (same for every variant in the picks).
   const toppings: CartTopping[] = [];
   for (const link of item.itemToppings || []) {
     const sel = topSel[link.toppingId];
@@ -1169,7 +1229,43 @@ function ItemDetailModal({
       toppings.push({ toppingId: link.toppingId, label: link.topping.name, priceAdd: basePriceAdd });
     }
   }
-  const lineTotal = (basePrice + toppings.reduce((s, t) => s + t.priceAdd, 0)) * qty;
+  const toppingAdd = toppings.reduce((s, t) => s + t.priceAdd, 0);
+
+  // Discounted unit price helper. If the variant / item has a discountInfo
+  // payload from the menu endpoint, prefer that (it already reflects the
+  // active line-level auto-discount) so the modal total matches what the
+  // cart + receipt will show.
+  const unitFor = (v?: any) => {
+    if (v) {
+      return v.discountInfo?.discountedPrice != null
+        ? Number(v.discountInfo.discountedPrice)
+        : Number(v.effectivePrice ?? v.price);
+    }
+    return item.discountInfo?.discountedPrice != null
+      ? Number(item.discountInfo.discountedPrice)
+      : Number(item.effectivePrice ?? item.basePrice);
+  };
+  const stickerFor = (v?: any) => v
+    ? Number(v.effectivePrice ?? v.price)
+    : Number(item.effectivePrice ?? item.basePrice);
+
+  // Aggregate the running line total. Per-variant mode sums each row;
+  // single-qty mode multiplies one unit by qty.
+  let lineTotal = 0;
+  let pickedItemCount = 0;
+  if (usePerVariantQty) {
+    for (const v of item.variants) {
+      const q = variantQty[v.id] || 0;
+      if (q <= 0) continue;
+      pickedItemCount += q;
+      lineTotal += (unitFor(v) + toppingAdd) * q;
+    }
+  } else {
+    const variant = item.variants?.find((v: any) => v.id === variantId);
+    pickedItemCount = qty;
+    lineTotal = (unitFor(variant) + toppingAdd) * qty;
+  }
+
   const galleryImages = [item.imageUrl, ...(item.images?.map((g: any) => g.url) || [])].filter(Boolean);
 
   return (
@@ -1225,8 +1321,76 @@ function ItemDetailModal({
             </div>
           </div>
 
-          {/* Variants */}
-          {item.variants?.length > 0 && (
+          {/* Variants — per-variant +/- qty so the customer can pick
+              "Small × 2, Large × 1" in one go. Bundles fall back to
+              the single-variant + single-qty radio path below. */}
+          {hasVariants && usePerVariantQty && (
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Variants</p>
+              <div className="space-y-1.5">
+                {item.variants.map((v: any) => {
+                  const sticker = stickerFor(v);
+                  const unit = unitFor(v);
+                  const isDiscounted = unit < sticker - 0.005;
+                  const q = variantQty[v.id] || 0;
+                  const inc = () => setVariantQty((p) => ({ ...p, [v.id]: (p[v.id] || 0) + 1 }));
+                  const dec = () => setVariantQty((p) => ({ ...p, [v.id]: Math.max(0, (p[v.id] || 0) - 1) }));
+                  return (
+                    <div
+                      key={v.id}
+                      className={clsx(
+                        'flex items-center gap-3 px-3 py-2.5 rounded-xl border',
+                        q > 0 ? 'border-brand-300 bg-brand-50/40' : 'border-slate-100',
+                      )}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-slate-800 truncate">{v.name}</p>
+                        {v.shortDescription && (
+                          <p className="text-[10px] text-slate-400 truncate">{v.shortDescription}</p>
+                        )}
+                        <p className="text-xs mt-0.5">
+                          {isDiscounted ? (
+                            <>
+                              <span className="font-bold text-emerald-700">₹{unit.toFixed(0)}</span>
+                              <span className="ml-1.5 text-slate-400 line-through">₹{sticker.toFixed(0)}</span>
+                              <span className="ml-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full">
+                                Save ₹{(sticker - unit).toFixed(0)}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="font-bold text-slate-900">₹{sticker.toFixed(0)}</span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={dec}
+                          disabled={q === 0}
+                          className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center disabled:opacity-40"
+                          aria-label={`Remove one ${v.name}`}
+                        >
+                          <Minus size={13} />
+                        </button>
+                        <span className="w-6 text-center font-bold text-sm">{q}</span>
+                        <button
+                          type="button"
+                          onClick={inc}
+                          className="w-8 h-8 rounded-lg bg-brand-500 hover:bg-brand-600 text-white flex items-center justify-center"
+                          aria-label={`Add one ${v.name}`}
+                        >
+                          <Plus size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {/* Bundles keep the single-variant radio so the parent variant
+              still drives the bundle price. */}
+          {hasVariants && !usePerVariantQty && (
             <div>
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Choose size</p>
               <div className="space-y-1.5">
@@ -1362,15 +1526,19 @@ function ItemDetailModal({
             </div>
           )}
 
-          {/* Quantity */}
-          <div className="flex items-center justify-between bg-slate-50 rounded-xl p-3">
-            <p className="text-sm font-semibold text-slate-700">Quantity</p>
-            <div className="flex items-center gap-3">
-              <button onClick={() => setQty(q => Math.max(1, q - 1))} className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center"><Minus size={14} /></button>
-              <span className="w-6 text-center font-bold text-sm">{qty}</span>
-              <button onClick={() => setQty(q => q + 1)} className="w-8 h-8 bg-brand-500 text-white rounded-lg flex items-center justify-center"><Plus size={14} /></button>
+          {/* Single-qty selector — only when item has NO variants
+              (per-variant flow lives inside the variants section above)
+              or when bundle path is active. */}
+          {!usePerVariantQty && (
+            <div className="flex items-center justify-between bg-slate-50 rounded-xl p-3">
+              <p className="text-sm font-semibold text-slate-700">Quantity</p>
+              <div className="flex items-center gap-3">
+                <button onClick={() => setQty(q => Math.max(1, q - 1))} className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center"><Minus size={14} /></button>
+                <span className="w-6 text-center font-bold text-sm">{qty}</span>
+                <button onClick={() => setQty(q => q + 1)} className="w-8 h-8 bg-brand-500 text-white rounded-lg flex items-center justify-center"><Plus size={14} /></button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Footer CTA */}
@@ -1378,26 +1546,44 @@ function ItemDetailModal({
           <span className="text-base font-bold text-slate-900">₹{lineTotal.toFixed(0)}</span>
           <button
             onClick={() => {
+              // Build the picks list. Per-variant mode collects every
+              // variant the customer dialled up; single-qty mode collapses
+              // to one pick (variant or undefined).
+              let picks: Array<{ variant?: any; qty: number }> = [];
+              if (usePerVariantQty) {
+                for (const v of item.variants) {
+                  const q = variantQty[v.id] || 0;
+                  if (q > 0) picks.push({ variant: v, qty: q });
+                }
+              } else {
+                const variant = item.variants?.find((v: any) => v.id === variantId);
+                picks = [{ variant, qty }];
+              }
               if (maxBundlePicks > 0) {
                 if (bundleSel.size !== maxBundlePicks) return;
-                const picks = Array.from(bundleSel);
-                const labels = picks.map((id) => {
+                const ids = Array.from(bundleSel);
+                const labels = ids.map((id) => {
                   const child = item.bundleChildren?.find((c: any) => c.id === id);
                   if (!child) return '';
                   const v = child.variant?.name ? ` · ${child.variant.name}` : '';
                   return `${child.childItem?.name || 'Item'}${v}`;
                 });
-                onAdd(variant, toppings, qty, { selections: picks, labels });
+                onAdd(picks, toppings, { selections: ids, labels });
               } else {
-                onAdd(variant, toppings, qty);
+                onAdd(picks, toppings);
               }
             }}
-            disabled={maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks}
+            disabled={
+              (maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks)
+              || pickedItemCount === 0
+            }
             className="flex-1 bg-gold-500 hover:bg-gold-600 text-charcoal-900 py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks
               ? `Pick ${maxBundlePicks - bundleSel.size} more`
-              : `Add ${qty} to cart · ₹${lineTotal.toFixed(0)}`}
+              : pickedItemCount === 0
+                ? 'Pick at least 1 variant'
+                : `Add ${pickedItemCount} to cart · ₹${lineTotal.toFixed(0)}`}
           </button>
         </div>
       </div>

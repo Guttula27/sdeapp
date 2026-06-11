@@ -244,6 +244,10 @@ export class OrdersService {
         lines: promoLines,
         isParcel: !!dto.isParcel,
         customerId: resolvedCustomerId,
+        // tableId drives table-type price + GST overrides inside
+        // pricing.quoteCart so the order's totalAmount matches what
+        // the customer was shown on the payment screen.
+        tableId: dto.tableId,
         couponId: dto.couponId,
         rewardPoints: dto.rewardPoints,
       });
@@ -391,7 +395,7 @@ export class OrdersService {
         include: {
           items: { include: { item: true, variant: true } },
           table: true,
-          outlet: { select: { id: true, name: true, address: true, gstNumber: true, upiId: true, logoUrl: true, outletType: true } },
+          outlet: { select: { id: true, name: true, address: true, gstNumber: true, fssaiNumber: true, upiId: true, logoUrl: true, outletType: true } },
           payments: true,
           customer: {
             select: {
@@ -717,7 +721,7 @@ export class OrdersService {
             // city-state-pincode on separate lines instead of one comma-joined blob.
             address: true, addressLine1: true, addressLine2: true,
             city: true, state: true, pincode: true,
-            gstNumber: true,
+            gstNumber: true, fssaiNumber: true,
           },
         },
         customer: {
@@ -1687,7 +1691,7 @@ export class OrdersService {
         include: {
           items: { include: { item: true, variant: true } },
           table: true,
-          outlet: { select: { id: true, name: true, address: true, gstNumber: true, upiId: true, logoUrl: true, outletType: true } },
+          outlet: { select: { id: true, name: true, address: true, gstNumber: true, fssaiNumber: true, upiId: true, logoUrl: true, outletType: true } },
           payments: true,
         },
       });
@@ -1723,7 +1727,7 @@ export class OrdersService {
       include: {
         items: { include: { item: true, variant: true } },
         table: true,
-        outlet: { select: { id: true, name: true, address: true, gstNumber: true, upiId: true, logoUrl: true, outletType: true } },
+        outlet: { select: { id: true, name: true, address: true, gstNumber: true, fssaiNumber: true, upiId: true, logoUrl: true, outletType: true } },
         payments: true,
       },
     });

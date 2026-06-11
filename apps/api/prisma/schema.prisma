@@ -451,6 +451,12 @@ model Outlet {
   description     String?    @db.VarChar(250)
   phone           String?
   gstNumber       String?
+  // FSSAI registration / license number printed on the customer bill
+  // (mandatory under FSSAI rules for any business serving food).
+  // 14-digit numeric in production but kept as a free-text column so a
+  // central kitchen's CKL number or a manufacturing licence shape can
+  // also be entered without schema gymnastics.
+  fssaiNumber     String?    @db.VarChar(32)
   upiId           String?
   logoUrl         String?    @db.Text
   primaryImageUrl String?    @db.Text

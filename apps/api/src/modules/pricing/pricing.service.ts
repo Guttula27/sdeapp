@@ -21,6 +21,10 @@ export type QuoteInput = {
   lines: QuoteLineInput[];
   isParcel?: boolean;
   customerId?: string;
+  // Dine-in table the cart belongs to. Used to resolve table-type price
+  // overrides — the customer sees the section price on the menu, the
+  // quote must match. Optional for counter / parcel flows.
+  tableId?: string;
   // One coupon at most per the stacking rule the user chose.
   couponId?: string;
   // Reward points the customer wants to burn (gated by min + max%).
@@ -89,6 +93,27 @@ export class PricingService {
     const gstOn = !!outlet.gstApplicable;
     const outletDefaultPct = gstOn ? Number(outlet.gstPercent ?? 0) : 0;
 
+    // Resolve viewer's customer tag (for tag-price overrides) and the
+    // table's type (for section-price overrides). Identical to what
+    // OrdersService.create does — without these the quote total wouldn't
+    // match the order total and the customer would be charged the wrong
+    // amount via Razorpay.
+    let viewerTagId: string | null = null;
+    if (input.customerId) {
+      const a = await this.prisma.customerTagAssignment.findUnique({
+        where: { userId_outletId: { userId: input.customerId, outletId: input.outletId } },
+      });
+      viewerTagId = a?.customerTagId ?? null;
+    }
+    let tableTypeId: string | null = null;
+    if (input.tableId) {
+      const t = await this.prisma.table.findUnique({
+        where: { id: input.tableId },
+        select: { tableTypeId: true, outletId: true },
+      });
+      if (t?.outletId === input.outletId) tableTypeId = t.tableTypeId;
+    }
+
     // 1. Resolve lines → price + category + subcategory. Bundles are just
     //    items where isBundle=true, so the same lookup covers both — the
     //    parent Item.basePrice is the bundle price.
@@ -102,6 +127,12 @@ export class PricingService {
         select: {
           id: true, name: true, basePrice: true, gstRate: true,
           subcategoryId: true, subcategory: { select: { categoryId: true } },
+          customerTagPrices: viewerTagId
+            ? { where: { customerTagId: viewerTagId } }
+            : false,
+          tableTypePrices: tableTypeId
+            ? { where: { tableTypeId } }
+            : false,
         },
       });
       if (!item) throw new BadRequestException('Item not found');
@@ -110,6 +141,36 @@ export class PricingService {
         const v = await this.prisma.variant.findUnique({ where: { id: l.variantId }, select: { price: true } });
         if (v) unit = Number(v.price);
       }
+      // Price-override precedence (same as resolveOrderItems): CustomerTag
+      // > TableType > variant > basePrice. A tagged customer sees their
+      // tag price on the menu; the quote must match.
+      const ctPrice = viewerTagId
+        ? (item as any).customerTagPrices?.find(
+            (p: any) =>
+              p.customerTagId === viewerTagId &&
+              (l.variantId ? p.variantId === l.variantId : !p.variantId),
+          )
+        : null;
+      const ttPrice = tableTypeId
+        ? (item as any).tableTypePrices?.find(
+            (p: any) =>
+              p.tableTypeId === tableTypeId &&
+              (l.variantId ? p.variantId === l.variantId : !p.variantId),
+          )
+        : null;
+      if (ctPrice?.price != null) unit = Number(ctPrice.price);
+      else if (ttPrice?.price != null) unit = Number(ttPrice.price);
+
+      // GST rate: TableType > CustomerTag > item default > outlet fallback
+      // (mirrors resolveOrderItems).
+      let gstRate = 0;
+      if (gstOn) {
+        if (ttPrice?.gstRate != null) gstRate = Number(ttPrice.gstRate);
+        else if (ctPrice?.gstRate != null) gstRate = Number(ctPrice.gstRate);
+        else if (item.gstRate != null) gstRate = Number(item.gstRate);
+        else gstRate = outletDefaultPct;
+      }
+
       lines.push({
         itemId: item.id,
         variantId: l.variantId,
@@ -117,7 +178,7 @@ export class PricingService {
         name: item.name,
         unitPrice: unit,
         totalPrice: unit * l.quantity,
-        gstRate: gstOn ? Number(item.gstRate ?? outletDefaultPct) : 0,
+        gstRate,
         categoryId: item.subcategory?.categoryId,
         subcategoryId: item.subcategoryId,
       });

@@ -106,8 +106,14 @@ export default function MenuPage() {
       target === 'category' ? `&category=${id}` :
       target === 'subcategory' ? `&sub=${id}` :
       '';
+    // Item QRs route through the canonical /s/outlet/<outletId>/item/<itemId>
+    // scan resolver — it handles auth (stashes target + sends to /auth when
+    // not logged in), cluster routing, and finally lands the customer on
+    // /order?outlet=…&item=<id> so OrderPage pops the detail sheet over the
+    // outlet menu. The old /order/item/<id> path is retired and would drop
+    // both the id and the ?outlet= query through the legacy redirect.
     const url = target === 'item'
-      ? `${customerOrigin}/order/item/${id}?outlet=${outletId}`
+      ? `${customerOrigin}/s/outlet/${outletId}/item/${id}`
       : `${customerOrigin}/order?outlet=${outletId}${params}`;
     return downloadQrCard({
       outletName: currentOutlet?.name,

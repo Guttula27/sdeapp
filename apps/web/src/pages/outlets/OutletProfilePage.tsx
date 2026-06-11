@@ -105,7 +105,7 @@ export default function OutletProfilePage() {
     address: '',
     addressLine1: '', addressLine2: '', city: '', state: '', pincode: '', country: 'India', mapsLocation: '',
     phone: '',
-    gstNumber: '', upiId: '',
+    gstNumber: '', fssaiNumber: '', upiId: '',
   });
   const [kitchenPrint, setKitchenPrint] = useState({ auto: false, allowManual: false });
   // Front-of-house receipt printing. Parallel to kitchenPrint but
@@ -186,6 +186,7 @@ export default function OutletProfilePage() {
         mapsLocation: o.mapsLocation || '',
         phone: o.phone || '',
         gstNumber: o.gstNumber || '',
+        fssaiNumber: o.fssaiNumber || '',
         upiId: o.upiId || '',
       });
       setGst({
@@ -414,6 +415,7 @@ export default function OutletProfilePage() {
         mapsLocation: form.mapsLocation.trim() || undefined,
         phone: form.phone.trim() || undefined,
         gstNumber: gst.applicable ? (form.gstNumber.trim() || undefined) : null,
+        fssaiNumber: form.fssaiNumber.trim() || null,
         gstApplicable: gst.applicable,
         gstPercent: gst.applicable ? Number(gst.percent) || 0 : 0,
         priceIncludesGst: gst.applicable ? gst.includesGst : false,
@@ -703,6 +705,18 @@ export default function OutletProfilePage() {
             </Field>
           </>
         )}
+
+        {/* FSSAI is a separate compliance — outlets without GST may still
+            have it, so it lives outside the gst.applicable conditional. */}
+        <Field label="FSSAI number (printed on the bill)">
+          <input
+            value={form.fssaiNumber}
+            onChange={(e) => setForm((p) => ({ ...p, fssaiNumber: e.target.value }))}
+            className="input"
+            placeholder="14-digit FSSAI / CKL number"
+            maxLength={32}
+          />
+        </Field>
       </div>
 
       {/* Token counter */}

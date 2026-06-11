@@ -33,6 +33,7 @@ export class CreateOutletDto {
   @IsString() @IsOptional() description?: string;
   @IsString() @IsOptional() phone?: string;
   @IsString() @IsOptional() gstNumber?: string;
+  @IsString() @IsOptional() fssaiNumber?: string;
   @IsString() @IsOptional() upiId?: string;
   @IsString() @IsOptional() logoUrl?: string;
   @IsString() @IsOptional() primaryImageUrl?: string;

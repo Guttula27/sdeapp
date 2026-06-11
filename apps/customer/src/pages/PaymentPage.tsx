@@ -128,6 +128,10 @@ export default function PaymentPage() {
       })),
       isParcel: !!state.isParcel,
       customerId: user.id,
+      // tableId lets the quote apply table-type price overrides — without
+      // it a dine-in section's discounted price wouldn't be reflected on
+      // the payment screen, and Razorpay would charge the wrong amount.
+      tableId: state.tableId || undefined,
       couponId: couponId || undefined,
       rewardPoints: rewardPoints || undefined,
     };

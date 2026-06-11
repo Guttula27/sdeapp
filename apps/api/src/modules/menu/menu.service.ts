@@ -1,12 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { TranslationsService } from '../translations/translations.service';
+import { DiscountsService } from '../discounts/discounts.service';
 
 @Injectable()
 export class MenuService {
   constructor(
     private prisma: PrismaService,
     private translations: TranslationsService,
+    private discounts: DiscountsService,
   ) {}
 
   // Translate every menu-bearing entity in a single getMenu response.
@@ -224,6 +226,40 @@ export class MenuService {
 
     await this.hydrateMenu(categories, lang);
 
+    // Active line-level auto-discounts (ITEM / SUBCATEGORY / CATEGORY).
+    // Surfaced on each item so the customer menu can render strikethrough
+    // pricing with the savings badge. Bill-level discounts apply to the
+    // whole cart and are computed at /cart/quote — they don't decorate
+    // individual menu items.
+    const activeAutoDiscounts = await this.discounts.activeAutoForOutlet(outletId);
+    const lineDiscounts = activeAutoDiscounts.filter(
+      (d: any) => d.targetType === 'ITEM'
+        || d.targetType === 'SUBCATEGORY'
+        || d.targetType === 'CATEGORY',
+    );
+    const computeLineDiscount = (
+      candidates: any[],
+      basePrice: number,
+    ): { name: string; discountedPrice: number; saveAmount: number } | null => {
+      if (!candidates.length || basePrice <= 0) return null;
+      let best: { d: any; save: number } | null = null;
+      for (const d of candidates) {
+        let amt = d.discountType === 'PERCENT'
+          ? (basePrice * Number(d.discountValue)) / 100
+          : Number(d.discountValue);
+        if (d.maxDiscountAmount) amt = Math.min(amt, Number(d.maxDiscountAmount));
+        amt = Math.min(amt, basePrice);
+        if (amt <= 0) continue;
+        if (!best || amt > best.save) best = { d, save: amt };
+      }
+      if (!best) return null;
+      return {
+        name: best.d.name,
+        discountedPrice: Math.round((basePrice - best.save) * 100) / 100,
+        saveAmount: Math.round(best.save * 100) / 100,
+      };
+    };
+
     // Aggregate review stats for every item on the menu in one query so the
     // customer can see the consolidated rating chip without an extra round-trip.
     const itemIds = categories.flatMap((c: any) =>
@@ -251,22 +287,39 @@ export class MenuService {
         ...sub,
         items: sub.items.map(item => {
           const itemOv = pickItemPrice(item);
+          const itemEffective = itemOv ? itemOv.price : Number(item.basePrice);
+          // Candidate discounts for this item — ITEM matches the row,
+          // SUBCATEGORY matches its parent sub, CATEGORY matches the
+          // sub's category. Same candidate set drives both the item-
+          // level price and each variant's price (PERCENT scales).
+          const candidates = lineDiscounts.filter((d: any) => {
+            if (d.targetType === 'ITEM') return d.itemId === item.id;
+            if (d.targetType === 'SUBCATEGORY') return d.subcategoryId === sub.id;
+            if (d.targetType === 'CATEGORY') return d.categoryId === cat.id;
+            return false;
+          });
           const variants = item.variants.map((v: any) => {
             const vOv = pickItemPrice(item, v.id);
+            const variantEffective = vOv ? vOv.price : Number(v.price);
             return {
               ...v,
-              effectivePrice: vOv ? vOv.price : Number(v.price),
+              effectivePrice: variantEffective,
               appliedTagId: vOv?.source === 'CUSTOMER_TAG' ? vOv.id : null,
               appliedTableTypeId: vOv?.source === 'TABLE_TYPE' ? vOv.id : null,
+              discountInfo: computeLineDiscount(candidates, variantEffective),
             };
           });
           const rating = ratingByItem.get(item.id) ?? { avg: 0, count: 0 };
           return {
             ...item,
             variants,
-            effectivePrice: itemOv ? itemOv.price : Number(item.basePrice),
+            effectivePrice: itemEffective,
             appliedTagId: itemOv?.source === 'CUSTOMER_TAG' ? itemOv.id : null,
             appliedTableTypeId: itemOv?.source === 'TABLE_TYPE' ? itemOv.id : null,
+            // Active line-level discount on the item's base price.
+            // The pricing engine applies the same rule at /cart/quote so
+            // the menu badge and the actual bill stay in sync.
+            discountInfo: computeLineDiscount(candidates, itemEffective),
             // Computed flags:
             isPopular: popularSet.has(item.id) || item.isPopular,
             isFavorite: favoriteSet.has(item.id),

@@ -2,12 +2,15 @@ import { forwardRef } from 'react';
 import dayjs from 'dayjs';
 
 /**
- * Thermal-style receipt that mirrors the printed Raasa Cafe format.
- * Rendered at ~80mm width so html2pdf can rasterise it into a narrow PDF
- * that prints 1:1 on a real thermal printer too.
+ * Thermal-style receipt — rendered at ~80mm width so html2pdf can
+ * rasterise it into a PDF that prints 1:1 on a real thermal printer.
  *
- * The component is data-driven: any field on `order` that's missing simply
- * collapses out of the layout (e.g. customer name, cashier).
+ * Layout follows the "VEZEOR Olive-Mithai-Shop" format used by the
+ * franchise: centered header block, customer block (with masked phone),
+ * items table, totals, Payment Summary, Tax Summary, footer.
+ *
+ * The component is data-driven — missing fields collapse out of the
+ * layout (e.g. customer phone, cashier, parcel charge).
  */
 
 type OrderItem = {
@@ -15,8 +18,9 @@ type OrderItem = {
   quantity: number;
   unitPrice: number | string;
   totalPrice: number | string;
+  gstRate?: number | string | null;
   notes?: string | null;
-  item?: { name?: string } | null;
+  item?: { name?: string; hsnCode?: string | null } | null;
   variant?: { name?: string } | null;
 };
 
@@ -40,7 +44,7 @@ export type ReceiptOrder = {
   parcelAmount?: number | string | null;
   discountAmount?: number | string | null;
   totalAmount: number | string;
-  customer?: { name?: string | null } | null;
+  customer?: { name?: string | null; phone?: string | null } | null;
   staff?: { name?: string | null } | null;
   outlet?: {
     name?: string;
@@ -51,6 +55,7 @@ export type ReceiptOrder = {
     state?: string | null;
     pincode?: string | null;
     gstNumber?: string | null;
+    fssaiNumber?: string | null;
     phone?: string | null;
   } | null;
   items?: OrderItem[];
@@ -66,45 +71,63 @@ const PAYMENT_LABEL: Record<string, string> = {
   WALLET: 'Wallet', NET_BANKING: 'Net Banking',
 };
 
-function formatPaidVia(payments?: Payment[]) {
-  const success = (payments || []).filter((p) => p.status === 'SUCCESS');
-  if (!success.length) return 'Pending';
-  const modes = Array.from(new Set(success.map((p) => PAYMENT_LABEL[p.mode] || p.mode)));
-  // The printed receipt uses the format "Other [UPI]" — keep that shape so
-  // the layout matches even when the gateway label is generic.
-  return modes.length === 1 ? `Other [${modes[0]}]` : modes.join(' + ');
+// Sum successful payments by mode so the Payment Summary block shows a
+// row per channel (Cash / Card / UPI). Modes the bill didn't use stay
+// at 0 so the customer can see at a glance how everything was settled.
+function paymentTotals(payments?: Payment[]) {
+  const out: Record<string, number> = { CASH: 0, CARD: 0, UPI: 0, WALLET: 0, NET_BANKING: 0 };
+  for (const p of payments || []) {
+    if (p.status !== 'SUCCESS') continue;
+    out[p.mode] = (out[p.mode] || 0) + Number(p.amount);
+  }
+  return out;
 }
 
-function orderType(o: ReceiptOrder) {
-  if (o.isParcel) return { label: 'Parcel', value: '1' };
-  if (o.table?.number) return { label: 'Dine In', value: String(o.table.number) };
-  return { label: 'Counter', value: '1' };
+// Replace every digit except the trailing 8 with asterisks. Phones in
+// India are 10 digits + optional country code; we hide the first 5
+// regardless of total length so VIPs / staff numbers don't get
+// shoulder-surfed off a paper bill.
+function maskMobile(phone?: string | null) {
+  if (!phone) return null;
+  const digits = String(phone).replace(/\D/g, '');
+  if (digits.length <= 5) return digits;
+  return '*'.repeat(5) + digits.slice(5);
 }
 
 const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt({ order }, ref) {
-  const totalQty = (order.items || []).reduce((s, it) => s + Number(it.quantity), 0);
+  const items = order.items || [];
+  const totalQty = items.reduce((s, it) => s + Number(it.quantity), 0);
   const subtotal = Number(order.subtotal);
   const sgst = Number(order.sgstAmount ?? Number(order.taxAmount) / 2);
   const cgst = Number(order.cgstAmount ?? Number(order.taxAmount) / 2);
   const total = Number(order.totalAmount);
-  const exact = subtotal + sgst + cgst + Number(order.parcelAmount || 0) - Number(order.discountAmount || 0);
-  const roundOff = Math.round((total - exact) * 100) / 100;
+  const taxAmount = Number(order.taxAmount);
 
-  const ot = orderType(order);
+  // Derive the GST % labels the customer sees next to each tax line.
+  // Taxable base = subtotal − discount (subtotal is already net of line
+  // discounts post-cutover). Falls back to the order's first item rate
+  // when the math doesn't divide cleanly (legacy orders).
+  const taxable = Math.max(0, subtotal - Number(order.discountAmount || 0));
+  const firstItemRate = Number(items[0]?.gstRate ?? 0);
+  const totalGstPct = taxable > 0
+    ? Math.round(((taxAmount / taxable) * 100) * 100) / 100
+    : firstItemRate;
+  const halfGstPct = Math.round((totalGstPct / 2) * 100) / 100;
+  const fmtPct = (n: number) => Number.isFinite(n) && n > 0
+    ? (n % 1 === 0 ? n.toFixed(0) : n.toFixed(2).replace(/\.?0+$/, ''))
+    : '0';
+
   const placedAt = dayjs(order.createdAt);
-  const address = [order.outlet?.addressLine1, order.outlet?.addressLine2, order.outlet?.address]
-    .filter(Boolean)
-    .join(', ');
-  const cityLine = [order.outlet?.city, order.outlet?.state, order.outlet?.pincode]
-    .filter(Boolean)
-    .join(' ');
-
-  // Derive a GST rate label like "2.5%" from the actual tax + subtotal. Falls
-  // back to whatever's on the order if the math doesn't divide cleanly.
-  const gstPct = subtotal > 0
-    ? +(((sgst + cgst) / subtotal) * 100).toFixed(2)
-    : 0;
-  const halfPct = (gstPct / 2).toFixed(gstPct % 1 === 0 ? 0 : 1);
+  const streetLines = [order.outlet?.addressLine1, order.outlet?.addressLine2].filter(Boolean) as string[];
+  if (streetLines.length === 0 && order.outlet?.address) streetLines.push(order.outlet.address);
+  const cityLine = [order.outlet?.city, order.outlet?.state, order.outlet?.pincode].filter(Boolean).join(', ');
+  const counterLabel = order.isParcel
+    ? 'PARCEL'
+    : order.table?.number
+      ? `T-${order.table.number}`
+      : 'SERVE';
+  const pay = paymentTotals(order.payments);
+  const maskedMobile = maskMobile(order.customer?.phone);
 
   return (
     <div
@@ -117,134 +140,128 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
         color: '#000',
         fontFamily: '"Courier New", "Menlo", monospace',
         fontSize: '11.5px',
-        lineHeight: 1.35,
+        lineHeight: 1.4,
         boxSizing: 'border-box',
       }}
     >
-      {/* Outlet header */}
-      <div style={{ textAlign: 'center', marginBottom: 6 }}>
+      {/* ── Header (centered) ──────────────────────────────────── */}
+      <div style={{ textAlign: 'center' }}>
         <p style={{ fontWeight: 800, fontSize: 14, margin: 0, letterSpacing: 0.5 }}>
           {(order.outlet?.name || 'Outlet').toUpperCase()}
         </p>
-        {address && <p style={{ margin: '2px 0 0', fontSize: 11 }}>{address}</p>}
+        {streetLines.map((line, i) => (
+          <p key={i} style={{ margin: '2px 0 0', fontSize: 11 }}>{line}</p>
+        ))}
         {cityLine && <p style={{ margin: '2px 0 0', fontSize: 11 }}>{cityLine}</p>}
         {order.outlet?.gstNumber && (
-          <p style={{ margin: '2px 0 0', fontSize: 11 }}>GSTIN: {order.outlet.gstNumber}</p>
+          <p style={{ margin: '2px 0 0', fontSize: 11 }}>GST NO. {order.outlet.gstNumber}</p>
+        )}
+        {order.outlet?.phone && (
+          <p style={{ margin: '2px 0 0', fontSize: 11 }}>Phone : {order.outlet.phone}</p>
+        )}
+        {order.outlet?.fssaiNumber && (
+          <p style={{ margin: '2px 0 0', fontSize: 11 }}>FSSAI : {order.outlet.fssaiNumber}</p>
         )}
       </div>
 
       <Divider />
 
-      {/* Customer name */}
-      <Row label="Name:" value={order.customer?.name || ''} underline />
+      {/* ── Customer block ─────────────────────────────────────── */}
+      <KV label="Customer Name" value={order.customer?.name || ''} />
+      {maskedMobile && <KV label="Customer Mob" value={maskedMobile} />}
+
+      {/* ── Bill meta (2-column) ───────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginTop: 4 }}>
+        <KV label="Bill No" value={order.orderNumber} compact />
+        <KV label="Bill Date" value={placedAt.format('DD/MM/YY')} compact />
+        <KV label="Cashier" value={order.staff?.name || 'Self'} compact />
+        <KV label="Bill time" value={placedAt.format('hh:mm A')} compact />
+        {order.tokenNumber != null && (
+          <KV label="Token" value={`#${order.tokenNumber}`} compact />
+        )}
+        <KV label="Counter" value={counterLabel} compact />
+      </div>
 
       <Divider />
 
-      {/* Date / type */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-        <span>Date: {placedAt.format('DD/MM/YY')}</span>
-        <span style={{ fontWeight: 700 }}>{ot.label}: {ot.value}</span>
-      </div>
-      <div>{placedAt.format('HH:mm')}</div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-        <span>Cashier: {order.staff?.name || 'Self'}</span>
-        <span>Bill No.: {order.orderNumber}</span>
-      </div>
-      <div style={{ fontWeight: 800 }}>Token No.: {order.tokenNumber ?? '-'}</div>
-
-      <Divider />
-
-      {/* Items table */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 28px 38px 50px', gap: 4 }}>
-        <span style={{ fontWeight: 700 }}>Item</span>
-        <span style={{ fontWeight: 700, textAlign: 'right' }}>Qty.</span>
-        <span style={{ fontWeight: 700, textAlign: 'right' }}>Price</span>
-        <span style={{ fontWeight: 700, textAlign: 'right' }}>Amount</span>
-      </div>
-
-      <Divider thin />
-
-      {/* Group items by menu (Breakfast / Lunch / …). When the order spans a
-          single menu — or the business doesn't run multiple menus — the
-          group header is hidden so the receipt looks identical to before. */}
-      {(() => {
-        const items = order.items || [];
-        const groups = new Map<string, { name: string; items: typeof items }>();
-        for (const it of items) {
-          const key = (it as any).menu?.id || (it as any).menuId || '__none__';
-          const name = (it as any).menu?.name || '';
-          if (!groups.has(key)) groups.set(key, { name, items: [] });
-          groups.get(key)!.items.push(it);
-        }
-        const showHeaders = groups.size > 1;
-        return Array.from(groups.values()).map((g, gi) => (
-          <div key={g.name || `g-${gi}`}>
-            {showHeaders && g.name && (
-              <div style={{ fontWeight: 700, padding: '4px 0 2px', textTransform: 'uppercase', fontSize: 11 }}>
-                {g.name}
-              </div>
-            )}
-            {g.items.map((it) => (
-              <div key={it.id} style={{ display: 'grid', gridTemplateColumns: '1fr 28px 38px 50px', gap: 4, padding: '2px 0' }}>
-                <span style={{ wordBreak: 'break-word' }}>
-                  {it.item?.name || 'Item'}
-                  {it.variant?.name ? ` (${it.variant.name})` : ''}
-                </span>
-                <span style={{ textAlign: 'right' }}>{it.quantity}</span>
-                <span style={{ textAlign: 'right' }}>{Number(it.unitPrice).toFixed(0)}</span>
-                <span style={{ textAlign: 'right' }}>{Number(it.totalPrice).toFixed(2)}</span>
-              </div>
-            ))}
-          </div>
-        ));
-      })()}
-
-      <Divider />
-
-      {/* Totals block */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-        <span>Total Qty: {totalQty}</span>
-        <div style={{ textAlign: 'right' }}>
-          <span style={{ marginRight: 8 }}>Sub Total</span>
-          <span style={{ display: 'inline-block', minWidth: 60, textAlign: 'right' }}>
-            {subtotal.toFixed(2)}
-          </span>
-        </div>
-      </div>
-      {(cgst > 0 || sgst > 0) && (
-        <>
-          <Row label={`CGST ${halfPct}%`} value={cgst.toFixed(2)} mono />
-          <Row label={`SGST ${halfPct}%`} value={sgst.toFixed(2)} mono />
-        </>
-      )}
-      {Number(order.parcelAmount || 0) > 0 && (
-        <Row label="Parcel" value={Number(order.parcelAmount).toFixed(2)} mono />
-      )}
-      {Number(order.discountAmount || 0) > 0 && (
-        <Row label="Discount" value={`-${Number(order.discountAmount).toFixed(2)}`} mono />
-      )}
-
-      <Divider />
-
-      {roundOff !== 0 && (
-        <Row label="Round off" value={(roundOff >= 0 ? '' : '-') + Math.abs(roundOff).toFixed(2)} mono />
-      )}
-
-      {/* Grand total — emphasised */}
+      {/* ── Items table ────────────────────────────────────────── */}
       <div style={{
-        display: 'flex', justifyContent: 'space-between',
-        fontSize: 14, fontWeight: 900, marginTop: 4,
+        display: 'grid', gridTemplateColumns: '1fr 32px 44px 50px', gap: 4,
+        fontWeight: 700, paddingBottom: 2,
       }}>
-        <span>Grand Total</span>
-        <span>₹{total.toFixed(2)}</span>
+        <span>Item Name</span>
+        <span style={{ textAlign: 'right' }}>Qty</span>
+        <span style={{ textAlign: 'right' }}>Rate</span>
+        <span style={{ textAlign: 'right' }}>Amount</span>
+      </div>
+      <Divider thin />
+      {items.map((it) => {
+        const hsn = it.item?.hsnCode;
+        return (
+          <div key={it.id} style={{ marginTop: 3 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 32px 44px 50px', gap: 4 }}>
+              <span style={{ wordBreak: 'break-word', textTransform: 'uppercase' }}>
+                {it.item?.name || 'Item'}{it.variant?.name ? ` (${it.variant.name})` : ''}
+              </span>
+              <span style={{ textAlign: 'right' }}>{it.quantity}</span>
+              <span style={{ textAlign: 'right' }}>{Number(it.unitPrice).toFixed(0)}</span>
+              <span style={{ textAlign: 'right' }}>{Number(it.totalPrice).toFixed(0)}</span>
+            </div>
+            {hsn && (
+              <div style={{ fontSize: 10, color: '#444', marginLeft: 4 }}>HSN&nbsp;&nbsp;{hsn}</div>
+            )}
+          </div>
+        );
+      })}
+
+      <Divider />
+
+      {/* ── Totals row ─────────────────────────────────────────── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+        <span>Tot Items : <strong>{items.length}</strong></span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
+        <span>Tot Qty &nbsp;: <strong>{totalQty}</strong></span>
+        <span style={{ fontWeight: 900, fontSize: 14 }}>Total : {total.toFixed(0)}</span>
       </div>
 
-      <div style={{ marginTop: 6 }}>Paid via {formatPaidVia(order.payments)}</div>
+      <Divider />
+
+      {/* ── Payment Summary ────────────────────────────────────── */}
+      <p style={{ margin: 0, fontWeight: 700, textDecoration: 'underline' }}>Payment Summary</p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginTop: 2 }}>
+        <KV label="Cash" value={pay.CASH.toFixed(0)} compact />
+        <KV label="Card" value={pay.CARD.toFixed(0)} compact />
+        <KV label="Change" value="0" compact />
+        <KV label="UPI" value={pay.UPI.toFixed(0)} compact />
+      </div>
+
+      <Divider />
+
+      {/* ── Tax Summary ────────────────────────────────────────── */}
+      <p style={{ margin: 0, fontWeight: 700, textDecoration: 'underline' }}>Tax Summary</p>
+      <div style={{
+        display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr',
+        gap: 2, fontSize: 10, marginTop: 2,
+      }}>
+        <span>CGST%</span>
+        <span style={{ textAlign: 'right' }}>CGSTAMT</span>
+        <span style={{ textAlign: 'right' }}>SGST%</span>
+        <span style={{ textAlign: 'right' }}>SGSTAMT</span>
+        <span style={{ textAlign: 'right' }}>TAX%</span>
+        <span style={{ textAlign: 'right' }}>TTA</span>
+        <span>{fmtPct(halfGstPct)}</span>
+        <span style={{ textAlign: 'right' }}>{cgst.toFixed(2)}</span>
+        <span style={{ textAlign: 'right' }}>{fmtPct(halfGstPct)}</span>
+        <span style={{ textAlign: 'right' }}>{sgst.toFixed(2)}</span>
+        <span style={{ textAlign: 'right' }}>{fmtPct(totalGstPct)}</span>
+        <span style={{ textAlign: 'right' }}>{taxAmount.toFixed(2)}</span>
+      </div>
 
       <Divider />
 
       <div style={{ textAlign: 'center', marginTop: 4, fontWeight: 700 }}>
-        Thank You Visit Again..!!
+        Thank you &amp; Visit again
       </div>
     </div>
   );
@@ -262,21 +279,13 @@ function Divider({ thin }: { thin?: boolean }) {
   );
 }
 
-function Row({ label, value, underline, mono }: {
-  label: string; value: string | number; underline?: boolean; mono?: boolean;
-}) {
+// "Label : value" with the colon aligned. `compact` shrinks the gap so
+// two pairs sit comfortably in one row of a 2-column grid.
+function KV({ label, value, compact }: { label: string; value: string | number; compact?: boolean }) {
   return (
-    <div style={{
-      display: 'flex', justifyContent: 'space-between', gap: 8,
-      borderBottom: underline ? '1px solid #000' : undefined,
-      paddingBottom: underline ? 2 : 0,
-    }}>
-      <span>{label}</span>
-      <span style={{
-        minWidth: mono ? 60 : undefined,
-        textAlign: 'right',
-        fontVariantNumeric: 'tabular-nums',
-      }}>{value || ' '}</span>
+    <div style={{ display: 'flex', gap: compact ? 4 : 8, fontSize: compact ? 11 : 11.5 }}>
+      <span>{label}{compact ? ' :' : ' :'}</span>
+      <span style={{ fontWeight: 600, flex: 1, wordBreak: 'break-word' }}>{value || ' '}</span>
     </div>
   );
 }
