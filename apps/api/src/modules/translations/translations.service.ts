@@ -1,6 +1,8 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { TRANSLATION_PROVIDER, TranslationProvider } from './translation-provider';
+import { BhashiniTranslationProvider } from './bhashini-translation-provider';
+import { LingvaTranslationProvider } from './lingva-translation-provider';
 
 export const SOURCE_LANGUAGE = 'en';
 
@@ -39,7 +41,80 @@ export class TranslationsService {
   constructor(
     private prisma: PrismaService,
     @Inject(TRANSLATION_PROVIDER) private provider: TranslationProvider,
+    private bhashini: BhashiniTranslationProvider,
+    private lingva: LingvaTranslationProvider,
   ) {}
+
+  /**
+   * Operator-facing diagnostic: tries each concrete provider (Bhashini
+   * first, then Lingva) with a sample string and reports back what
+   * happened. Lets the admin see exactly which provider is wired up
+   * and whether it's reachable from the API container without trawling
+   * server logs. Hits the providers DIRECTLY (bypassing the chain) so
+   * a failure in Bhashini doesn't mask a working Lingva.
+   *
+   * Returns:
+   *   - env state (which provider the chain would pick, creds set?)
+   *   - per-provider result: { ok, durationMs, output? OR error? }
+   * The configured chain's result comes last so the operator can see
+   * what the menu pipeline would actually persist.
+   */
+  async diagnose(text: string, toCode: string) {
+    const sample = text?.trim() || 'Welcome to VEZEOR';
+    const target = toCode?.trim() || 'te';
+
+    const tryOne = async (
+      name: string,
+      fn: () => Promise<string>,
+    ) => {
+      const start = Date.now();
+      try {
+        const output = await fn();
+        return {
+          provider: name,
+          ok: true,
+          durationMs: Date.now() - start,
+          output,
+          // Flag: if the output is stub-tagged that's a soft failure;
+          // the operator usually doesn't want this in production.
+          stubTagged: isStubTaggedValue(output),
+        };
+      } catch (e: any) {
+        return {
+          provider: name,
+          ok: false,
+          durationMs: Date.now() - start,
+          error: String(e?.message ?? e).slice(0, 300),
+        };
+      }
+    };
+
+    const [bhashini, lingva, chain] = await Promise.all([
+      tryOne('bhashini', () => this.bhashini.translate(sample, SOURCE_LANGUAGE, target)),
+      tryOne('lingva', () => this.lingva.translate(sample, SOURCE_LANGUAGE, target)),
+      tryOne('chain', () => this.provider.translate(sample, SOURCE_LANGUAGE, target)),
+    ]);
+
+    return {
+      sample,
+      target,
+      env: {
+        TRANSLATION_PROVIDER_NAME: process.env.TRANSLATION_PROVIDER_NAME || '(unset — auto)',
+        bhashiniCredsSet: !!(process.env.BHASHINI_USER_ID && process.env.BHASHINI_API_KEY),
+        LINGVA_URL: process.env.LINGVA_URL || '(unset — default hosts)',
+        LINGVA_TIMEOUT_MS: process.env.LINGVA_TIMEOUT_MS || '(default 4000)',
+      },
+      bhashini,
+      lingva,
+      // The chain is what upsertAll actually uses when writing
+      // translations. If `chain.ok` is true but `chain.output ===
+      // sample` then both providers failed and we fell back to source.
+      chain: {
+        ...chain,
+        fellBackToSource: chain.ok && chain.output === sample && target !== SOURCE_LANGUAGE,
+      },
+    };
+  }
 
   /** Returns enabled language codes. Cached per call (no in-memory cache to keep things simple). */
   async enabledLanguages(): Promise<string[]> {

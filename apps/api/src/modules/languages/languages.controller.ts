@@ -66,6 +66,21 @@ export class LanguagesController {
     return this.translations.repairStubTagged();
   }
 
+  // Operator-facing translation diagnostic: tries each concrete
+  // provider with a sample string and reports back what happened.
+  // Usage: POST /languages/diagnose-translation { text?, to? }
+  //   - text defaults to "Welcome to VEZEOR"
+  //   - to defaults to "te"
+  // Returns per-provider { ok, durationMs, output|error } so the
+  // admin can see which provider is reachable from inside the API
+  // container, and whether the configured chain falls back to source.
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Post('diagnose-translation')
+  diagnose(@Body() body: { text?: string; to?: string } = {}) {
+    return this.translations.diagnose(body?.text ?? '', body?.to ?? '');
+  }
+
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @Delete(':code')
