@@ -1507,7 +1507,12 @@ export class OrdersService {
     if (shape === 'self-service') {
       preparingNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED];
       readyNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED]; // legacy in-flight orders
-      outForServiceNext = [OrderStatus.READY_FOR_PICKUP, OrderStatus.CANCELLED];
+      // Self-service collapses the manual flow: from OUT_FOR_SERVICE staff
+      // can either go through READY_FOR_PICKUP (customer-ping lane) or
+      // jump straight to SERVED — which is what the admin "Mark Served"
+      // CTA does, and what the auto-rollup uses when every item lands
+      // SERVED. Without SERVED here, both paths 400ed.
+      outForServiceNext = [OrderStatus.READY_FOR_PICKUP, OrderStatus.SERVED, OrderStatus.CANCELLED];
     } else if (shape === 'parcel') {
       preparingNext = [OrderStatus.READY, OrderStatus.CANCELLED];
       readyNext = [OrderStatus.READY_FOR_PICKUP, OrderStatus.SERVED, OrderStatus.CANCELLED];
