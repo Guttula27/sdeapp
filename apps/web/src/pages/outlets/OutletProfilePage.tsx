@@ -305,30 +305,43 @@ export default function OutletProfilePage() {
   };
 
   // ── Hours editing ────────────────────────────────────────
-  // Hours auto-save on every change so users don't lose their work when
+  // Hours auto-save on change so users don't lose their work when
   // navigating away (the rest of the page is saved via the explicit Save
-  // button; only hours persist immediately).
-  const persistHours = async (next: DayCfg[]) => {
+  // button; only hours persist immediately). The PUT is debounced ~600ms
+  // so a burst of edits (typing into a time picker, dragging, "apply to
+  // all days") collapses into one server call — without this, two
+  // concurrent PUTs would race the deleteMany+createMany transaction on
+  // the server and deadlock.
+  const hoursTimer = useRef<number | null>(null);
+  const persistHours = (next: DayCfg[]) => {
     if (!outletId) return;
-    const ranges: { dayOfWeek: number; openTime: string; closeTime: string }[] = [];
-    next.forEach((day, dayIdx) => {
-      if (day.closed) return;
-      day.ranges.forEach((r) => {
-        if (r.openTime && r.closeTime && r.closeTime > r.openTime) {
-          ranges.push({ dayOfWeek: dayIdx, openTime: r.openTime, closeTime: r.closeTime });
-        }
+    if (hoursTimer.current) window.clearTimeout(hoursTimer.current);
+    hoursTimer.current = window.setTimeout(async () => {
+      const ranges: { dayOfWeek: number; openTime: string; closeTime: string }[] = [];
+      next.forEach((day, dayIdx) => {
+        if (day.closed) return;
+        day.ranges.forEach((r) => {
+          if (r.openTime && r.closeTime && r.closeTime > r.openTime) {
+            ranges.push({ dayOfWeek: dayIdx, openTime: r.openTime, closeTime: r.closeTime });
+          }
+        });
       });
-    });
-    try {
-      await api.put(`/outlets/${outletId}/hours`, { ranges });
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to save hours');
-    }
+      try {
+        await api.put(`/outlets/${outletId}/hours`, { ranges });
+      } catch (e: any) {
+        toast.error(e.response?.data?.message || 'Failed to save hours');
+      }
+    }, 600);
   };
+
+  // Flush any pending hours save on unmount so we don't lose the last edit.
+  useEffect(() => () => {
+    if (hoursTimer.current) window.clearTimeout(hoursTimer.current);
+  }, []);
 
   const applyWeekChange = (next: DayCfg[]) => {
     setWeek(next);
-    void persistHours(next);
+    persistHours(next);
   };
 
   const toggleDayClosed = (day: number) => {
