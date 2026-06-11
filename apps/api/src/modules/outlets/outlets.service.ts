@@ -316,9 +316,17 @@ export class OutletsService {
       return { ...base, isOpen: false, isActive: false, reason: 'Outlet is currently closed' };
     }
 
+    // Hours are stored as IST wall-clock (openTime/closeTime are HH:MM
+    // strings the admin typed in their local timezone — and the product
+    // is India-only). The API container typically runs UTC, so using
+    // now.getHours() / getDay() directly would read 09:25 IST as 03:55
+    // UTC and show "Opens at 07:00" while the outlet is actually open.
+    // Round-trip through toLocaleString to coerce wall-clock to IST.
+    // India doesn't observe DST so the round-trip is unambiguous.
     const now = new Date();
-    const day = now.getDay();
-    const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const day = ist.getDay();
+    const hm = `${String(ist.getHours()).padStart(2, '0')}:${String(ist.getMinutes()).padStart(2, '0')}`;
     const todays = outlet.hours.filter((h) => h.dayOfWeek === day);
 
     if (todays.length === 0) {
