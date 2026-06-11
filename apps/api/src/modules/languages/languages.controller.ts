@@ -4,11 +4,15 @@ import { LanguagesService, UpsertLanguageDto } from './languages.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { TranslationsService } from '../translations/translations.service';
 
 @ApiTags('Languages')
 @Controller('languages')
 export class LanguagesController {
-  constructor(private service: LanguagesService) {}
+  constructor(
+    private service: LanguagesService,
+    private translations: TranslationsService,
+  ) {}
 
   // Anyone (including unauthenticated callers) can see what's available so the
   // login screen and customer PWA can render their language picker.
@@ -48,6 +52,18 @@ export class LanguagesController {
   @Post(':code/regenerate')
   regenerate(@CurrentUser() user: any, @Param('code') code: string) {
     return this.service.regenerate(user, code);
+  }
+
+  // One-shot DB cleanup: removes every Translation row whose value is
+  // stub-tagged (e.g. "[te] Masala Dosa"). Use this after a deploy
+  // where translations had been polluted by the dev stub provider
+  // bleeding into production. Returns { deleted: <count> }. The next
+  // backfill / menu write recreates the rows using the real provider.
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Post('repair-stub-tagged')
+  repairStubTagged() {
+    return this.translations.repairStubTagged();
   }
 
   @ApiBearerAuth()

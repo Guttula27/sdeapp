@@ -70,6 +70,41 @@ export function buildReceiptPayload(order: any): CustomerReceiptPayload {
   const intraState = cgst > 0 || sgst > 0;
   const igst = !intraState && taxAmount > 0 ? taxAmount : 0;
 
+  // Multi-rate breakdown — group OrderItems by their snapshotted
+  // gstRate so a mixed cart (food at 5% + beverages at 18%, or items
+  // billed under an AC section's rate) prints one CGST/SGST line per
+  // slab. Same logic the digital ThermalReceipt uses; keeping it
+  // here means the printed bill and the PDF agree even before /
+  // after any auto-discount scaling.
+  const taxLines: NonNullable<CustomerReceiptPayload['taxLines']> = (() => {
+    const groups = new Map<string, { rate: number; baseSum: number; gstAmount: number }>();
+    for (const it of order.items ?? []) {
+      const rate = Math.round(Number(it.gstRate ?? 0) * 100) / 100;
+      if (rate <= 0) continue;
+      const itBase = Number(it.totalPrice ?? 0);
+      const itGst = Number(it.gstAmount ?? (itBase * rate) / 100);
+      const key = rate.toFixed(2);
+      const entry = groups.get(key) || { rate, baseSum: 0, gstAmount: 0 };
+      entry.baseSum += itBase;
+      entry.gstAmount += itGst;
+      groups.set(key, entry);
+    }
+    const rows = Array.from(groups.values()).sort((a, b) => a.rate - b.rate);
+    // Proportional scale to the Order's stored taxAmount when promotions
+    // have shifted it away from the sum of per-line tax (mirrors the
+    // ThermalReceipt logic). All-line bill / coupon / reward discounts
+    // are flat-proportional so a uniform ratio preserves per-rate accuracy.
+    const sumGst = rows.reduce((s, g) => s + g.gstAmount, 0);
+    if (sumGst > 0 && taxAmount > 0 && Math.abs(taxAmount - sumGst) > 0.01) {
+      const ratio = taxAmount / sumGst;
+      for (const g of rows) g.gstAmount = g.gstAmount * ratio;
+    }
+    return rows.map((g) => intraState
+      ? { rate: g.rate, cgst: g.gstAmount / 2, sgst: g.gstAmount / 2, gstAmount: g.gstAmount }
+      : { rate: g.rate, igst: g.gstAmount, gstAmount: g.gstAmount },
+    );
+  })();
+
   // Round-off absorbs any gap between stored grand total and the sum
   // of components we're about to print — usually 0 for new orders but
   // can be a few paise on legacy ones persisted under the old
@@ -114,6 +149,7 @@ export function buildReceiptPayload(order: any): CustomerReceiptPayload {
     sgst: intraState ? sgst : undefined,
     igst: igst > 0 ? igst : undefined,
     gstPct,
+    taxLines: taxLines.length > 0 ? taxLines : undefined,
     roundOff,
     total,
     paidVia,

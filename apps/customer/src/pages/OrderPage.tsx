@@ -1086,6 +1086,28 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
                 ⭐ Special
               </span>
             )}
+            {/* Limited-stock chip — exposes the kitchen's per-item
+                inventory so customers know to grab the popular ones
+                fast. Shows the exact count when it gets tight (≤5
+                left), otherwise just the generic "Limited Quantity
+                Available" label so we don't broadcast healthy stock
+                levels into FOMO. Hidden once the item is sold out —
+                in that case `disabledReason` already says so. */}
+            {item.hasLimitedStock && item.availableQuantity > 0 && (
+              <span
+                className={clsx(
+                  'inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full',
+                  item.availableQuantity <= 5
+                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                    : 'bg-amber-50 text-amber-700 border border-amber-100',
+                )}
+                title={`Only ${item.availableQuantity} left in stock`}
+              >
+                {item.availableQuantity <= 5
+                  ? `Only ${item.availableQuantity} left`
+                  : 'Limited Quantity Available'}
+              </span>
+            )}
             {disabled && disabledReason && (
               <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full border border-slate-200">
                 {disabledReason}
@@ -1319,9 +1341,16 @@ function ItemDetailModal({
                 {item.longDescription || item.shortDescription || item.description}
               </p>
             )}
-            <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-400">
+            <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-400 flex-wrap">
               {item.preparationTime && <span className="flex items-center gap-1"><Clock size={10} /> {item.preparationTime} min</span>}
               {item.parcelAvailable ? <span>Parcel available</span> : <span className="text-red-500">Not available for parcel</span>}
+              {item.hasLimitedStock && item.availableQuantity > 0 && (
+                <span className="inline-flex items-center text-amber-700 font-semibold">
+                  {item.availableQuantity <= 5
+                    ? `Only ${item.availableQuantity} left`
+                    : 'Limited Quantity Available'}
+                </span>
+              )}
             </div>
           </div>
 

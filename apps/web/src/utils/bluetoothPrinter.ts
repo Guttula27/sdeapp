@@ -182,10 +182,26 @@ export type CustomerReceiptPayload = {
   discounts: ReceiptDiscountLine[];      // each rendered as -₹X
   taxable: number;                       // subtotal - discount
   // Either cgst+sgst pair (intra-state) or igst alone (inter-state).
+  // Legacy single-rate fields — kept for back-compat with older receipt
+  // payloads / cached snapshots. Multi-rate carts populate `taxLines`
+  // below; when present, the printer renders one CGST/SGST row per
+  // unique GST rate (food at 5% + beverages at 18% each get their own
+  // line) and the single-rate fields are ignored.
   cgst?: number;
   sgst?: number;
   igst?: number;
   gstPct?: number;                       // total %, used for "CGST 2.5%" label
+  // Per-GST-rate breakdown. Each entry sums the items on the order
+  // that snapshotted the same OrderItem.gstRate. For intra-state
+  // orders `cgst` and `sgst` are populated (half the group's tax
+  // each); for inter-state `igst` carries the full group tax.
+  taxLines?: Array<{
+    rate: number;
+    cgst?: number;
+    sgst?: number;
+    igst?: number;
+    gstAmount: number;
+  }>;
   roundOff?: number;
   total: number;
   paidVia?: string | null;
@@ -247,7 +263,22 @@ function buildCustomerEscPos(r: CustomerReceiptPayload): Uint8Array {
   if (r.discounts.length > 0) {
     push(pad('Taxable', fmt(r.taxable)) + '\n');
   }
-  if (r.cgst != null && r.sgst != null && (r.cgst > 0 || r.sgst > 0)) {
+  // GST split — per-rate when the order has items snapshotted at
+  // different rates (food at 5% + beverages at 18%), single-rate
+  // fallback for the common case + legacy payloads.
+  const fmtPct = (n: number) => n.toFixed(2).replace(/\.?0+$/, '');
+  if (r.taxLines && r.taxLines.length > 0) {
+    for (const tl of r.taxLines) {
+      if (tl.cgst != null && tl.sgst != null) {
+        const half = fmtPct(tl.rate / 2);
+        push(pad(`CGST ${half}%`, fmt(tl.cgst)) + '\n');
+        push(pad(`SGST ${half}%`, fmt(tl.sgst)) + '\n');
+      } else if (tl.igst != null) {
+        const full = fmtPct(tl.rate);
+        push(pad(`IGST ${full}%`, fmt(tl.igst)) + '\n');
+      }
+    }
+  } else if (r.cgst != null && r.sgst != null && (r.cgst > 0 || r.sgst > 0)) {
     const half = ((r.gstPct ?? 0) / 2).toFixed(1).replace(/\.0$/, '');
     push(pad(`CGST ${half}%`, fmt(r.cgst)) + '\n');
     push(pad(`SGST ${half}%`, fmt(r.sgst)) + '\n');

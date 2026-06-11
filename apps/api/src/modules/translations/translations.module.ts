@@ -11,12 +11,17 @@ const logger = new Logger('TranslationsModule');
  * Selection order:
  *   1. TRANSLATION_PROVIDER_NAME=bhashini  → Bhashini (needs BHASHINI_USER_ID / BHASHINI_API_KEY)
  *   2. TRANSLATION_PROVIDER_NAME=lingva    → Lingva (no key)
- *   3. TRANSLATION_PROVIDER_NAME=stub      → stub (dev only)
- *   4. (default) auto: Bhashini if creds present, else Lingva, else stub.
+ *   3. TRANSLATION_PROVIDER_NAME=stub      → stub (dev only — appears verbatim in DB!)
+ *   4. (default) auto: Bhashini if creds present, else Lingva.
  *
- * Wrap whichever real provider is picked in a fallback chain so a transient
- * upstream error doesn't lose the translation — fall through to the next
- * provider before finally degrading to the stub.
+ * The Stub provider returns `[<lang>] <english>` and never throws — useful
+ * for dev / screenshots but TOXIC for production because the tagged string
+ * lands in Translation.value and pollutes the menu forever. So the Stub is
+ * NEVER part of the auto-fallback chain — it is only used when explicitly
+ * opted into via TRANSLATION_PROVIDER_NAME=stub. When the real providers
+ * fail, the chain throws and translations.service catches it, persisting
+ * the English source instead. The customer menu then shows English (the
+ * original copy the admin typed) rather than [te] english.
  */
 function buildProvider(): TranslationProvider {
   const explicit = (process.env.TRANSLATION_PROVIDER_NAME || '').trim().toLowerCase();
@@ -28,18 +33,22 @@ function buildProvider(): TranslationProvider {
 
   const order: TranslationProvider[] = [];
   if (explicit === 'bhashini') {
-    if (!hasBhashini) logger.warn('TRANSLATION_PROVIDER_NAME=bhashini but credentials missing — falling back to Lingva then stub');
-    order.push(bhashini, lingva, stub);
+    if (!hasBhashini) logger.warn('TRANSLATION_PROVIDER_NAME=bhashini but credentials missing — falling back to Lingva');
+    order.push(bhashini, lingva);
   } else if (explicit === 'lingva') {
-    order.push(lingva, stub);
+    order.push(lingva);
   } else if (explicit === 'stub') {
+    // Explicit opt-in only — never picked automatically. Translations
+    // service still detects stub-tagged values and refuses to persist
+    // them, so even this path no longer poisons the DB.
+    logger.warn('TRANSLATION_PROVIDER_NAME=stub — translations are pseudo-localised. Never use in production.');
     order.push(stub);
   } else if (hasBhashini) {
-    logger.log('Using Bhashini (with Lingva → stub fallback)');
-    order.push(bhashini, lingva, stub);
+    logger.log('Using Bhashini (with Lingva fallback)');
+    order.push(bhashini, lingva);
   } else {
     logger.warn('Bhashini credentials not set — using Lingva (free public Google proxy). Set BHASHINI_USER_ID and BHASHINI_API_KEY to switch.');
-    order.push(lingva, stub);
+    order.push(lingva);
   }
 
   return {

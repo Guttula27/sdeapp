@@ -347,13 +347,14 @@ export default function ServiceDeskPage() {
                 <p className="text-xs text-slate-400 italic px-2 py-6 text-center">Nothing in this lane.</p>
               )}
 
-              {/* Compact card grid. When expanded, lay cards in a 2-col
-                  grid so the extra horizontal space is used. */}
+              {/* CSS multi-column masonry — mirrors the Kitchen layout.
+                  Cards are pinned at ~240px wide, so a 30%-wide lane
+                  fits one column and an 80%-expanded lane packs five or
+                  six side-by-side. `break-inside: avoid` (on each card
+                  below) keeps a card from being split between columns. */}
               <div
-                className={clsx(
-                  'space-y-2 overflow-y-auto pr-1',
-                  isExpanded && 'lg:grid lg:grid-cols-2 lg:gap-2 lg:space-y-0',
-                )}
+                className="overflow-y-auto pr-1"
+                style={{ columnWidth: '240px', columnGap: '8px' }}
               >
                 {rows.map((o) => {
                   const items = lane === 'verify' ? verifyItemsFor(o) : liveItemsFor(o);
@@ -365,8 +366,9 @@ export default function ServiceDeskPage() {
                     <article
                       key={o.id}
                       onClick={() => toggleCard(o.id)}
+                      style={{ breakInside: 'avoid' }}
                       className={clsx(
-                        'bg-white rounded-xl border p-2.5 transition-all cursor-pointer hover:border-slate-300',
+                        'bg-white rounded-xl border p-2.5 transition-all cursor-pointer hover:border-slate-300 mb-2 inline-block w-full',
                         flashing
                           ? 'border-amber-300 shadow-[0_0_0_3px_rgba(245,158,11,0.25)] animate-pulse'
                           : 'border-slate-200',

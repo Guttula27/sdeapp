@@ -5,6 +5,21 @@ import { TRANSLATION_PROVIDER, TranslationProvider } from './translation-provide
 export const SOURCE_LANGUAGE = 'en';
 
 /**
+ * Detect a stub-provider tagged value like "[te] english text" or
+ * "[हिन्दी] english text" — the Stub provider's output format. Such values
+ * MUST NOT be persisted (we'd see them in the customer menu) and MUST be
+ * ignored on read (any legacy poisoned row hydrates to source instead).
+ *
+ * Regex: anchored open-bracket, then 1–12 non-bracket chars (covers
+ * 2-letter ISO codes like "te" and short Devanagari script labels like
+ * "हिन्दी"), then close-bracket and at least one whitespace.
+ */
+export function isStubTaggedValue(s: string | null | undefined): boolean {
+  if (!s) return false;
+  return /^\[[^\]]{1,12}\]\s/.test(s);
+}
+
+/**
  * Translation primitives used across modules.
  *
  * Conventions:
@@ -69,13 +84,19 @@ export class TranslationsService {
       for (const lang of languages) {
         jobs.push(
           (async () => {
-            const value =
+            const raw =
               lang === SOURCE_LANGUAGE
                 ? sourceText
                 : await this.provider.translate(sourceText, SOURCE_LANGUAGE, lang).catch((e) => {
                     this.logger.warn(`translate failed (${entityType}.${fieldName} → ${lang}): ${e.message}`);
                     return sourceText;
                   });
+            // Defensive: if the provider chain returned a stub-tagged
+            // value (only possible when TRANSLATION_PROVIDER_NAME=stub
+            // is explicitly set), drop it and persist the English
+            // source instead. The customer menu shows English — never
+            // "[te] english" — even if someone misconfigures env.
+            const value = isStubTaggedValue(raw) ? sourceText : raw;
             return { entityType, entityId, fieldName, languageCode: lang, value };
           })(),
         );
@@ -125,11 +146,54 @@ export class TranslationsService {
       where: { entityType, entityId: { in: entityIds }, languageCode },
     });
     for (const r of rows) {
+      // Drop stub-tagged values silently. hydrate() then leaves the
+      // field at its source English value rather than rendering
+      // "[te] Masala Dosa" to a customer. The repair endpoint
+      // (repairStubTagged) can purge these rows so a next backfill
+      // overwrites them with real translations.
+      if (isStubTaggedValue(r.value)) continue;
       const existing = map.get(r.entityId) ?? {};
       existing[r.fieldName] = r.value;
       map.set(r.entityId, existing);
     }
     return map;
+  }
+
+  /**
+   * One-shot cleanup: delete every Translation row whose value matches
+   * the stub-provider tagged format. Safe to run any time — the next
+   * backfill (`TranslationBackfillService.run(<lang>)`) will recreate
+   * the rows using the currently configured real provider.
+   * Returns the number of rows removed for reporting.
+   */
+  async repairStubTagged(): Promise<{ deleted: number }> {
+    // MySQL pattern: anything starting with `[<short text>]<space>`.
+    // We can't run a regex through Prisma's MySQL connector portably,
+    // so we read candidates by simple LIKE then verify with the JS
+    // regex helper — slightly chatty but safe.
+    const candidates = await this.prisma.translation.findMany({
+      where: { value: { startsWith: '[' } },
+      select: { entityType: true, entityId: true, fieldName: true, languageCode: true, value: true },
+    });
+    const toDelete = candidates.filter((c) => isStubTaggedValue(c.value));
+    if (toDelete.length === 0) return { deleted: 0 };
+
+    await this.prisma.$transaction(
+      toDelete.map((c) =>
+        this.prisma.translation.delete({
+          where: {
+            entityType_entityId_fieldName_languageCode: {
+              entityType: c.entityType,
+              entityId: c.entityId,
+              fieldName: c.fieldName,
+              languageCode: c.languageCode,
+            },
+          },
+        }),
+      ),
+    );
+    this.logger.log(`repairStubTagged: deleted ${toDelete.length} stub-tagged rows`);
+    return { deleted: toDelete.length };
   }
 
   /**

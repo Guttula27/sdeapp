@@ -299,11 +299,13 @@ export default function ParcelDeskPage() {
                 <p className="text-xs text-slate-400 italic px-2 py-6 text-center">Nothing in this lane.</p>
               )}
 
+              {/* Multi-column masonry matches the Kitchen + Service desk
+                  layout: pin each card at ~240px so a wide expanded
+                  lane packs many side-by-side and a narrow collapsed
+                  lane keeps to a single column. */}
               <div
-                className={clsx(
-                  'space-y-2 overflow-y-auto pr-1',
-                  isExpanded && 'lg:grid lg:grid-cols-2 lg:gap-2 lg:space-y-0',
-                )}
+                className="overflow-y-auto pr-1"
+                style={{ columnWidth: '240px', columnGap: '8px' }}
               >
                 {rows.map((o) => {
                   const items = liveItemsFor(o);
@@ -316,8 +318,9 @@ export default function ParcelDeskPage() {
                     <article
                       key={o.id}
                       onClick={() => toggleCard(o.id)}
+                      style={{ breakInside: 'avoid' }}
                       className={clsx(
-                        'bg-white rounded-xl border p-2.5 transition-all cursor-pointer hover:border-slate-300',
+                        'bg-white rounded-xl border p-2.5 transition-all cursor-pointer hover:border-slate-300 mb-2 inline-block w-full',
                         flashing
                           ? 'border-amber-300 shadow-[0_0_0_3px_rgba(245,158,11,0.25)] animate-pulse'
                           : 'border-slate-200',
