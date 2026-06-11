@@ -1054,6 +1054,15 @@ model Order {
   activeSequence  Int   @default(1)
   sequenceLabels  Json?
 
+  // Frozen outlet header for the receipt — captured at order creation so
+  // a historical bill always prints the address / GSTIN / FSSAI / phone
+  // the outlet had at the time, even after the outlet moves or updates
+  // its compliance numbers. Shape mirrors the receipt's outlet block:
+  // { name, addressLine1, addressLine2, city, state, pincode, gstNumber,
+  //   fssaiNumber, phone, logoUrl }. Nullable for legacy rows — the
+  //   receipt falls back to the live outlet relation when missing.
+  outletSnapshot  Json?
+
   items         OrderItem[]
   payments      Payment[]
   statusHistory OrderStatusHistory[]
@@ -1177,6 +1186,13 @@ model OrderItem {
   gstAmount  Decimal         @db.Decimal(10, 2) @default(0)
   notes      String?
   status     OrderItemStatus @default(PENDING)
+  // Frozen labels — snapshotted at order-creation time so a historical
+  // receipt prints the name the customer actually ordered, even if the
+  // Item / Variant has since been renamed or deleted. The Prisma
+  // relations are kept so the kitchen + admin views can still link
+  // through to live menu state. Nullable for legacy rows.
+  itemNameSnapshot     String?  @db.VarChar(255)
+  variantNameSnapshot  String?  @db.VarChar(255)
   orderId    String
   order      Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
   itemId     String

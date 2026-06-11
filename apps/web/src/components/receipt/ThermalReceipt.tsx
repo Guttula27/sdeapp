@@ -19,8 +19,30 @@ type OrderItem = {
   totalPrice: number | string;
   gstRate?: number | string | null;
   notes?: string | null;
+  // Frozen names captured at order creation. Prefer these on a reprint
+  // so the bill always shows what the customer actually ordered, even
+  // after the menu item is renamed or removed.
+  itemNameSnapshot?: string | null;
+  variantNameSnapshot?: string | null;
   item?: { name?: string; hsnCode?: string | null } | null;
   variant?: { name?: string } | null;
+};
+
+// Frozen outlet header captured on Order at create time (column added
+// 2026-06-11). Legacy orders missing this fall back to the live
+// `order.outlet` relation.
+type OutletSnapshot = {
+  name?: string | null;
+  address?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+  gstNumber?: string | null;
+  fssaiNumber?: string | null;
+  phone?: string | null;
+  logoUrl?: string | null;
 };
 
 type Payment = {
@@ -55,6 +77,7 @@ export type ReceiptOrder = {
   totalAmount: number | string;
   customer?: { name?: string | null; phone?: string | null } | null;
   staff?: { name?: string | null } | null;
+  outletSnapshot?: OutletSnapshot | null;
   outlet?: {
     name?: string;
     address?: string | null;
@@ -140,9 +163,12 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
   const autoDiscount = Math.max(0, discount - explicitDiscount);
 
   const placedAt = dayjs(order.createdAt);
-  const streetLines = [order.outlet?.addressLine1, order.outlet?.addressLine2].filter(Boolean) as string[];
-  if (streetLines.length === 0 && order.outlet?.address) streetLines.push(order.outlet.address);
-  const cityLine = [order.outlet?.city, order.outlet?.state, order.outlet?.pincode].filter(Boolean).join(', ');
+  // Prefer the frozen header so a historical reprint stays accurate even
+  // after the outlet moves or updates its compliance numbers.
+  const outletHeader: OutletSnapshot = order.outletSnapshot || order.outlet || {};
+  const streetLines = [outletHeader.addressLine1, outletHeader.addressLine2].filter(Boolean) as string[];
+  if (streetLines.length === 0 && outletHeader.address) streetLines.push(outletHeader.address);
+  const cityLine = [outletHeader.city, outletHeader.state, outletHeader.pincode].filter(Boolean).join(', ');
   const counterLabel = order.isParcel
     ? 'PARCEL'
     : order.table?.number
@@ -186,20 +212,20 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
       {/* ── Header ─────────────────────────────────────────────── */}
       <div style={{ textAlign: 'center' }}>
         <p style={{ fontWeight: 800, fontSize: 16, margin: 0, letterSpacing: 0.5, lineHeight: 1.3 }}>
-          {(order.outlet?.name || 'Outlet').toUpperCase()}
+          {(outletHeader.name || 'Outlet').toUpperCase()}
         </p>
         {streetLines.map((line, i) => (
           <p key={i} style={{ margin: '3px 0 0', fontSize: 11.5 }}>{line}</p>
         ))}
         {cityLine && <p style={{ margin: '3px 0 0', fontSize: 11.5 }}>{cityLine}</p>}
-        {order.outlet?.gstNumber && (
-          <p style={{ margin: '3px 0 0', fontSize: 11.5 }}>GST NO. {order.outlet.gstNumber}</p>
+        {outletHeader.gstNumber && (
+          <p style={{ margin: '3px 0 0', fontSize: 11.5 }}>GST NO. {outletHeader.gstNumber}</p>
         )}
-        {order.outlet?.phone && (
-          <p style={{ margin: '3px 0 0', fontSize: 11.5 }}>Phone : {order.outlet.phone}</p>
+        {outletHeader.phone && (
+          <p style={{ margin: '3px 0 0', fontSize: 11.5 }}>Phone : {outletHeader.phone}</p>
         )}
-        {order.outlet?.fssaiNumber && (
-          <p style={{ margin: '3px 0 0', fontSize: 11.5 }}>FSSAI : {order.outlet.fssaiNumber}</p>
+        {outletHeader.fssaiNumber && (
+          <p style={{ margin: '3px 0 0', fontSize: 11.5 }}>FSSAI : {outletHeader.fssaiNumber}</p>
         )}
       </div>
 
@@ -235,11 +261,15 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
       <Divider thin />
       {items.map((it) => {
         const hsn = it.item?.hsnCode;
+        // Frozen names win over the live relation so renames don't
+        // rewrite historical bills.
+        const itemLabel = it.itemNameSnapshot || it.item?.name || 'Item';
+        const variantLabel = it.variantNameSnapshot || it.variant?.name;
         return (
           <div key={it.id} style={{ padding: '4px 0', borderBottom: '1px dotted #ccc' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 32px 44px 56px', gap: 6 }}>
               <div style={{ wordBreak: 'break-word', textTransform: 'uppercase' }}>
-                {it.item?.name || 'Item'}{it.variant?.name ? ` (${it.variant.name})` : ''}
+                {itemLabel}{variantLabel ? ` (${variantLabel})` : ''}
                 {it.notes && (
                   <div style={{ fontSize: 10, color: '#666', fontStyle: 'italic', textTransform: 'none' }}>
                     {it.notes}

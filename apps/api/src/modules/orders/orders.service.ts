@@ -45,10 +45,18 @@ export class OrdersService {
 
   async create(outletId: string, dto: CreateOrderDto, userId?: string) {
     // Outlet GST config — gstApplicable is the master toggle; gstPercent is
-    // the fallback when an item doesn't carry its own rate.
+    // the fallback when an item doesn't carry its own rate. We also pull
+    // the receipt-header fields so we can freeze them on the Order row
+    // (outletSnapshot) — historical bills must reprint the address /
+    // GSTIN / FSSAI that were in effect at order time.
     const outlet = await this.prisma.outlet.findUnique({
       where: { id: outletId },
-      select: { gstApplicable: true, gstPercent: true, priceIncludesGst: true, businessId: true },
+      select: {
+        gstApplicable: true, gstPercent: true, priceIncludesGst: true, businessId: true,
+        name: true, address: true, addressLine1: true, addressLine2: true,
+        city: true, state: true, pincode: true,
+        gstNumber: true, fssaiNumber: true, phone: true, logoUrl: true,
+      },
     });
     const gstOn = !!outlet?.gstApplicable;
     const outletDefaultPct = gstOn ? Number(outlet?.gstPercent ?? 0) : 0;
@@ -365,6 +373,22 @@ export class OrdersService {
           parcelAmount,
           discountAmount,
           totalAmount,
+          // Freeze the outlet's receipt header as JSON so a reprint
+          // months later still shows the address / GSTIN / FSSAI that
+          // were in effect when the customer was billed.
+          outletSnapshot: {
+            name:         outlet?.name ?? null,
+            address:      outlet?.address ?? null,
+            addressLine1: outlet?.addressLine1 ?? null,
+            addressLine2: outlet?.addressLine2 ?? null,
+            city:         outlet?.city ?? null,
+            state:        outlet?.state ?? null,
+            pincode:      outlet?.pincode ?? null,
+            gstNumber:    outlet?.gstNumber ?? null,
+            fssaiNumber:  outlet?.fssaiNumber ?? null,
+            phone:        outlet?.phone ?? null,
+            logoUrl:      outlet?.logoUrl ?? null,
+          },
           items: {
             create: items.map((it: any) => ({
               ...it,
@@ -1323,9 +1347,16 @@ export class OrdersService {
         }
 
         let unitPrice = Number(item.basePrice);
+        let variantName: string | null = null;
         if (i.variantId) {
-          const variant = await this.prisma.variant.findUnique({ where: { id: i.variantId } });
-          if (variant) unitPrice = Number(variant.price);
+          const variant = await this.prisma.variant.findUnique({
+            where: { id: i.variantId },
+            select: { name: true, price: true },
+          });
+          if (variant) {
+            unitPrice = Number(variant.price);
+            variantName = variant.name;
+          }
         }
 
         // Price overrides (always applied — independent of GST). Precedence
@@ -1406,6 +1437,11 @@ export class OrdersService {
           gstAmount,
           notes: composedNotes,
           menuId: (item as any).subcategory?.category?.menuId ?? null,
+          // Frozen labels — printed on historical receipts even after a
+          // rename / delete. Receipts fall back to the live relation
+          // when these are null (legacy rows pre-2026-06-11).
+          itemNameSnapshot: item.name,
+          variantNameSnapshot: variantName,
         };
       }),
     );
