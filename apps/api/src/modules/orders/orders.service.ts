@@ -1185,14 +1185,14 @@ export class OrdersService {
     });
     if (!order || order.items.length === 0) return null;
 
-    // Don't touch frozen / manual-only states
-    const frozen: OrderStatus[] = [
-      OrderStatus.READY_FOR_PICKUP, OrderStatus.OUT_FOR_SERVICE,
+    // Terminal / refund / dispute states are off-limits — once an order
+    // hits these it stops auto-progressing regardless of item updates.
+    const terminal: OrderStatus[] = [
       OrderStatus.SERVED, OrderStatus.CANCELLED,
       OrderStatus.DISPUTED, OrderStatus.RESOLVED,
       OrderStatus.FOR_REFUND, OrderStatus.REFUND_COMPLETE,
     ];
-    if (frozen.includes(order.status as OrderStatus)) return null;
+    if (terminal.includes(order.status as OrderStatus)) return null;
 
     // PENDING_VERIFICATION items don't exist for the kitchen, so they
     // also don't count toward rollup decisions — they're treated like
@@ -1203,6 +1203,38 @@ export class OrdersService {
         i.status !== OrderItemStatus.PENDING_VERIFICATION,
     );
     if (live.length === 0) return null;
+
+    // If every live item is SERVED, the order is done — push it through
+    // to SERVED regardless of what intermediate lane state (READY,
+    // OUT_FOR_SERVICE, READY_FOR_PICKUP) it currently sits in. Without
+    // this, a self-service order whose last item the kitchen marked
+    // SERVED would stay parked at OUT_FOR_SERVICE waiting for staff to
+    // tap "Mark Served" — and the customer would still see "On its way".
+    if (live.every((i) => i.status === OrderItemStatus.SERVED)) {
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: {
+          status: OrderStatus.SERVED,
+          statusHistory: {
+            create: {
+              status: OrderStatus.SERVED,
+              changedBy: userId,
+              notes: 'Auto-rolled up — every item served',
+            },
+          },
+        },
+      });
+      return OrderStatus.SERVED;
+    }
+
+    // Below here we drive the early-lane rollup (CREATED → QUEUED →
+    // PREPARING → READY/OUT_FOR_SERVICE). Once the order is past the
+    // automatic prefix (READY_FOR_PICKUP / OUT_FOR_SERVICE / READY on
+    // table-service), staff own the next step manually.
+    const midLaneFrozen: OrderStatus[] = [
+      OrderStatus.READY_FOR_PICKUP, OrderStatus.OUT_FOR_SERVICE,
+    ];
+    if (midLaneFrozen.includes(order.status as OrderStatus)) return null;
 
     const shape = this.flowShape(order.outlet?.outletType, order.tableId, order.isParcel);
     // Self-service skips the order-level READY step entirely — when the
