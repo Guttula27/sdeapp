@@ -23,6 +23,17 @@ enum UserOwnerScope {
   OUTLET
 }
 
+// How an item is sold. NUMBER (default) = count-based — qty is "how
+// many of this dish". GRAMS / MILLILITERS = portion-based — the item's
+// variants represent fixed portion sizes (e.g. 100g, 250g, 500g) and
+// the customer picks which portion. Drives admin form layout + how
+// the variant name is auto-formatted.
+enum ItemQuantityUnit {
+  NUMBER
+  GRAMS
+  MILLILITERS
+}
+
 enum BusinessType {
   RESTAURANT
   QSR
@@ -820,6 +831,11 @@ model Item {
   // When false, the item is unlimited and the count is ignored.
   hasLimitedStock    Boolean   @default(false)
   availableQuantity  Int       @default(0)
+  // How this item is sold. NULL = NUMBER (legacy default — keeps every
+  // existing item rendered as a count). GRAMS / MILLILITERS turns the
+  // variants list into portion sizes and labels the customer picker
+  // with the unit suffix (e.g. "250g").
+  quantityUnit       ItemQuantityUnit?
   displayOrder     Int         @default(0)
   subcategoryId    String
   subcategory      Subcategory @relation(fields: [subcategoryId], references: [id])
@@ -881,6 +897,10 @@ model Variant {
   shortDescription String? @db.VarChar(80)
   price            Decimal @db.Decimal(10, 2)
   isAvailable      Boolean @default(true)
+  // Numeric size for portion-based items. Reads in the parent Item's
+  // quantityUnit (so 250 + GRAMS = "250g"). Optional — when null the
+  // variant is treated as a plain-named variant (Small / Medium / Large).
+  unitQuantity     Int?
   itemId           String
   item             Item    @relation(fields: [itemId], references: [id])
 

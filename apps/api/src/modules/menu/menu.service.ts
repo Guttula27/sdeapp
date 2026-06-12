@@ -571,7 +571,7 @@ export class MenuService {
 
   // ─── Variants ─────────────────────────────────────────────
 
-  async createVariant(itemId: string, data: { name: string; price: number; shortDescription?: string }) {
+  async createVariant(itemId: string, data: { name: string; price: number; shortDescription?: string; unitQuantity?: number | null }) {
     const variant = await this.prisma.variant.create({ data: { ...data, itemId } });
     await this.translations.upsertAll('Variant', variant.id, {
       name: variant.name,

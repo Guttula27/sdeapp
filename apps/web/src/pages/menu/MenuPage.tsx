@@ -164,7 +164,14 @@ export default function MenuPage() {
   const [gallery, setGallery]       = useState<{ id?: string; url: string; isNew?: boolean }[]>([]);
   const [subImage, setSubImage]     = useState<string | null>(null);
   // Item modal — variant editor draft. id=undefined for new rows.
-  const [variantsDraft, setVariantsDraft] = useState<{ id?: string; name: string; shortDescription: string; price: string; _delete?: boolean }[]>([]);
+  // unitQuantity is the numeric portion size (e.g. 250 for "250g") when
+  // the parent Item is sold by weight / volume. Null for count-based
+  // items where each variant is just a named size.
+  const [variantsDraft, setVariantsDraft] = useState<{ id?: string; name: string; shortDescription: string; price: string; unitQuantity?: string; _delete?: boolean }[]>([]);
+  // Item-level quantity unit. NUMBER (default) keeps the existing
+  // free-text variant editor; GRAMS / MILLILITERS swaps in the
+  // numeric-portion input below and auto-formats variant names.
+  const [itemQuantityUnit, setItemQuantityUnit] = useState<'NUMBER' | 'GRAMS' | 'MILLILITERS'>('NUMBER');
   const fileInputRef                = useRef<HTMLInputElement>(null);
   const thumbInputRef               = useRef<HTMLInputElement>(null);
   const galleryInputRef             = useRef<HTMLInputElement>(null);
@@ -430,7 +437,11 @@ export default function MenuPage() {
           name: v.name,
           shortDescription: v.shortDescription || '',
           price: String(v.price),
+          unitQuantity: v.unitQuantity != null ? String(v.unitQuantity) : '',
         })),
+      );
+      setItemQuantityUnit(
+        (itemModal.editing?.quantityUnit as any) || 'NUMBER',
       );
 
       const existing: Record<string, { selected: boolean; priceAdd: string; isRequired: boolean }> = {};
@@ -660,6 +671,10 @@ export default function MenuPage() {
       preparationTime: form.get('preparationTime') ? Number(form.get('preparationTime')) : undefined,
       isPopular: form.get('isPopular') === 'on',
       isSpecial: form.get('isSpecial') === 'on',
+      // Sales unit — NUMBER keeps existing count-based behaviour;
+      // GRAMS / MILLILITERS marks the item as portion-based, drives
+      // variant naming, and is hinted on the customer UI.
+      quantityUnit: itemQuantityUnit === 'NUMBER' ? null : itemQuantityUnit,
       // Visibility on the customer menu. Off = item exists, can be sold
       // inside a bundle, but doesn't show in the public category listing.
       isDisplayed: form.get('isDisplayed') === 'on',
@@ -737,12 +752,30 @@ export default function MenuPage() {
           api.delete(`${menuBase}/variants/${vid}`),
         ),
         ...variantsDraft
-          .filter(d => d.name.trim() && d.price !== '')
+          .filter(d => {
+            // For portion-based items, the row is valid when the
+            // numeric size is positive and a price is set; the name
+            // is auto-formatted. For count-based items the existing
+            // name + price rule applies.
+            if (itemQuantityUnit !== 'NUMBER') {
+              const q = Number(d.unitQuantity || 0);
+              return q > 0 && d.price !== '';
+            }
+            return d.name.trim() && d.price !== '';
+          })
           .map(d => {
-            const payload = {
-              name: d.name.trim(),
+            const unitSuffix = itemQuantityUnit === 'GRAMS' ? 'g'
+              : itemQuantityUnit === 'MILLILITERS' ? 'ml'
+              : '';
+            const payload: any = {
+              name: itemQuantityUnit !== 'NUMBER' && d.unitQuantity
+                ? `${d.unitQuantity}${unitSuffix}`
+                : d.name.trim(),
               shortDescription: d.shortDescription.trim() || undefined,
               price: Number(d.price),
+              unitQuantity: itemQuantityUnit !== 'NUMBER' && d.unitQuantity
+                ? Math.max(1, Number(d.unitQuantity))
+                : null,
             };
             return d.id
               ? api.patch(`${menuBase}/variants/${d.id}`, payload)
@@ -1751,10 +1784,69 @@ export default function MenuPage() {
             <input name="preparationTime" type="number" min="1" defaultValue={itemModal.editing?.preparationTime} className="input" placeholder="e.g. 10" />
           </Field>
 
-          <Field label="Variants">
-            <p className="text-[11px] text-slate-400 mb-2">Add sizes like Half / Full / Family. Each variant has its own price; short description is optional.</p>
+          <Field label="Quantity unit">
+            <select
+              value={itemQuantityUnit}
+              onChange={(e) => setItemQuantityUnit(e.target.value as any)}
+              className="input"
+            >
+              <option value="NUMBER">Number (count) — e.g. 1 dish, 2 dishes</option>
+              <option value="GRAMS">Weight — grams (g)</option>
+              <option value="MILLILITERS">Volume — millilitres (ml)</option>
+            </select>
+            <p className="text-[11px] text-slate-400 mt-1">
+              {itemQuantityUnit === 'NUMBER'
+                ? 'Default — customer picks how many.'
+                : 'Customer picks a portion size from the predefined list below.'}
+            </p>
+          </Field>
+
+          <Field label={itemQuantityUnit === 'NUMBER' ? 'Variants' : 'Available sizes'}>
+            <p className="text-[11px] text-slate-400 mb-2">
+              {itemQuantityUnit === 'NUMBER'
+                ? 'Add sizes like Half / Full / Family. Each variant has its own price; short description is optional.'
+                : itemQuantityUnit === 'GRAMS'
+                  ? 'Add portion sizes in grams (e.g. 100, 250, 500). The customer picks one.'
+                  : 'Add portion sizes in millilitres (e.g. 200, 400, 750). The customer picks one.'}
+            </p>
             <div className="space-y-2">
-              {variantsDraft.map((v, idx) => (
+              {variantsDraft.map((v, idx) => itemQuantityUnit !== 'NUMBER' ? (
+                <div key={v.id || `new-${idx}`} className="bg-slate-50 rounded-xl p-2.5">
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="Size"
+                        value={v.unitQuantity || ''}
+                        onChange={(e) => setVariantsDraft((prev) => prev.map((x, i) => i === idx ? { ...x, unitQuantity: e.target.value } : x))}
+                        className="input pr-10 text-sm py-1.5"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
+                        {itemQuantityUnit === 'GRAMS' ? 'g' : 'ml'}
+                      </span>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.50"
+                      placeholder="Price ₹"
+                      value={v.price}
+                      onChange={(e) => setVariantsDraft((prev) => prev.map((x, i) => i === idx ? { ...x, price: e.target.value } : x))}
+                      className="input w-28 text-sm py-1.5"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setVariantsDraft((prev) => prev.filter((_, i) => i !== idx))}
+                      className="btn-ghost p-1.5 text-slate-400 hover:text-red-500"
+                      title="Remove size"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              ) : (
                 <div key={v.id || `new-${idx}`} className="bg-slate-50 rounded-xl p-2.5 space-y-1.5">
                   <div className="flex items-center gap-2">
                     <input
@@ -1792,13 +1884,17 @@ export default function MenuPage() {
               ))}
               <button
                 type="button"
-                onClick={() => setVariantsDraft(prev => [...prev, { name: '', shortDescription: '', price: '' }])}
+                onClick={() => setVariantsDraft(prev => [...prev, { name: '', shortDescription: '', price: '', unitQuantity: '' }])}
                 className="text-xs font-semibold text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"
               >
-                <Plus size={12} /> Add variant
+                <Plus size={12} /> {itemQuantityUnit === 'NUMBER' ? 'Add variant' : 'Add size'}
               </button>
               {variantsDraft.length === 0 && (
-                <p className="text-xs text-slate-400 italic">No variants — item is sold at the base price.</p>
+                <p className="text-xs text-slate-400 italic">
+                  {itemQuantityUnit === 'NUMBER'
+                    ? 'No variants — item is sold at the base price.'
+                    : 'No sizes yet — add at least one portion size for the customer to pick from.'}
+                </p>
               )}
             </div>
           </Field>
