@@ -505,6 +505,45 @@ export default function OrderTrackingPage() {
                 <div className="flex justify-between text-xs text-slate-400">
                   <span>Subtotal</span><span>₹{Number(order.subtotal).toFixed(2)}</span>
                 </div>
+                {/* Discount breakdown — each coupon / reward gets its own
+                    line so the customer sees what cut the bill. */}
+                {(() => {
+                  const coupons = ((order as any).couponUsages || [])
+                    .map((c: any) => ({
+                      label: c.coupon?.code ? `Coupon (${c.coupon.code})` : (c.coupon?.name || 'Coupon'),
+                      amount: Number(c.discountAmount),
+                    }))
+                    .filter((c: any) => c.amount > 0);
+                  const rewards = ((order as any).rewardTransactions || [])
+                    .map((r: any) => ({
+                      label: `Reward (${Math.abs(r.points)} pts)`,
+                      amount: Number(r.amountValue || 0),
+                    }))
+                    .filter((r: any) => r.amount > 0);
+                  const explicit = coupons.reduce((s: number, c: any) => s + c.amount, 0)
+                    + rewards.reduce((s: number, r: any) => s + r.amount, 0);
+                  const total = Number(order.discountAmount || 0);
+                  const leftover = Math.max(0, total - explicit);
+                  const lines = [
+                    ...coupons,
+                    ...rewards,
+                    ...(leftover > 0
+                      ? [{ label: explicit > 0 ? 'Other discount' : 'Discount', amount: leftover }]
+                      : []),
+                  ];
+                  return lines.map((l, i) => (
+                    <div key={i} className="flex justify-between text-xs text-emerald-700">
+                      <span>{l.label}</span>
+                      <span>− ₹{l.amount.toFixed(2)}</span>
+                    </div>
+                  ));
+                })()}
+                {Number((order as any).parcelAmount || 0) > 0 && (
+                  <div className="flex justify-between text-xs text-slate-400">
+                    <span>Parcel charge</span>
+                    <span>₹{Number((order as any).parcelAmount).toFixed(2)}</span>
+                  </div>
+                )}
                 {Number(order.taxAmount) > 0 && (
                   <>
                     <div className="flex justify-between text-xs text-slate-400">
@@ -520,6 +559,11 @@ export default function OrderTrackingPage() {
                 <div className="flex justify-between font-black text-slate-900 text-sm pt-1 border-t border-slate-100">
                   <span>Total</span><span>₹{Number(order.totalAmount).toFixed(2)}</span>
                 </div>
+                {Number(order.discountAmount || 0) > 0 && (
+                  <p className="text-center text-[11px] font-bold text-emerald-700 mt-1">
+                    You saved ₹{Number(order.discountAmount).toFixed(2)} on this bill
+                  </p>
+                )}
               </div>
             </div>
           )}

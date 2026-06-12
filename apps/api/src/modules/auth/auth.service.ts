@@ -192,6 +192,10 @@ export class AuthService {
         // landing page. Cluster Owners go straight to the cluster admin
         // page instead of the standard /dashboard.
         business: { select: { id: true, name: true, isCluster: true } },
+        // Outlet's type drives client-side feature gating — self-service
+        // outlets hide dine-in sections, service stations and the
+        // service desk nav since none of them apply.
+        outlet: { select: { id: true, name: true, outletType: true } },
         role: {
           include: { responsibilities: { include: { responsibility: true } } },
         },

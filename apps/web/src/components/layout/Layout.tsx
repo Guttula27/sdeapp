@@ -14,6 +14,31 @@ import {
 import { useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
 import { useUserRole, UserTier } from '../../hooks/useUserRole';
+import { allowsSeating } from '../../utils/outletType';
+
+// Nav routes that only make sense for outlets that actually seat
+// customers — dine-in sections, service-station assignment, and the
+// service-desk handoff lane. Hidden when the signed-in user belongs
+// to a SELF_SERVICE / SELF_SERVICE_PARCEL outlet.
+const SEATING_ONLY_PATHS = new Set([
+  '/service-desk',
+  '/table-types',
+  '/service-stations',
+]);
+
+function scrubSeatingNav(items: NavItem[]): NavItem[] {
+  return items
+    .map((it): NavItem | null => {
+      if (SEATING_ONLY_PATHS.has(it.to)) return null;
+      if (it.children) {
+        const kept = it.children.filter((c) => !SEATING_ONLY_PATHS.has(c.to));
+        if (kept.length === 0 && SEATING_ONLY_PATHS.has(it.to)) return null;
+        return { ...it, children: kept };
+      }
+      return it;
+    })
+    .filter((x): x is NavItem => x !== null);
+}
 
 /* ── nav config ──────────────────────────────────────────── */
 // `requires` lists responsibilities that gate the item — visible when the
@@ -350,11 +375,19 @@ export default function Layout() {
 
   // Cluster Owners get a cluster-shaped sidebar even though their tier is
   // `business`. Everyone else falls back to the standard rules.
-  const navItems = isClusterOwner && user?.businessId
+  const rawNav = isClusterOwner && user?.businessId
     ? buildClusterNav(user.businessId)
     : isAdminRole(user?.role?.name)
       ? (NAV[tier] || NAV.outlet)
       : filterNav(MINIMAL_NAV, has);
+  // Self-service outlets don't need dine-in sections, service stations
+  // or the service desk lane — strip those entries from the nav.
+  // outletType is sourced from the JWT-derived auth user; until that
+  // field arrives the strip is a no-op so the standard nav still renders.
+  const outletType = user?.outlet?.outletType as string | undefined;
+  const navItems = !!user?.outletId && outletType && !allowsSeating(outletType)
+    ? scrubSeatingNav(rawNav)
+    : rawNav;
   // Label = the user's actual role name. When the user has no role assigned
   // we hide the badge entirely instead of falling back to a misleading tier
   // label like "Outlet Admin". Tier still drives the color palette.

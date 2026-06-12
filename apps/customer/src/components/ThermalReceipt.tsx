@@ -123,6 +123,17 @@ export type ReceiptOrder = {
   parcelAmount?: number | string | null;
   discountAmount?: number | string | null;
   totalAmount: number | string;
+  // Itemised promotions persisted on the order. The receipt lists each
+  // one on its own negative line so the customer sees exactly which
+  // coupon / reward / promo cut the bill — and by how much.
+  couponUsages?: Array<{
+    discountAmount: number | string;
+    coupon?: { code?: string | null; name?: string | null } | null;
+  }>;
+  rewardTransactions?: Array<{
+    points: number;
+    amountValue?: number | string | null;
+  }>;
   customer?: { name?: string | null; phone?: string | null } | null;
   staff?: { name?: string | null } | null;
   outletSnapshot?: OutletSnapshot | null;
@@ -357,13 +368,82 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
 
       <Divider />
 
-      {/* ── Totals row ─────────────────────────────────────────── */}
+      {/* ── Bill calculation ─────────────────────────────────────── */}
+      {/* Lay out the full Sub Total → discounts → parcel → tax → Total
+          chain so a customer can trace every rupee — especially the
+          rupees they saved on a coupon / reward / auto-discount.
+          Lines that don't apply collapse out. */}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
         <span>Tot Items : <strong>{totalItemCount}</strong></span>
+        <span>Tot Qty : <strong>{totalQty}</strong></span>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
-        <span>Tot Qty &nbsp;: <strong>{totalQty}</strong></span>
-        <span style={{ fontWeight: 900, fontSize: 14 }}>Total : {total.toFixed(0)}</span>
+      <div style={{ marginTop: 4 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <span>Sub Total</span><span>{subtotal.toFixed(2)}</span>
+        </div>
+        {(() => {
+          // Itemise discounts so the receipt prints one line per
+          // coupon, one per reward redemption, and a leftover
+          // "Discount" line for any auto-discount the pricing engine
+          // applied that isn't covered by the explicit rows above.
+          const coupons = (order.couponUsages || [])
+            .map((c) => ({
+              label: c.coupon?.code ? `Coupon (${c.coupon.code})` : (c.coupon?.name || 'Coupon'),
+              amount: Number(c.discountAmount),
+            }))
+            .filter((c) => c.amount > 0);
+          const rewards = (order.rewardTransactions || [])
+            .map((r) => ({
+              label: `Reward points (${Math.abs(r.points)} pts)`,
+              amount: Number(r.amountValue || 0),
+            }))
+            .filter((r) => r.amount > 0);
+          const explicit = coupons.reduce((s, c) => s + c.amount, 0)
+            + rewards.reduce((s, r) => s + r.amount, 0);
+          const total = Number(order.discountAmount || 0);
+          const leftover = Math.max(0, total - explicit);
+          const lines = [
+            ...coupons,
+            ...rewards,
+            ...(leftover > 0
+              ? [{ label: explicit > 0 ? 'Other discount' : 'Discount', amount: leftover }]
+              : []),
+          ];
+          return lines.map((l, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', color: '#0a7a3f' }}>
+              <span>{l.label}</span>
+              <span>− {l.amount.toFixed(2)}</span>
+            </div>
+          ));
+        })()}
+        {Number(order.parcelAmount || 0) > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Parcel charge</span>
+            <span>{Number(order.parcelAmount).toFixed(2)}</span>
+          </div>
+        )}
+        {Number(order.taxAmount) > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>GST (CGST + SGST)</span>
+            <span>{Number(order.taxAmount).toFixed(2)}</span>
+          </div>
+        )}
+        <div style={{
+          display: 'flex', justifyContent: 'space-between',
+          fontWeight: 900, fontSize: 14, marginTop: 3, paddingTop: 3,
+          borderTop: '1px solid #000',
+        }}>
+          <span>Total</span>
+          <span>{total.toFixed(2)}</span>
+        </div>
+        {Number(order.discountAmount || 0) > 0 && (
+          <div style={{
+            textAlign: 'center', marginTop: 4, fontSize: 11, fontWeight: 700,
+            color: '#0a7a3f',
+          }}>
+            You saved ₹{Number(order.discountAmount).toFixed(2)} on this bill
+          </div>
+        )}
       </div>
 
       <Divider />

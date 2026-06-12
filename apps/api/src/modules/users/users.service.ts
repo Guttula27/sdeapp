@@ -28,25 +28,110 @@ export class UsersService {
     ]);
   }
 
-  async create(data: { name: string; phone: string; email?: string; password: string; roleId?: string; businessId?: string; outletId?: string }) {
+  // Caller tier classification — drives both create-time ownerScope
+  // assignment and findAll filtering. Mirrors apps/web/src/hooks/
+  // useUserRole's tier logic (platform / business / outlet) so the
+  // server-enforced scope matches what the UI tier displays.
+  private callerTier(actor: any): 'platform' | 'business' | 'outlet' {
+    if (!actor?.businessId && !actor?.outletId) return 'platform';
+    if (actor?.businessId && !actor?.outletId) return 'business';
+    return 'outlet';
+  }
+
+  async create(
+    actor: any,
+    data: { name: string; phone: string; email?: string; password: string; roleId?: string; businessId?: string; outletId?: string },
+  ) {
     const existing = await this.userLookup.findByPhone(data.phone);
     if (existing) throw new ConflictException('Phone already registered');
-    const { password, phone, ...rest } = data;
+
+    // Caller's tier decides the new staff's ownerScope and locks the
+    // tenant fields so an outlet operator can't accidentally (or
+    // maliciously) create a staff record against another outlet or
+    // bypass scope by passing extra IDs in the body.
+    const tier = this.callerTier(actor);
+    let scope: 'PLATFORM' | 'BUSINESS' | 'OUTLET';
+    let businessId: string | undefined;
+    let outletId: string | undefined;
+    if (tier === 'platform') {
+      scope = 'PLATFORM';
+      businessId = data.businessId;
+      outletId = data.outletId;
+    } else if (tier === 'business') {
+      scope = 'BUSINESS';
+      businessId = actor.businessId;
+      // Business-level admins may pre-assign the new staff to one of
+      // their outlets; the staff record stays under their management.
+      outletId = data.outletId;
+    } else {
+      // Outlet operator — staff is exclusive to the outlet. Outlet
+      // operators cannot pick a different outlet or business.
+      scope = 'OUTLET';
+      businessId = actor.businessId;
+      outletId = actor.outletId;
+    }
+
+    const { password, phone, name, email, roleId } = data;
     const passwordHash = await bcrypt.hash(password, 12);
     return this.prisma.user.create({
-      data: { ...rest, ...this.encryption.buildPhoneFields(phone), passwordHash },
+      data: {
+        name, email, roleId,
+        ...this.encryption.buildPhoneFields(phone),
+        passwordHash,
+        businessId, outletId,
+        ownerScope: scope as any,
+      },
       select: { id: true, name: true, phone: true, email: true, status: true, role: { select: { id: true, name: true } } },
     });
   }
 
-  async findAll(businessId?: string, outletId?: string, page?: number, limit?: number) {
+  async findAll(
+    actor: any,
+    businessId?: string,
+    outletId?: string,
+    page?: number,
+    limit?: number,
+  ) {
     const p = Number(page) || 1;
     const l = Number(limit) || 20;
-    const where = { ...(businessId && { businessId }), ...(outletId && { outletId }) };
+
+    // Tier-scoped visibility. Outlet operators only see their outlet's
+    // staff. Business operators see the staff the business itself
+    // owns (ownerScope=BUSINESS or PLATFORM, plus legacy rows where
+    // ownerScope is null) — outlet-exclusive staff are hidden so the
+    // outlets manage their own. Platform sees everything.
+    const tier = this.callerTier(actor);
+    let where: any;
+    if (tier === 'outlet') {
+      where = { outletId: actor.outletId };
+    } else if (tier === 'business') {
+      where = {
+        businessId: actor.businessId,
+        // Honour an explicit outletId query (e.g. "show me staff of
+        // outlet X under my business") but always scope to my business.
+        ...(outletId ? { outletId } : {}),
+        OR: [
+          { ownerScope: null },
+          { ownerScope: { in: ['BUSINESS', 'PLATFORM'] as any[] } },
+        ],
+      };
+    } else {
+      // Platform — caller can filter freely.
+      where = {
+        ...(businessId && { businessId }),
+        ...(outletId && { outletId }),
+      };
+    }
+
     const [users, total] = await Promise.all([
       this.prisma.user.findMany({
         where,
-        select: { id: true, name: true, phone: true, email: true, status: true, createdAt: true, role: { select: { id: true, name: true } }, outlet: { select: { id: true, name: true } } },
+        select: {
+          id: true, name: true, phone: true, email: true, status: true, createdAt: true,
+          role: { select: { id: true, name: true } },
+          outlet: { select: { id: true, name: true } },
+          ownerScope: true,
+        },
         skip: (p - 1) * l,
         take: l,
       }),

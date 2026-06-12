@@ -388,32 +388,45 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
 
       <Divider />
 
-      {/* ── Totals + discounts + parcel ─────────────────────────── */}
+      {/* ── Bill calculation ─────────────────────────────────────── */}
+      {/* Sub Total → discount lines (each coupon / reward / leftover
+          auto-discount on its own row, negative) → parcel → GST →
+          Grand Total. A "You saved ₹X" footer makes the savings
+          jump out so the customer sees exactly what the promo did. */}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
         <span>Tot Items : <strong>{totalItemCount}</strong></span>
+        <span>Tot Qty : <strong>{totalQty}</strong></span>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
-        <span>Tot Qty &nbsp;: <strong>{totalQty}</strong></span>
-        <span style={{ fontWeight: 900, fontSize: 15 }}>Total : {total.toFixed(0)}</span>
+      <Row label="Sub Total" value={subtotal.toFixed(2)} />
+      {couponLines.map((c, i) => (
+        <Row key={`c-${i}`} label={c.label} value={`− ${c.amount.toFixed(2)}`} />
+      ))}
+      {rewardLines.map((r, i) => (
+        <Row key={`r-${i}`} label={r.label} value={`− ${r.amount.toFixed(2)}`} />
+      ))}
+      {autoDiscount > 0 && (
+        <Row
+          label={explicitDiscount > 0 ? 'Other discount' : 'Discount'}
+          value={`− ${autoDiscount.toFixed(2)}`}
+        />
+      )}
+      {parcel > 0 && <Row label="Parcel charge" value={parcel.toFixed(2)} />}
+      {taxAmount > 0 && <Row label="GST (CGST + SGST)" value={taxAmount.toFixed(2)} />}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between',
+        fontWeight: 900, fontSize: 15, marginTop: 4, paddingTop: 4,
+        borderTop: '1px solid #000',
+      }}>
+        <span>Grand Total</span>
+        <span>₹{total.toFixed(2)}</span>
       </div>
-
-      {(couponLines.length > 0 || rewardLines.length > 0 || autoDiscount > 0 || parcel > 0) && (
-        <>
-          <Divider thin />
-          {parcel > 0 && <Row label="Parcel charge" value={parcel.toFixed(2)} />}
-          {couponLines.map((c, i) => (
-            <Row key={`c-${i}`} label={c.label} value={`-${c.amount.toFixed(2)}`} />
-          ))}
-          {rewardLines.map((r, i) => (
-            <Row key={`r-${i}`} label={r.label} value={`-${r.amount.toFixed(2)}`} />
-          ))}
-          {autoDiscount > 0 && (
-            <Row
-              label={explicitDiscount > 0 ? 'Other discount' : 'Discount'}
-              value={`-${autoDiscount.toFixed(2)}`}
-            />
-          )}
-        </>
+      {discount > 0 && (
+        <div style={{
+          textAlign: 'center', marginTop: 4, fontSize: 12, fontWeight: 700,
+          color: '#0a7a3f',
+        }}>
+          You saved ₹{discount.toFixed(2)} on this bill
+        </div>
       )}
 
       <Divider />

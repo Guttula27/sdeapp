@@ -8,6 +8,9 @@ import Modal from '../../components/common/Modal';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 
 type Trigger = 'MIN_BILL' | 'BUY_X_GET_Y';
+// Freebie "Get" scope. ITEM is the legacy single-item path (uses
+// getItemId); the rest let the customer pick from a pool at checkout.
+type GetScope = 'ITEM' | 'ALL' | 'CATEGORY' | 'ITEMS';
 type Offer = {
   id: string;
   name: string;
@@ -21,6 +24,10 @@ type Offer = {
   getItemId?: string | null;
   getQuantity?: number | null;
   getItem?: { id: string; name: string } | null;
+  getScope?: GetScope | null;
+  getCategoryId?: string | null;
+  getCategory?: { id: string; name: string } | null;
+  getItemIds?: string[] | null;
   validFrom?: string | null;
   validUntil?: string | null;
   daysOfWeek?: string | null;
@@ -56,6 +63,9 @@ export default function OffersPage() {
   const [outlets, setOutlets] = useState<any[]>([]);
   const [scope, setScope] = useState<'BUSINESS' | string>('BUSINESS');
   const [items, setItems] = useState<any[]>([]);
+  // Categories sourced from the outlet menu — drives the CATEGORY scope
+  // selector. Populated alongside the items list on every scope change.
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
   const [list, setList] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -69,6 +79,12 @@ export default function OffersPage() {
     buyQuantity: '3',
     getItemId: '',
     getQuantity: '1',
+    // New freebie-pool fields. ITEM = legacy single-item path (default
+    // to keep old offers editable as-is); other scopes hide getItemId
+    // and surface category / multi-select pickers.
+    getScope: 'ITEM' as GetScope,
+    getCategoryId: '',
+    getItemIds: [] as string[],
     validFrom: '',
     validUntil: '',
     daysOfWeek: [] as number[],
@@ -90,10 +106,15 @@ export default function OffersPage() {
     api.get(`/outlets/${oid}/menu`).then(({ data }) => {
       const menu = data.data || data || [];
       const its: any[] = [];
-      for (const c of menu) for (const s of c.subcategories || []) for (const it of s.items || []) {
-        its.push({ id: it.id, name: it.name });
+      const cats: { id: string; name: string }[] = [];
+      for (const c of menu) {
+        cats.push({ id: c.id, name: c.name });
+        for (const s of c.subcategories || []) for (const it of s.items || []) {
+          its.push({ id: it.id, name: it.name });
+        }
       }
       setItems(its);
+      setCategories(cats);
     }).catch(() => {});
   }, [scope, outlets]);
 
@@ -114,6 +135,7 @@ export default function OffersPage() {
       name: '', description: '', triggerType: 'MIN_BILL',
       minBillAmount: '500', buyItemId: '', buyQuantity: '3',
       getItemId: '', getQuantity: '1',
+      getScope: 'ITEM', getCategoryId: '', getItemIds: [],
       validFrom: '', validUntil: '',
       daysOfWeek: [], startTime: '', endTime: '',
       isActive: true,
@@ -128,6 +150,11 @@ export default function OffersPage() {
       minBillAmount: o.minBillAmount != null ? String(o.minBillAmount) : '',
       buyItemId: o.buyItemId ?? '', buyQuantity: o.buyQuantity != null ? String(o.buyQuantity) : '1',
       getItemId: o.getItemId ?? '', getQuantity: o.getQuantity != null ? String(o.getQuantity) : '1',
+      // Legacy offers stored with getItemId-only get ITEM scope so the
+      // edit form shows the existing single-item picker.
+      getScope: (o.getScope ?? (o.getItemId ? 'ITEM' : 'ITEM')) as GetScope,
+      getCategoryId: o.getCategoryId ?? '',
+      getItemIds: Array.isArray(o.getItemIds) ? o.getItemIds : [],
       validFrom: o.validFrom ? o.validFrom.slice(0, 10) : '',
       validUntil: o.validUntil ? o.validUntil.slice(0, 10) : '',
       daysOfWeek: o.daysOfWeek ? o.daysOfWeek.split(',').map((s) => Number(s.trim())).filter(Boolean) : [],
@@ -150,7 +177,12 @@ export default function OffersPage() {
         minBillAmount: form.triggerType === 'MIN_BILL' ? Number(form.minBillAmount) : null,
         buyItemId: form.triggerType === 'BUY_X_GET_Y' ? form.buyItemId : null,
         buyQuantity: form.triggerType === 'BUY_X_GET_Y' ? Number(form.buyQuantity) : null,
-        getItemId: form.getItemId,
+        // Pool descriptor — only the field for the active scope is sent
+        // so the server clears the others (it also re-validates).
+        getScope: form.getScope,
+        getItemId: form.getScope === 'ITEM' ? form.getItemId : null,
+        getCategoryId: form.getScope === 'CATEGORY' ? form.getCategoryId : null,
+        getItemIds: form.getScope === 'ITEMS' ? form.getItemIds : null,
         getQuantity: Number(form.getQuantity),
         validFrom: form.validFrom || null,
         validUntil: form.validUntil || null,
@@ -304,19 +336,105 @@ export default function OffersPage() {
             </div>
           )}
 
+          {/* ── Freebie pool ────────────────────────────────────────────
+              The admin picks how the customer's "Get" pool is derived:
+                Specific item   — single fixed item (legacy).
+                Any item        — every active item is eligible.
+                Category        — items inside one category.
+                Pick from list  — explicit multi-select.
+              In all non-ITEM cases the customer is prompted at checkout
+              to pick `getQuantity` items from the eligible pool. */}
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Get item (free)">
-              <select value={form.getItemId} onChange={(e) => setForm({ ...form, getItemId: e.target.value })}
-                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" required>
+            <Field label="Get pool">
+              <select
+                value={form.getScope}
+                onChange={(e) => setForm({ ...form, getScope: e.target.value as GetScope })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+              >
+                <option value="ITEM">Specific item</option>
+                <option value="ALL">Any item</option>
+                <option value="CATEGORY">From a category</option>
+                <option value="ITEMS">Pick from list</option>
+              </select>
+            </Field>
+            <Field label="Get quantity">
+              <input
+                type="number"
+                value={form.getQuantity}
+                onChange={(e) => setForm({ ...form, getQuantity: e.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+                min="1"
+                required
+              />
+            </Field>
+          </div>
+
+          {form.getScope === 'ITEM' && (
+            <Field label="Free item">
+              <select
+                value={form.getItemId}
+                onChange={(e) => setForm({ ...form, getItemId: e.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+                required
+              >
                 <option value="">Pick…</option>
                 {items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
               </select>
             </Field>
-            <Field label="Get quantity">
-              <input type="number" value={form.getQuantity} onChange={(e) => setForm({ ...form, getQuantity: e.target.value })}
-                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" min="1" required />
+          )}
+
+          {form.getScope === 'ALL' && (
+            <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-md px-3 py-2">
+              Every active item at the outlet qualifies. The customer picks {form.getQuantity || 1} at checkout.
+            </p>
+          )}
+
+          {form.getScope === 'CATEGORY' && (
+            <Field label="From category">
+              <select
+                value={form.getCategoryId}
+                onChange={(e) => setForm({ ...form, getCategoryId: e.target.value })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+                required
+              >
+                <option value="">Pick a category…</option>
+                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
             </Field>
-          </div>
+          )}
+
+          {form.getScope === 'ITEMS' && (
+            <Field label={`Eligible items (${form.getItemIds.length} picked)`}>
+              <div className="border border-slate-300 rounded-md max-h-48 overflow-y-auto bg-white">
+                {items.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic p-3">No items in this outlet's menu yet.</p>
+                ) : items.map((i) => {
+                  const checked = form.getItemIds.includes(i.id);
+                  return (
+                    <label key={i.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer text-sm">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          setForm((f) => ({
+                            ...f,
+                            getItemIds: e.target.checked
+                              ? [...f.getItemIds, i.id]
+                              : f.getItemIds.filter((id) => id !== i.id),
+                          }));
+                        }}
+                        className="accent-brand-500"
+                      />
+                      <span className="text-slate-700">{i.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Customer picks {form.getQuantity || 1} from these at checkout (duplicates allowed).
+              </p>
+            </Field>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <Field label="Valid from (optional)">

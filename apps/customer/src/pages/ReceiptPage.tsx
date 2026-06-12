@@ -136,6 +136,42 @@ export default function ReceiptPage() {
           {/* Totals */}
           <div className="border-t border-dashed border-slate-200 pt-3 space-y-1 text-sm">
             <div className="flex justify-between text-slate-500"><span>Subtotal</span><span>₹{Number(order.subtotal).toFixed(2)}</span></div>
+            {/* Itemised discounts — each coupon / reward gets its own
+                line so the customer can see what cut the bill. */}
+            {(() => {
+              const coupons = (order.couponUsages || [])
+                .map((c: any) => ({
+                  label: c.coupon?.code ? `Coupon (${c.coupon.code})` : (c.coupon?.name || 'Coupon'),
+                  amount: Number(c.discountAmount),
+                }))
+                .filter((c: any) => c.amount > 0);
+              const rewards = (order.rewardTransactions || [])
+                .map((r: any) => ({
+                  label: `Reward (${Math.abs(r.points)} pts)`,
+                  amount: Number(r.amountValue || 0),
+                }))
+                .filter((r: any) => r.amount > 0);
+              const explicit = coupons.reduce((s: number, c: any) => s + c.amount, 0)
+                + rewards.reduce((s: number, r: any) => s + r.amount, 0);
+              const total = Number(order.discountAmount || 0);
+              const leftover = Math.max(0, total - explicit);
+              const lines = [
+                ...coupons,
+                ...rewards,
+                ...(leftover > 0
+                  ? [{ label: explicit > 0 ? 'Other discount' : 'Discount', amount: leftover }]
+                  : []),
+              ];
+              return lines.map((l, i) => (
+                <div key={i} className="flex justify-between text-emerald-600">
+                  <span>{l.label}</span>
+                  <span>− ₹{l.amount.toFixed(2)}</span>
+                </div>
+              ));
+            })()}
+            {Number(order.parcelAmount) > 0 && (
+              <div className="flex justify-between text-slate-500"><span>Parcel charge</span><span>₹{Number(order.parcelAmount).toFixed(2)}</span></div>
+            )}
             {Number(order.taxAmount) > 0 && (
               <>
                 <div className="flex justify-between text-slate-500">
@@ -148,15 +184,14 @@ export default function ReceiptPage() {
                 </div>
               </>
             )}
-            {Number(order.parcelAmount) > 0 && (
-              <div className="flex justify-between text-slate-500"><span>Parcel</span><span>₹{Number(order.parcelAmount).toFixed(2)}</span></div>
-            )}
-            {Number(order.discountAmount) > 0 && (
-              <div className="flex justify-between text-emerald-600"><span>Discount</span><span>− ₹{Number(order.discountAmount).toFixed(2)}</span></div>
-            )}
             <div className="flex justify-between font-black text-slate-900 text-base pt-1 border-t border-slate-200">
               <span>Total</span><span>₹{Number(order.totalAmount).toFixed(2)}</span>
             </div>
+            {Number(order.discountAmount) > 0 && (
+              <p className="text-center text-[11px] font-bold text-emerald-700 mt-1">
+                You saved ₹{Number(order.discountAmount).toFixed(2)} on this bill
+              </p>
+            )}
           </div>
 
           {/* Payment status */}

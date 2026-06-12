@@ -46,6 +46,11 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
 export default function StaffPage() {
   const user = useSelector((s: RootState) => s.auth.user);
   const businessId = user?.businessId || 'demo-business';
+  // Outlet operators (and outlet-tier sub-roles like cashier / kitchen)
+  // see only their outlet's staff — server-enforced too, but we narrow
+  // the query so the network call is small and the empty business
+  // dropdown doesn't surface in the UI.
+  const isOutletScoped = !!user?.outletId;
 
   const [staff, setStaff]     = useState<any[]>([]);
   const [roles, setRoles]     = useState<Role[]>([]);
@@ -66,8 +71,13 @@ export default function StaffPage() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
+      // Outlet-tier: ask only for our outlet's staff. Business / platform:
+      // ask for business-scope; backend hides outlet-exclusive entries.
+      const usersUrl = isOutletScoped
+        ? `/users?outletId=${user?.outletId}`
+        : `/users?businessId=${businessId}`;
       const [s, r, o, resp] = await Promise.all([
-        api.get(`/users?businessId=${businessId}`),
+        api.get(usersUrl),
         api.get('/roles'),
         api.get(`/outlets/business/${businessId}`),
         api.get('/roles/responsibilities'),
@@ -77,7 +87,7 @@ export default function StaffPage() {
       setOutlets(o.data.data || []);
       setResponsibilities(resp.data.data || []);
     } finally { setLoading(false); }
-  }, [businessId]);
+  }, [businessId, isOutletScoped, user?.outletId]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -97,7 +107,13 @@ export default function StaffPage() {
   }, [responsibilities]);
 
   const openCreate = () => {
-    setForm({ name: '', phone: '', email: '', password: '', roleId: '', outletId: '' });
+    setForm({
+      name: '', phone: '', email: '', password: '', roleId: '',
+      // Outlet operators are creating outlet-scoped staff; pre-fill
+      // their outlet so they don't have to pick (and so the disabled
+      // selector still reads correctly).
+      outletId: isOutletScoped ? (user?.outletId || '') : '',
+    });
     setSelectedPerms(new Set());
     setModal({ open: true });
   };
@@ -368,10 +384,24 @@ export default function StaffPage() {
               </select>
             </Field>
             <Field label="Assigned Outlet">
-              <select value={form.outletId} onChange={e => setForm(f => ({ ...f, outletId: e.target.value }))} className="input">
+              {/* Outlet operators can only assign to their own outlet —
+                  lock the selector so the value matches what the
+                  server will enforce anyway. Business / platform
+                  admins get the full picker. */}
+              <select
+                value={form.outletId}
+                onChange={(e) => setForm((f) => ({ ...f, outletId: e.target.value }))}
+                disabled={isOutletScoped}
+                className="input disabled:bg-slate-50 disabled:text-slate-500"
+              >
                 <option value="">All outlets</option>
                 {outlets.map((o: any) => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select>
+              {isOutletScoped && (
+                <p className="text-[11px] text-slate-400 mt-1">
+                  New staff belong to this outlet and aren't visible at business level.
+                </p>
+              )}
             </Field>
           </div>
 

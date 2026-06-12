@@ -15,6 +15,14 @@ enum UserStatus {
   SUSPENDED
 }
 
+// Visibility scope for staff users — controls which admin staff list
+// a user appears on. See User.ownerScope for the full semantics.
+enum UserOwnerScope {
+  PLATFORM
+  BUSINESS
+  OUTLET
+}
+
 enum BusinessType {
   RESTAURANT
   QSR
@@ -163,6 +171,15 @@ model User {
   business   Business? @relation(fields: [businessId], references: [id])
   outletId   String?
   outlet     Outlet?   @relation(fields: [outletId], references: [id])
+
+  // Who created this staff member — drives visibility in the admin
+  // staff lists. OUTLET = exclusive to the outlet, hidden from
+  // business-level views. BUSINESS = managed at business level, can
+  // be assigned / reassigned to any outlet under the same business.
+  // PLATFORM = system staff (rare). NULL on legacy rows is treated
+  // as BUSINESS so historical behaviour for pre-cutover staff stays
+  // unchanged.
+  ownerScope UserOwnerScope?
 
   customerOrders Order[]  @relation("CustomerOrders")
   staffOrders    Order[]  @relation("StaffOrders")
@@ -655,6 +672,8 @@ model Category {
 
   subcategories Subcategory[]
   discounts     Discount[]
+  // Offers that target this category as the freebie pool (scope=CATEGORY).
+  offerGets     Offer[]      @relation("OfferGetCategory")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -983,10 +1002,25 @@ model Offer {
   buyVariantId String?
   buyQuantity  Int?
 
+  // Legacy single-item path — set with getScope=null. Kept for
+  // back-compat; new offers should prefer the multi-option fields below.
   getItemId    String?
   getItem      Item?    @relation("OfferGetItem", fields: [getItemId], references: [id])
   getVariantId String?
   getQuantity  Int?
+
+  // Multi-option freebie pool. The admin picks how the customer can
+  // choose their freebies:
+  //   ALL      → every active outlet item is eligible
+  //   CATEGORY → only items inside getCategoryId qualify
+  //   ITEMS    → only items whose id is in getItemIds[] qualify
+  //   null     → legacy single-item path (uses getItemId above)
+  // The customer then picks `getQuantity` items from the eligible pool
+  // (duplicates allowed) at checkout.
+  getScope      String?  @db.VarChar(10)
+  getCategoryId String?
+  getCategory   Category? @relation("OfferGetCategory", fields: [getCategoryId], references: [id])
+  getItemIds    Json?
 
   // Schedule
   validFrom    DateTime?
