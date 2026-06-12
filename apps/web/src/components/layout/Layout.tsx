@@ -15,6 +15,7 @@ import { useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
 import { useUserRole, UserTier } from '../../hooks/useUserRole';
 import { allowsSeating } from '../../utils/outletType';
+import api from '../../services/api';
 
 // Nav routes that only make sense for outlets that actually seat
 // customers — dine-in sections, service-station assignment, and the
@@ -40,12 +41,41 @@ function scrubSeatingNav(items: NavItem[]): NavItem[] {
     .filter((x): x is NavItem => x !== null);
 }
 
+// Service Stations are an extension of Dine-In Sections — a service
+// station maps staff to a set of tables inside a section. With zero
+// sections, the Service Stations form has nothing to assign to, so we
+// disable the nav link until at least one section has been created.
+// Walks both top-level entries and Settings children.
+function disableServiceStationsIfNoSections(items: NavItem[], hasSections: boolean): NavItem[] {
+  if (hasSections) return items;
+  const mark = (it: NavItem): NavItem =>
+    it.to === '/service-stations'
+      ? { ...it, disabled: true, disabledReason: 'Create at least one Dine-In Section first' }
+      : it;
+  return items.map((it) =>
+    it.children
+      ? { ...mark(it), children: it.children.map(mark) }
+      : mark(it),
+  );
+}
+
 /* ── nav config ──────────────────────────────────────────── */
 // `requires` lists responsibilities that gate the item — visible when the
 // user has at least one of them. Items with no `requires` are always visible.
 // Today this is consulted only for non-admin users (MINIMAL_NAV); the three
 // admin sidebars below ignore `requires` and render every item.
-type NavItem = { to: string; icon: any; label: string; requires?: string[]; children?: NavItem[] };
+type NavItem = {
+  to: string;
+  icon: any;
+  label: string;
+  requires?: string[];
+  children?: NavItem[];
+  // When true, render the row as visibly disabled (greyed) and ignore
+  // clicks. Used for items whose prerequisite hasn't been set up yet
+  // (e.g. Service Stations until Dine-In Sections exist).
+  disabled?: boolean;
+  disabledReason?: string;
+};
 
 // Sub-sections that hang under "Settings" for each tier. Routes themselves
 // remain unchanged so deep links keep working.
@@ -230,6 +260,22 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
 
   if (!hasChildren) {
     const Icon = item.icon;
+    if (item.disabled) {
+      // Render the row visibly but non-interactive. A `cursor-not-allowed`
+      // pointer + dimmed colours tell the operator this is a future step,
+      // and the title attribute surfaces why (e.g. "Create at least one
+      // Dine-In Section first").
+      return (
+        <div
+          title={item.disabledReason || `${item.label} unavailable`}
+          aria-disabled
+          className="group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-[.8125rem] font-medium text-slate-600 opacity-50 cursor-not-allowed select-none"
+        >
+          <Icon size={17} className="shrink-0" />
+          {!compact && <span className="animate-fade-in">{item.label}</span>}
+        </div>
+      );
+    }
     return (
       <NavLink
         to={item.to}
@@ -373,6 +419,32 @@ export default function Layout() {
     return () => document.removeEventListener('mousedown', h);
   }, []);
 
+  // Service Stations depends on the outlet having at least one
+  // Dine-In Section configured — without sections the form has
+  // nothing to assign staff to. We probe the table-types endpoint
+  // once on mount for outlet-tier users so the nav can grey the link
+  // until they create a section. Re-runs whenever the operator
+  // switches outlets (defensive — that's a logout/login flow today).
+  // `null` = still loading → nav renders normally so the link doesn't
+  // flicker disabled then enabled.
+  const [hasSections, setHasSections] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!user?.outletId) {
+      setHasSections(true); // not an outlet-tier user → don't apply the gate
+      return;
+    }
+    let cancelled = false;
+    api.get(`/outlets/${user.outletId}/table-types`)
+      .then(({ data }) => {
+        if (!cancelled) {
+          const rows = Array.isArray(data?.data) ? data.data : [];
+          setHasSections(rows.length > 0);
+        }
+      })
+      .catch(() => { if (!cancelled) setHasSections(true); });
+    return () => { cancelled = true; };
+  }, [user?.outletId]);
+
   // Cluster Owners get a cluster-shaped sidebar even though their tier is
   // `business`. Everyone else falls back to the standard rules.
   const rawNav = isClusterOwner && user?.businessId
@@ -385,9 +457,15 @@ export default function Layout() {
   // outletType is sourced from the JWT-derived auth user; until that
   // field arrives the strip is a no-op so the standard nav still renders.
   const outletType = user?.outlet?.outletType as string | undefined;
-  const navItems = !!user?.outletId && outletType && !allowsSeating(outletType)
+  const scrubbed = !!user?.outletId && outletType && !allowsSeating(outletType)
     ? scrubSeatingNav(rawNav)
     : rawNav;
+  // Dine-in outlet with no sections yet → grey out the Service
+  // Stations nav row (still visible so the operator can see it's a
+  // future step, but non-clickable with a tooltip explaining why).
+  const navItems = hasSections === false
+    ? disableServiceStationsIfNoSections(scrubbed, false)
+    : scrubbed;
   // Label = the user's actual role name. When the user has no role assigned
   // we hide the badge entirely instead of falling back to a misleading tier
   // label like "Outlet Admin". Tier still drives the color palette.
