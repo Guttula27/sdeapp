@@ -35,9 +35,16 @@ type OfferWriteDto = {
 export class OffersService {
   constructor(private prisma: PrismaService) {}
 
+  // Visibility rules: business-view (no outletId) → business-wide
+  // offers only (outletId IS NULL). Outlet-view (outletId set) →
+  // business-wide PLUS that outlet's own offers. Other outlets'
+  // offers stay hidden.
   listForBusiness(businessId: string, outletId?: string) {
+    const where: any = outletId === undefined
+      ? { businessId, outletId: null }
+      : { businessId, OR: [{ outletId: null }, { outletId }] };
     return this.prisma.offer.findMany({
-      where: { businessId, ...(outletId === undefined ? {} : { outletId }) },
+      where,
       include: {
         buyItem: { select: { id: true, name: true } },
         getItem: { select: { id: true, name: true } },

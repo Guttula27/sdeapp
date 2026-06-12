@@ -28,12 +28,20 @@ export class CouponsService {
   ) {}
 
   // ─── Admin: list / CRUD scoped to a business ────────────────────
+  // Visibility rules (matches discounts / offers):
+  //   - outletId undefined → "business view" → only business-wide
+  //     coupons (outletId IS NULL). Outlet-owned coupons are hidden so
+  //     the business owner manages their pool without noise from each
+  //     outlet's promos.
+  //   - outletId provided    → "outlet view" → business-wide PLUS that
+  //     outlet's own coupons (applied to orders placed at that outlet).
+  //     Other outlets' coupons remain hidden.
   async listForBusiness(businessId: string, outletId?: string) {
+    const where: any = outletId === undefined
+      ? { businessId, outletId: null }
+      : { businessId, OR: [{ outletId: null }, { outletId }] };
     return this.prisma.coupon.findMany({
-      where: {
-        businessId,
-        ...(outletId === undefined ? {} : { outletId }),
-      },
+      where,
       include: {
         targetCustomers: { include: { user: { select: { id: true, name: true, phone: true } } } },
         _count: { select: { usages: true } },

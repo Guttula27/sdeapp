@@ -97,9 +97,13 @@ export class UsersService {
 
     // Tier-scoped visibility. Outlet operators only see their outlet's
     // staff. Business operators see the staff the business itself
-    // owns (ownerScope=BUSINESS or PLATFORM, plus legacy rows where
-    // ownerScope is null) — outlet-exclusive staff are hidden so the
-    // outlets manage their own. Platform sees everything.
+    // owns (ownerScope = BUSINESS or PLATFORM) — outlet-exclusive
+    // staff are hidden so the outlets manage their own. The
+    // ownerScope backfill migration (20260612150000) ensures every
+    // pre-existing row has an explicit scope, so the OR-null safety
+    // net previously here is no longer needed (and was the bug —
+    // legacy outlet-bound staff slipped into the business view).
+    // Platform sees everything.
     const tier = this.callerTier(actor);
     let where: any;
     if (tier === 'outlet') {
@@ -110,10 +114,7 @@ export class UsersService {
         // Honour an explicit outletId query (e.g. "show me staff of
         // outlet X under my business") but always scope to my business.
         ...(outletId ? { outletId } : {}),
-        OR: [
-          { ownerScope: null },
-          { ownerScope: { in: ['BUSINESS', 'PLATFORM'] as any[] } },
-        ],
+        ownerScope: { in: ['BUSINESS', 'PLATFORM'] as any[] },
       };
     } else {
       // Platform — caller can filter freely.

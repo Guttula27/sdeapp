@@ -2,6 +2,12 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { OffersService } from './offers.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+
+function effectiveOutletId(actor: any, queryOutletId?: string): string | undefined {
+  if (actor?.outletId) return actor.outletId;
+  return queryOutletId;
+}
 
 @ApiTags('Offers')
 @ApiBearerAuth()
@@ -11,13 +17,22 @@ export class OffersController {
 
   @UseGuards(JwtAuthGuard)
   @Get('businesses/:businessId/offers')
-  list(@Param('businessId') businessId: string, @Query('outletId') outletId?: string) {
-    return this.service.listForBusiness(businessId, outletId);
+  list(
+    @CurrentUser() actor: any,
+    @Param('businessId') businessId: string,
+    @Query('outletId') outletId?: string,
+  ) {
+    return this.service.listForBusiness(businessId, effectiveOutletId(actor, outletId));
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('businesses/:businessId/offers')
-  create(@Param('businessId') businessId: string, @Body() body: any) {
+  create(
+    @CurrentUser() actor: any,
+    @Param('businessId') businessId: string,
+    @Body() body: any,
+  ) {
+    if (actor?.outletId) body = { ...body, outletId: actor.outletId };
     return this.service.create(businessId, body);
   }
 

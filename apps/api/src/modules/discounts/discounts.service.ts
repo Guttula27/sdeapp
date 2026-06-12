@@ -27,9 +27,15 @@ type DiscountWriteDto = {
 export class DiscountsService {
   constructor(private prisma: PrismaService) {}
 
+  // Visibility rules: business-view (no outletId) returns business-wide
+  // only; outlet-view (outletId set) returns business-wide PLUS that
+  // outlet's own discounts. Other outlets' discounts are hidden.
   listForBusiness(businessId: string, outletId?: string) {
+    const where: any = outletId === undefined
+      ? { businessId, outletId: null }
+      : { businessId, OR: [{ outletId: null }, { outletId }] };
     return this.prisma.discount.findMany({
-      where: { businessId, ...(outletId === undefined ? {} : { outletId }) },
+      where,
       include: {
         category: { select: { id: true, name: true } },
         subcategory: { select: { id: true, name: true } },
