@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import { ShoppingCart, Plus, Minus, X, LogOut, Star, Clock, ChevronRight, User, Heart, Lock } from 'lucide-react';
@@ -36,11 +36,16 @@ interface CartItem {
 export default function OrderPage() {
   const [params, setParams] = useSearchParams();
   const navigate  = useNavigate();
+  const location  = useLocation();
   const outletId  = params.get('outlet') || '';
   const tableId   = params.get('table');
   // QR codes for individual items deeplink here with ?item=<id>. We pop the
-  // matching item's detail modal on first menu load, then strip the param
-  // so the modal doesn't reopen if the user closes it and navigates around.
+  // matching item's detail modal once the menu has loaded, then strip the
+  // param so the modal doesn't reopen on back-nav. `location.key` is in
+  // the effect deps so even a re-scan of a different item from this same
+  // outlet (which keeps us on /order without remounting) re-fires the
+  // pop. Without that key, only the deeplink-id-derived value drove the
+  // effect and certain navigations skipped the pop.
   const deeplinkItemId = params.get('item');
   const { user, isLoggedIn } = useCustomerAuth();
 
@@ -268,7 +273,12 @@ export default function OrderPage() {
 
   // Item QR deeplink: once the menu has loaded, find the requested item
   // and pop the detail sheet. Then drop the param so a back-nav or sheet
-  // close doesn't re-open it.
+  // close doesn't re-open it. Depends on location.key so a re-scan of a
+  // different item from the same outlet (which doesn't remount the
+  // component) re-fires the pop reliably — that's the bug the user
+  // hit: cart has items → scan another QR → "nothing happens" because
+  // setParams from a prior pop had already stripped item and the
+  // effect didn't re-evaluate on the next URL change.
   useEffect(() => {
     if (!deeplinkItemId || !menu.length) return;
     for (const cat of menu) {
@@ -283,7 +293,7 @@ export default function OrderPage() {
         }
       }
     }
-  }, [deeplinkItemId, menu]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [deeplinkItemId, menu, location.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist cart across navigation (Pay page → back)
   useEffect(() => {

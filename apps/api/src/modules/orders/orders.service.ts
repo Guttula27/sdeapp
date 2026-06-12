@@ -89,7 +89,14 @@ export class OrdersService {
     // Customer-choice bundles (maxBundleSelections > 0): the cart line
     // carries bundleSelections — the picked ItemBundleChild ids. We expand
     // only those rows after validating count + ownership.
-    const expanded: { dto: any; bundleId?: string; bundleName?: string; bundlePrice?: number; bundleGstRate?: number; isPrimary?: boolean }[] = [];
+    // Freebie validation — all items the customer marked as freebies
+    // must be picked from active offer pools at the SAME outlet, and
+    // the per-offer count must not exceed the offer's getQuantity.
+    // Pulled before bundle expansion so we can attach freebieOfferId
+    // metadata onto every expanded entry that came from a freebie line.
+    const freebieValidate = await this.validateFreebiePicks(outletId, dto.items as any);
+
+    const expanded: { dto: any; bundleId?: string; bundleName?: string; bundlePrice?: number; bundleGstRate?: number; isPrimary?: boolean; freebieOfferId?: string; freebieOfferName?: string }[] = [];
     for (const li of dto.items) {
       const parent = await this.prisma.item.findUnique({
         where: { id: li.itemId },
@@ -142,7 +149,14 @@ export class OrdersService {
           });
         });
       } else {
-        expanded.push({ dto: li });
+        // Stamp freebie metadata so the post-resolve loop can force
+        // price = 0 and tag the line with the offer name.
+        const freebieOfferId = (li as any).freebieOfferId as string | undefined;
+        const offerName = freebieOfferId ? freebieValidate.offerNames.get(freebieOfferId) : undefined;
+        expanded.push({
+          dto: li,
+          ...(freebieOfferId ? { freebieOfferId, freebieOfferName: offerName } : {}),
+        });
       }
     }
 
@@ -151,11 +165,20 @@ export class OrdersService {
       { viewerTagId, tableTypeId, gstEnabled: gstOn, outletDefaultPct },
     );
 
-    // Override prices for bundle child rows so the bundle's fixed price wins
-    // over the sum of regular item prices. The primary row holds the full
-    // bundle revenue; siblings are zeroed out.
+    // Override prices for freebie + bundle child rows.
     for (let i = 0; i < items.length; i++) {
       const meta = expanded[i];
+      if (meta?.freebieOfferId) {
+        // Freebie line — zero price + GST, prefix the notes with the
+        // offer name so kitchen + receipt show "Freebie: <offer>".
+        const line = items[i];
+        line.unitPrice = 0;
+        line.totalPrice = 0;
+        line.gstAmount = 0;
+        const freebieNote = `Freebie: ${meta.freebieOfferName ?? 'Offer'}`;
+        line.notes = line.notes ? `${freebieNote} | ${line.notes}` : freebieNote;
+        continue;
+      }
       if (!meta?.bundleId) continue;
       const line = items[i];
       (line as any).bundleId = meta.bundleId;
@@ -1382,6 +1405,122 @@ export class OrdersService {
       },
     });
     return derived;
+  }
+
+  /**
+   * Validate every freebie line in the cart against an active offer's
+   * eligible pool. Caller wraps the result with offer-name lookup so
+   * line notes can render "Freebie: <offer name>" downstream.
+   *
+   * Pool semantics:
+   *   - ITEM     legacy → item.id must equal offer.getItemId
+   *   - ALL      every active item at the outlet's menus
+   *   - CATEGORY item must live under offer.getCategoryId
+   *   - ITEMS    item.id must be in offer.getItemIds[]
+   *
+   * Also enforces the per-offer count so a customer can't claim three
+   * freebies on a "get 1" offer.
+   */
+  private async validateFreebiePicks(
+    outletId: string,
+    items: Array<{ itemId: string; quantity: number; freebieOfferId?: string | null }>,
+  ): Promise<{ offerNames: Map<string, string> }> {
+    const offerNames = new Map<string, string>();
+    const freebieIds = new Set<string>();
+    const counts = new Map<string, number>(); // offerId → total qty
+    for (const li of items) {
+      const o = li.freebieOfferId;
+      if (!o) continue;
+      freebieIds.add(o);
+      counts.set(o, (counts.get(o) ?? 0) + (li.quantity ?? 1));
+    }
+    if (freebieIds.size === 0) return { offerNames };
+
+    // Resolve outlet → business; freebies must come from offers on the
+    // same business, either business-wide or pinned to this outlet.
+    const outlet = await this.prisma.outlet.findUnique({
+      where: { id: outletId },
+      select: { businessId: true },
+    });
+    if (!outlet) throw new BadRequestException('Outlet not found');
+
+    const offers = await this.prisma.offer.findMany({
+      where: {
+        id: { in: Array.from(freebieIds) },
+        businessId: outlet.businessId,
+        isActive: true,
+        OR: [{ outletId: null }, { outletId }],
+      },
+    });
+    const byOffer = new Map(offers.map((o) => [o.id, o]));
+    for (const oid of freebieIds) {
+      const offer = byOffer.get(oid);
+      if (!offer) throw new BadRequestException(`Offer ${oid} is not active for this outlet`);
+      offerNames.set(oid, offer.name);
+      // Per-offer cap. The customer can't claim more freebies than the
+      // offer's getQuantity (multiplied for BUY_X_GET_Y is computed at
+      // quote time; we only see the offered freebie count here).
+      const cap = Math.max(1, Number(offer.getQuantity ?? 1));
+      const claimed = counts.get(oid) ?? 0;
+      if (claimed > cap) {
+        throw new BadRequestException(
+          `Offer "${offer.name}" allows up to ${cap} freebie${cap === 1 ? '' : 's'} (got ${claimed})`,
+        );
+      }
+    }
+
+    // Pool membership check, per line. Resolve the item's category so
+    // CATEGORY scope can validate; ALL / ITEMS / ITEM are array lookups.
+    const itemIds = items.filter((i) => i.freebieOfferId).map((i) => i.itemId);
+    const itemRows = await this.prisma.item.findMany({
+      where: { id: { in: itemIds } },
+      select: {
+        id: true,
+        isAvailable: true,
+        subcategory: { select: { category: { select: { id: true, outletId: true, businessId: true } } } },
+      },
+    });
+    const itemMap = new Map(itemRows.map((r) => [r.id, r]));
+
+    for (const li of items) {
+      if (!li.freebieOfferId) continue;
+      const offer = byOffer.get(li.freebieOfferId)!;
+      const item = itemMap.get(li.itemId);
+      if (!item) throw new BadRequestException(`Freebie item ${li.itemId} not found`);
+      if (!item.isAvailable) {
+        throw new BadRequestException(`Freebie item is currently not available`);
+      }
+      const scope: string | null = (offer as any).getScope ?? (offer.getItemId ? 'ITEM' : null);
+      if (scope === 'ITEM') {
+        if (offer.getItemId !== li.itemId) {
+          throw new BadRequestException(`Freebie does not match offer "${offer.name}"`);
+        }
+      } else if (scope === 'ALL') {
+        // Any active item under the same business qualifies. Cheap
+        // check: item's category's business must match the offer's.
+        const cat = item.subcategory?.category;
+        const itemBiz = cat?.businessId ?? null;
+        // For outlet-owned categories the businessId on the category
+        // itself is null, so fall back to the outlet's business via a
+        // single round-trip cache later — for the common (template)
+        // case this short-circuits.
+        if (itemBiz && itemBiz !== offer.businessId) {
+          throw new BadRequestException(`Freebie does not belong to this business`);
+        }
+      } else if (scope === 'CATEGORY') {
+        if (!offer.getCategoryId || item.subcategory?.category?.id !== offer.getCategoryId) {
+          throw new BadRequestException(`Freebie is not in the eligible category for "${offer.name}"`);
+        }
+      } else if (scope === 'ITEMS') {
+        const ids: string[] = Array.isArray((offer as any).getItemIds) ? (offer as any).getItemIds : [];
+        if (!ids.includes(li.itemId)) {
+          throw new BadRequestException(`Freebie is not in the eligible list for "${offer.name}"`);
+        }
+      } else {
+        throw new BadRequestException(`Offer "${offer.name}" has no eligible pool configured`);
+      }
+    }
+    return { offerNames };
   }
 
   private async resolveOrderItems(

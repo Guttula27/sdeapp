@@ -104,6 +104,11 @@ export default function PaymentPage() {
   const [couponId, setCouponId] = useState<string>('');
   const [rewardPoints, setRewardPoints] = useState<number>(0);
   const [liveQuote, setLiveQuote] = useState<any | null>(null);
+  // Customer-picked freebies, keyed by offerId. Each entry is the list
+  // of pool item picks (duplicates allowed → quantity > 1). Picked at
+  // checkout when an active offer's pool is anything other than ITEM.
+  const [freebiePicks, setFreebiePicks] = useState<Record<string, Array<{ itemId: string; quantity: number }>>>({});
+  const [pickerOffer, setPickerOffer] = useState<any | null>(null);
 
   useEffect(() => {
     if (isBillNow || !state?.outletId || !user?.id) return;
@@ -145,6 +150,31 @@ export default function PaymentPage() {
   if (!state || (!isBillNow && !state.cart?.length)) {
     return <p className="p-6 text-sm text-slate-500">Nothing to pay for.</p>;
   }
+
+  // ── Freebie helpers ────────────────────────────────────────────────
+  // Only non-ITEM scopes ask the customer to pick something — ITEM
+  // (legacy) offers grant a fixed freebie that's already pinned by id
+  // and don't need a modal.
+  const pickableOffers = ((liveQuote?.offerFreebies ?? []) as any[])
+    .filter((f) => f.pool?.scope && f.pool.scope !== 'ITEM');
+  const pickedCountFor = (offerId: string) =>
+    (freebiePicks[offerId] ?? []).reduce((s, p) => s + p.quantity, 0);
+  const offersAwaitingPicks = pickableOffers.filter(
+    (f) => pickedCountFor(f.offerId) < (f.pickQuantity ?? 0),
+  );
+  // Flatten freebie picks into the order-create items[] shape. Each
+  // entry carries freebieOfferId so the API can validate the pool +
+  // force a 0 price + tag the order line with the offer name.
+  const freebieItemsPayload = Object.entries(freebiePicks).flatMap(
+    ([offerId, picks]) =>
+      picks
+        .filter((p) => p.quantity > 0)
+        .map((p) => ({
+          itemId: p.itemId,
+          quantity: p.quantity,
+          freebieOfferId: offerId,
+        })),
+  );
 
   const upiId = outlet?.upiId;
   const outletName = outlet?.name || state.outletName || 'Outlet';
@@ -217,13 +247,16 @@ export default function PaymentPage() {
         paymentMode: extra.paymentMode,
         couponId: couponId || undefined,
         rewardPoints: rewardPoints || undefined,
-        items: (state.cart || []).map((c: any) => ({
-          itemId: c.itemId,
-          variantId: c.variantId,
-          quantity: c.quantity,
-          toppings: c.toppings?.map((t: any) => ({ toppingId: t.toppingId, optionId: t.optionId })) || undefined,
-          bundleSelections: c.bundleSelections,
-        })),
+        items: [
+          ...(state.cart || []).map((c: any) => ({
+            itemId: c.itemId,
+            variantId: c.variantId,
+            quantity: c.quantity,
+            toppings: c.toppings?.map((t: any) => ({ toppingId: t.toppingId, optionId: t.optionId })) || undefined,
+            bundleSelections: c.bundleSelections,
+          })),
+          ...freebieItemsPayload,
+        ],
       });
       try { sessionStorage.removeItem(`cart-${state.outletId}`); } catch {}
       navigate(`/receipt/${data.data.id}`, { replace: true });
@@ -260,12 +293,15 @@ export default function PaymentPage() {
           isParcel: state.isParcel,
           couponId: couponId || undefined,
           rewardPoints: rewardPoints || undefined,
-          items: (state.cart || []).map((c: any) => ({
-            itemId: c.itemId,
-            variantId: c.variantId,
-            quantity: c.quantity,
-            toppings: c.toppings?.map((t: any) => ({ toppingId: t.toppingId, optionId: t.optionId })) || undefined,
-          })),
+          items: [
+            ...(state.cart || []).map((c: any) => ({
+              itemId: c.itemId,
+              variantId: c.variantId,
+              quantity: c.quantity,
+              toppings: c.toppings?.map((t: any) => ({ toppingId: t.toppingId, optionId: t.optionId })) || undefined,
+            })),
+            ...freebieItemsPayload,
+          ],
         });
         orderId = data.data.id;
         try { sessionStorage.removeItem(`cart-${state.outletId}`); } catch {}
@@ -412,6 +448,58 @@ export default function PaymentPage() {
           <PayeeCard amount={baseTotal} />
           {isBillNow && <TipPicker />}
 
+          {/* ── Freebie offer banners ──────────────────────────────────
+              One card per eligible non-ITEM offer. The customer can't
+              proceed to pay until every required freebie has been
+              picked — the Pay buttons below are disabled while
+              offersAwaitingPicks is non-empty. */}
+          {!isBillNow && pickableOffers.map((f: any) => {
+            const picked = pickedCountFor(f.offerId);
+            const need = f.pickQuantity ?? 0;
+            const done = picked >= need;
+            const summary = (() => {
+              const s = f.pool?.scope;
+              if (s === 'ALL') return 'any item on the menu';
+              if (s === 'CATEGORY') return `from ${f.pool?.categoryName || 'category'}`;
+              if (s === 'ITEMS') return `from ${f.pool?.items?.length ?? 0} options`;
+              return 'free item';
+            })();
+            return (
+              <div
+                key={f.offerId}
+                className={`rounded-2xl border p-4 space-y-2 ${
+                  done ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className={`text-sm font-bold ${done ? 'text-emerald-800' : 'text-amber-800'}`}>
+                      🎁 {f.offerName}
+                    </p>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      Pick {need} {summary}{done && ' — ready'}
+                    </p>
+                  </div>
+                  <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+                    done ? 'bg-emerald-200 text-emerald-900' : 'bg-amber-200 text-amber-900'
+                  }`}>
+                    {picked}/{need}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setPickerOffer(f)}
+                  className={`w-full py-2 rounded-xl text-sm font-bold transition-colors ${
+                    done
+                      ? 'bg-white border border-emerald-300 text-emerald-700 hover:bg-emerald-100'
+                      : 'bg-amber-600 hover:bg-amber-700 text-white'
+                  }`}
+                >
+                  {done ? 'Change picks' : `Pick your gift${need > 1 ? 's' : ''}`}
+                </button>
+              </div>
+            );
+          })}
+
           {/* Promotions — coupon + reward redemption. Hidden on Bill Now. */}
           {!isBillNow && (availableCoupons.length > 0 || rewardBalance > 0 || liveQuote) && (
             <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
@@ -546,7 +634,7 @@ export default function PaymentPage() {
           {SHOW_TESTING_BYPASS && (
             <button
               onClick={finishBypass}
-              disabled={creating}
+              disabled={creating || offersAwaitingPicks.length > 0}
               className="w-full rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/40 p-4 flex items-center gap-3 text-left hover:bg-amber-50 transition-all"
             >
               <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
@@ -628,7 +716,7 @@ export default function PaymentPage() {
           {!launched ? (
             <button
               onClick={launchUpi}
-              disabled={creating}
+              disabled={creating || offersAwaitingPicks.length > 0}
               className="w-full bg-gold-500 hover:bg-gold-600 text-charcoal-900 py-4 rounded-2xl font-bold shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
             >
               Pay ₹{(TEST_UPI_AMOUNT_RUPEES ?? baseTotal).toFixed(2)} via {defaultUpiApp.name}
@@ -641,14 +729,14 @@ export default function PaymentPage() {
               <div className="flex gap-3">
                 <button
                   onClick={() => { toast.error('Payment cancelled — try again'); setLaunched(false); }}
-                  disabled={creating}
+                  disabled={creating || offersAwaitingPicks.length > 0}
                   className="flex-1 bg-white border border-red-200 text-red-600 py-3.5 rounded-2xl font-bold flex items-center justify-center gap-2"
                 >
                   <XCircle size={16} /> Payment failed
                 </button>
                 <button
                   onClick={finishUpi}
-                  disabled={creating}
+                  disabled={creating || offersAwaitingPicks.length > 0}
                   className="flex-1 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white py-3.5 rounded-2xl font-bold flex items-center justify-center gap-2 disabled:opacity-60"
                 >
                   {creating
@@ -736,7 +824,7 @@ export default function PaymentPage() {
 
         <button
           onClick={finishGateway}
-          disabled={creating}
+          disabled={creating || offersAwaitingPicks.length > 0}
           className="w-full bg-gradient-to-r from-indigo-500 to-indigo-600 text-white py-4 rounded-2xl font-bold shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
         >
           {creating && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
@@ -745,6 +833,132 @@ export default function PaymentPage() {
         <p className="text-[11px] text-slate-400 text-center">
           Secure payment processed by {gateway?.providerName ?? 'gateway'}.
         </p>
+      </div>
+
+      {/* ── Freebie picker modal ──────────────────────────────────────
+          Opens when the customer taps a banner above. Each pool item
+          gets a +/- counter so they can pick duplicates (e.g. 2× same
+          dessert) up to the offer's pickQuantity cap. */}
+      {pickerOffer && (
+        <FreebiePickerModal
+          offer={pickerOffer}
+          picks={freebiePicks[pickerOffer.offerId] ?? []}
+          onClose={() => setPickerOffer(null)}
+          onSave={(picks) => {
+            setFreebiePicks((p) => ({ ...p, [pickerOffer.offerId]: picks }));
+            setPickerOffer(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Freebie pool picker ───────────────────────────────────────────── */
+function FreebiePickerModal({
+  offer, picks, onClose, onSave,
+}: {
+  offer: any;
+  picks: Array<{ itemId: string; quantity: number }>;
+  onClose: () => void;
+  onSave: (picks: Array<{ itemId: string; quantity: number }>) => void;
+}) {
+  const cap = offer.pickQuantity ?? 1;
+  const items: Array<{ id: string; name: string; basePrice: number }> = offer.pool?.items ?? [];
+  // Build a quantity map for editing — keep entries the customer
+  // already picked, default everything else to 0.
+  const initial = (() => {
+    const m: Record<string, number> = {};
+    for (const it of items) m[it.id] = 0;
+    for (const p of picks) m[p.itemId] = (m[p.itemId] ?? 0) + p.quantity;
+    return m;
+  })();
+  const [qty, setQty] = useState<Record<string, number>>(initial);
+  const total = Object.values(qty).reduce((s, n) => s + n, 0);
+
+  const bump = (id: string, delta: number) => {
+    setQty((p) => {
+      const next = Math.max(0, (p[id] ?? 0) + delta);
+      // Block when adding would exceed the cap.
+      if (delta > 0 && total >= cap) return p;
+      return { ...p, [id]: next };
+    });
+  };
+
+  const save = () => {
+    const out: Array<{ itemId: string; quantity: number }> = [];
+    for (const [itemId, q] of Object.entries(qty)) {
+      if (q > 0) out.push({ itemId, quantity: q });
+    }
+    onSave(out);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-white rounded-t-3xl shadow-sheet max-h-[80dvh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <div>
+            <p className="font-bold text-slate-900">{offer.offerName}</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Pick {cap} free item{cap === 1 ? '' : 's'}
+              {' '}— {total}/{cap} selected
+            </p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 px-2">×</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-3 space-y-2">
+          {items.length === 0 ? (
+            <p className="text-sm text-slate-400 italic text-center py-8">
+              No eligible items right now.
+            </p>
+          ) : items.map((it) => {
+            const q = qty[it.id] ?? 0;
+            const canIncrement = total < cap;
+            return (
+              <div key={it.id} className="flex items-center gap-3 bg-slate-50 rounded-xl p-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-slate-800 truncate">{it.name}</p>
+                  <p className="text-[11px] text-slate-400">
+                    Normally ₹{Number(it.basePrice).toFixed(0)} · free in this offer
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => bump(it.id, -1)}
+                    disabled={q === 0}
+                    className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center disabled:opacity-40"
+                  >
+                    −
+                  </button>
+                  <span className="w-6 text-center font-bold text-sm">{q}</span>
+                  <button
+                    onClick={() => bump(it.id, +1)}
+                    disabled={!canIncrement}
+                    className="w-8 h-8 rounded-lg bg-brand-500 text-white flex items-center justify-center disabled:opacity-40"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="px-5 py-4 border-t border-slate-100 safe-bottom space-y-2">
+          <button
+            onClick={save}
+            disabled={total !== cap}
+            className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-3.5 rounded-2xl text-sm shadow-lg disabled:opacity-50"
+          >
+            {total === cap
+              ? `Confirm ${cap} free item${cap === 1 ? '' : 's'}`
+              : `Pick ${cap - total} more`}
+          </button>
+        </div>
       </div>
     </div>
   );

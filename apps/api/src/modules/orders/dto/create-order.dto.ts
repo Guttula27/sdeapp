@@ -44,6 +44,15 @@ class OrderItemDto {
   @IsOptional()
   @IsString({ each: true })
   bundleSelections?: string[];
+
+  // Freebie line — present when the customer picked this item as part
+  // of an active offer's "Get" pool at checkout. Server validates the
+  // item belongs to the offer's pool, forces unit / total / GST to 0,
+  // and tags the line's notes with the offer name. The offer must be
+  // active at order time; stale picks are rejected.
+  @IsString()
+  @IsOptional()
+  freebieOfferId?: string;
 }
 
 class OrderPaymentDto {

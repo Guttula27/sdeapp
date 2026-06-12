@@ -69,8 +69,8 @@ export type Quote = {
     pickQuantity: number;
     pool:
       | { scope: 'ITEM'; itemId: string; itemName: string }
-      | { scope: 'ALL' }
-      | { scope: 'CATEGORY'; categoryId: string; categoryName: string }
+      | { scope: 'ALL'; items: Array<{ id: string; name: string; basePrice: number }> }
+      | { scope: 'CATEGORY'; categoryId: string; categoryName: string; items: Array<{ id: string; name: string; basePrice: number }> }
       | { scope: 'ITEMS'; items: Array<{ id: string; name: string; basePrice: number }> };
     // Back-compat shims for older clients.
     getItemId: string | null;
@@ -279,13 +279,42 @@ export class PricingService {
         if (!offer.getItemId) return null;
         return { scope: 'ITEM', itemId: offer.getItemId, itemName: offer.getItem?.name ?? 'Free item' };
       }
-      if (scope === 'ALL') return { scope: 'ALL' };
+      // For ALL / CATEGORY / ITEMS we resolve the pool to concrete
+      // items here so the customer picker renders without an extra
+      // round-trip. Cap ALL at 200 items so a sprawling menu doesn't
+      // bloat the quote response.
+      if (scope === 'ALL') {
+        const items = await this.prisma.item.findMany({
+          where: {
+            isAvailable: true,
+            isDisplayed: true,
+            subcategory: { category: { outletId: input.outletId } },
+          },
+          select: { id: true, name: true, basePrice: true },
+          orderBy: { name: 'asc' },
+          take: 200,
+        });
+        return {
+          scope: 'ALL',
+          items: items.map((it) => ({ id: it.id, name: it.name, basePrice: Number(it.basePrice) })),
+        };
+      }
       if (scope === 'CATEGORY') {
         if (!offer.getCategoryId) return null;
+        const items = await this.prisma.item.findMany({
+          where: {
+            isAvailable: true,
+            isDisplayed: true,
+            subcategory: { categoryId: offer.getCategoryId },
+          },
+          select: { id: true, name: true, basePrice: true },
+          orderBy: { name: 'asc' },
+        });
         return {
           scope: 'CATEGORY',
           categoryId: offer.getCategoryId,
           categoryName: offer.getCategory?.name ?? 'Category',
+          items: items.map((it) => ({ id: it.id, name: it.name, basePrice: Number(it.basePrice) })),
         };
       }
       if (scope === 'ITEMS') {

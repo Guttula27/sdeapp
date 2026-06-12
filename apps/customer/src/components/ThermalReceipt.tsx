@@ -359,6 +359,11 @@ const ThermalReceipt = forwardRef<HTMLDivElement, Props>(function ThermalReceipt
               <span style={{ textAlign: 'right' }}>{Number(it.unitPrice).toFixed(0)}</span>
               <span style={{ textAlign: 'right' }}>{Number(it.totalPrice).toFixed(0)}</span>
             </div>
+            {it.notes && (
+              <div style={{ fontSize: 10, color: '#444', marginLeft: 4, fontStyle: 'italic' }}>
+                {it.notes}
+              </div>
+            )}
             {hsn && (
               <div style={{ fontSize: 10, color: '#444', marginLeft: 4 }}>HSN&nbsp;&nbsp;{hsn}</div>
             )}
