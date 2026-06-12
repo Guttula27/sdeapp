@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import {
   Building2, Phone, Clock, ImagePlus, X as XIcon, Lock, Eye, EyeOff, Save,
   Plus, Trash2, Store, QrCode, Download, Hash, RotateCcw, Printer as PrinterIcon, Bluetooth,
+  Package, CreditCard,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import { downloadQrCard } from '../../utils/qrCard';
@@ -124,6 +125,16 @@ export default function OutletProfilePage() {
     percent: '5',
     includesGst: false,
   });
+  // Operational defaults that the outlet admin owns. These used to live
+  // on the Business Outlets page; the outlet admin sets them now so they
+  // can tune prep time / parcel fee / payment routing without round-tripping
+  // through head office.
+  const [ops, setOps] = useState({
+    defaultPrepTime: '',                  // minutes; empty string = unset
+    parcelChargeEnabled: false,
+    defaultParcelCharge: '0',
+    razorpayLinkedAccountId: '',          // Razorpay Route LA, "acc_..."
+  });
   const [tokenCounter, setTokenCounter] = useState({ startNumber: '1', nextNumber: 1, nextOrderSequence: 1 });
   const [savingToken, setSavingToken] = useState(false);
   const [primary, setPrimary] = useState<string | null>(null);
@@ -193,6 +204,12 @@ export default function OutletProfilePage() {
         applicable: !!o.gstApplicable,
         percent: String(o.gstPercent ?? 5),
         includesGst: !!o.priceIncludesGst,
+      });
+      setOps({
+        defaultPrepTime: o.defaultPrepTime != null ? String(o.defaultPrepTime) : '',
+        parcelChargeEnabled: !!o.parcelChargeEnabled,
+        defaultParcelCharge: String(Number(o.defaultParcelCharge ?? 0)),
+        razorpayLinkedAccountId: o.razorpayLinkedAccountId ?? '',
       });
       setKitchenPrint({
         auto: !!o.kitchenAutoPrint,
@@ -429,6 +446,10 @@ export default function OutletProfilePage() {
         // Empty-string → null so the FK clears when the admin unsets
         // the printer without picking a new one.
         receiptPrinterId: receiptPrint.printerId || null,
+        defaultPrepTime: ops.defaultPrepTime === '' ? null : Number(ops.defaultPrepTime),
+        parcelChargeEnabled: ops.parcelChargeEnabled,
+        defaultParcelCharge: Number(ops.defaultParcelCharge) || 0,
+        razorpayLinkedAccountId: ops.razorpayLinkedAccountId.trim() || null,
       });
 
       // Gallery sync
@@ -717,6 +738,72 @@ export default function OutletProfilePage() {
             maxLength={32}
           />
         </Field>
+      </div>
+
+      {/* Operations defaults — moved here from the Business Outlets page.
+          The outlet admin owns prep time / parcel fee / payment routing
+          so they don't have to go through the business owner to tune
+          their own day-to-day numbers. */}
+      <div className="card p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <Package size={15} className="text-slate-400" />
+          <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Operations</p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Default preparation time (minutes)" hint="Shown to customers as the estimated wait time. Leave blank to hide it.">
+            <input
+              type="number"
+              min={1}
+              value={ops.defaultPrepTime}
+              onChange={(e) => setOps((p) => ({ ...p, defaultPrepTime: e.target.value }))}
+              className="input"
+              placeholder="e.g. 15"
+            />
+          </Field>
+          <Field label="Default parcel charge (₹)" hint="Per-order parcel fee. Only applied when the toggle below is on.">
+            <input
+              type="number"
+              min={0}
+              step="0.50"
+              value={ops.defaultParcelCharge}
+              onChange={(e) => setOps((p) => ({ ...p, defaultParcelCharge: e.target.value }))}
+              className="input"
+              placeholder="0"
+            />
+          </Field>
+        </div>
+
+        <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={ops.parcelChargeEnabled}
+            onChange={(e) => setOps((p) => ({ ...p, parcelChargeEnabled: e.target.checked }))}
+            className="w-4 h-4 accent-brand-500 rounded"
+          />
+          Charge the parcel fee on parcel orders
+          <span className="text-[11px] text-slate-400">(parcel is always available; this toggles the fee line)</span>
+        </label>
+
+        <div className="pt-2 mt-1 border-t border-slate-100">
+          <div className="flex items-center gap-2 mb-2">
+            <CreditCard size={14} className="text-slate-400" />
+            <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Payments — Razorpay Route</p>
+          </div>
+          <Field
+            label="Razorpay Linked Account ID"
+            hint="From your Razorpay Route account — starts with `acc_`. When set, the full bill is routed to this Linked Account and gateway fees come out of its settlement. Leave blank to hide Razorpay from customers."
+          >
+            <input
+              value={ops.razorpayLinkedAccountId}
+              onChange={(e) => setOps((p) => ({ ...p, razorpayLinkedAccountId: e.target.value }))}
+              className="input font-mono"
+              placeholder="acc_XXXXXXXXXXXXXX"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field>
+        </div>
       </div>
 
       {/* Token counter */}

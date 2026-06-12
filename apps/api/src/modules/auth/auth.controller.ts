@@ -37,6 +37,21 @@ export class AuthController {
     return this.authService.verifyCustomerOtp(dto);
   }
 
+  // Staff/admin forgot-password — phone + OTP reset flow.
+  // Public on purpose: an unauthenticated user has to be able to start
+  // the reset before they have a valid session.
+  @Public()
+  @Post('admin/forgot-password/request')
+  requestStaffPasswordReset(@Body() body: { phone: string }) {
+    return this.authService.requestStaffPasswordReset(body?.phone);
+  }
+
+  @Public()
+  @Post('admin/forgot-password/reset')
+  resetStaffPassword(@Body() body: { phone: string; otp: string; newPassword: string }) {
+    return this.authService.resetStaffPassword(body?.phone, body?.otp, body?.newPassword);
+  }
+
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @Get('me')
