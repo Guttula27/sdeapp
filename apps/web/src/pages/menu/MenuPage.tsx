@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import {
-  Plus, Eye, EyeOff, ChevronRight, ChevronDown,
+  Plus, Eye, EyeOff, ChevronRight, ChevronDown, ChevronUp, ChevronLeft,
   UtensilsCrossed, Star, Edit2, Trash2, Tag, ImagePlus, X as XIcon,
   Store, Download, IndianRupee, QrCode, PackagePlus,
   Clock, Layers, CheckCircle2, XCircle,
@@ -876,6 +876,108 @@ export default function MenuPage() {
     finally { setSaving(false); }
   };
 
+  /* ── Reorder helpers ──────────────────────────────────────
+     Each reorder is an optimistic local swap followed by a PATCH that writes
+     displayOrder = array index on the affected rows. Backend scopes the write
+     to the caller's tier (business template rows vs outlet-owned rows), so
+     business and outlet hold independent orderings of the same logical menu.
+  */
+  const swap = <T,>(arr: T[], i: number, j: number): T[] => {
+    if (i < 0 || j < 0 || i >= arr.length || j >= arr.length) return arr;
+    const out = arr.slice();
+    [out[i], out[j]] = [out[j], out[i]];
+    return out;
+  };
+  const menusBase = isTemplate
+    ? `/businesses/${businessId}/menus`
+    : `/outlets/${outletId}/menus`;
+
+  const moveMenu = async (menuId: string, dir: -1 | 1) => {
+    const i = menus.findIndex((m) => m.id === menuId);
+    if (i < 0) return;
+    const reordered = swap(menus, i, i + dir);
+    if (reordered === menus) return;
+    setMenus(reordered);
+    try {
+      await api.patch(`${menusBase}/reorder`, { orderedIds: reordered.map((m) => m.id) });
+    } catch (e: any) {
+      setMenus(menus); // rollback
+      toast.error(e?.response?.data?.message || 'Reorder failed');
+    }
+  };
+
+  // Current category filter window — mirrors the render-time filter so the
+  // ids sent to the server match what the user sees.
+  const visibleCategories = () =>
+    categories.filter((cat) => !multipleMenusEnabled || !activeMenuId || cat.menuId === activeMenuId);
+
+  const moveCategory = async (categoryId: string, dir: -1 | 1) => {
+    const visible = visibleCategories();
+    const vi = visible.findIndex((c) => c.id === categoryId);
+    if (vi < 0) return;
+    const newVisible = swap(visible, vi, vi + dir);
+    if (newVisible === visible) return;
+    // Re-stitch into the full array: each "visible slot" in the original
+    // categories list takes the next id from newVisible in order.
+    const queue = newVisible.slice();
+    const prev = categories;
+    const nextCats = categories.map((c) =>
+      visible.some((v) => v.id === c.id) ? (queue.shift() as any) : c,
+    );
+    setCategories(nextCats);
+    try {
+      await api.patch(`${menuBase}/categories/reorder`, {
+        orderedIds: newVisible.map((c) => c.id),
+      });
+    } catch (e: any) {
+      setCategories(prev);
+      toast.error(e?.response?.data?.message || 'Reorder failed');
+    }
+  };
+
+  const moveSubcategory = async (categoryId: string, subcategoryId: string, dir: -1 | 1) => {
+    const cat = categories.find((c) => c.id === categoryId);
+    if (!cat) return;
+    const subs = (cat.subcategories || []) as any[];
+    const i = subs.findIndex((s) => s.id === subcategoryId);
+    if (i < 0) return;
+    const newSubs = swap(subs, i, i + dir);
+    if (newSubs === subs) return;
+    const prev = categories;
+    setCategories((all) => all.map((c) => (c.id === categoryId ? { ...c, subcategories: newSubs } : c)));
+    try {
+      await api.patch(`${menuBase}/categories/${categoryId}/subcategories/reorder`, {
+        orderedIds: newSubs.map((s) => s.id),
+      });
+    } catch (e: any) {
+      setCategories(prev);
+      toast.error(e?.response?.data?.message || 'Reorder failed');
+    }
+  };
+
+  const moveItem = async (categoryId: string, subcategoryId: string, itemId: string, dir: -1 | 1) => {
+    const cat = categories.find((c) => c.id === categoryId);
+    const sub = cat?.subcategories?.find((s: any) => s.id === subcategoryId);
+    if (!sub) return;
+    const items = (sub.items || []) as any[];
+    const i = items.findIndex((it) => it.id === itemId);
+    if (i < 0) return;
+    const newItems = swap(items, i, i + dir);
+    if (newItems === items) return;
+    const prev = categories;
+    setCategories((all) => all.map((c) => (c.id === categoryId
+      ? { ...c, subcategories: c.subcategories.map((s: any) => (s.id === subcategoryId ? { ...s, items: newItems } : s)) }
+      : c)));
+    try {
+      await api.patch(`${menuBase}/subcategories/${subcategoryId}/items/reorder`, {
+        orderedIds: newItems.map((it) => it.id),
+      });
+    } catch (e: any) {
+      setCategories(prev);
+      toast.error(e?.response?.data?.message || 'Reorder failed');
+    }
+  };
+
   const totalItems = categories.reduce((s, c) =>
     s + c.subcategories?.reduce((ss: number, sc: any) => ss + (sc.items?.length || 0), 0), 0);
 
@@ -1135,7 +1237,7 @@ export default function MenuPage() {
           nothing) — otherwise the user has no way to create the first menu. */}
       {multipleMenusEnabled && (
         <div className="card p-2 flex items-center gap-1 overflow-x-auto">
-          {menus.map((m) => {
+          {menus.map((m, mIdx) => {
             const isActive = m.id === activeMenuId;
             return (
               <div key={m.id} className="flex items-center shrink-0">
@@ -1153,6 +1255,26 @@ export default function MenuPage() {
                   {m.isDefault && <span className="text-[9px] uppercase tracking-wide opacity-70">default</span>}
                   {!m.isActive && <EyeOff size={11} />}
                 </button>
+                {isActive && !isReadOnly && (
+                  <div className="flex items-center ml-0.5">
+                    <button
+                      onClick={() => moveMenu(m.id, -1)}
+                      disabled={mIdx === 0}
+                      className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                      title="Move menu earlier"
+                    >
+                      <ChevronLeft size={13} />
+                    </button>
+                    <button
+                      onClick={() => moveMenu(m.id, 1)}
+                      disabled={mIdx === menus.length - 1}
+                      className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                      title="Move menu later"
+                    >
+                      <ChevronRight size={13} />
+                    </button>
+                  </div>
+                )}
                 {isActive && isTemplate && !isReadOnly && (
                   <>
                     <button
@@ -1255,9 +1377,9 @@ export default function MenuPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {categories
-            .filter((cat) => !multipleMenusEnabled || !activeMenuId || cat.menuId === activeMenuId)
-            .map(cat => {
+          {(() => {
+            const visibleCats = categories.filter((cat) => !multipleMenusEnabled || !activeMenuId || cat.menuId === activeMenuId);
+            return visibleCats.map((cat, catIdx) => {
             const catItems = cat.subcategories?.reduce((s: number, sc: any) => s + (sc.items?.length || 0), 0) || 0;
             const isOpen = expanded.has(cat.id);
             return (
@@ -1277,6 +1399,22 @@ export default function MenuPage() {
                   {!isReadOnly && (
                     <div className="flex items-center gap-1 ml-2">
                       <button
+                        onClick={() => moveCategory(cat.id, -1)}
+                        disabled={catIdx === 0}
+                        className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                        title="Move category up"
+                      >
+                        <ChevronUp size={13} />
+                      </button>
+                      <button
+                        onClick={() => moveCategory(cat.id, 1)}
+                        disabled={catIdx === visibleCats.length - 1}
+                        className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                        title="Move category down"
+                      >
+                        <ChevronDown size={13} />
+                      </button>
+                      <button
                         onClick={() => setSubModal({ open: true, categoryId: cat.id })}
                         className="btn-ghost text-xs py-1.5 px-2 text-brand-600 hover:bg-brand-50"
                       >
@@ -1292,7 +1430,7 @@ export default function MenuPage() {
                 {/* Subcategories */}
                 {isOpen && (
                   <div className="border-t border-slate-100 bg-slate-50/40">
-                    {cat.subcategories?.map((sub: any) => (
+                    {cat.subcategories?.map((sub: any, subIdx: number) => (
                       <div key={sub.id} className="px-5 py-3 border-b border-slate-100 last:border-0">
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -1305,6 +1443,22 @@ export default function MenuPage() {
                           </div>
                           {!isReadOnly && (
                             <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                onClick={() => moveSubcategory(cat.id, sub.id, -1)}
+                                disabled={subIdx === 0}
+                                className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Move subcategory up"
+                              >
+                                <ChevronUp size={12} />
+                              </button>
+                              <button
+                                onClick={() => moveSubcategory(cat.id, sub.id, 1)}
+                                disabled={subIdx === (cat.subcategories?.length || 0) - 1}
+                                className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Move subcategory down"
+                              >
+                                <ChevronDown size={12} />
+                              </button>
                               <button
                                 onClick={() => setSubModal({ open: true, categoryId: cat.id, editing: sub })}
                                 className="btn-ghost p-1.5 text-slate-500 hover:text-brand-600"
@@ -1329,7 +1483,7 @@ export default function MenuPage() {
                           )}
                         </div>
                         <div className="space-y-2">
-                          {sub.items?.map((item: any) => (
+                          {sub.items?.map((item: any, itemIdx: number) => (
                             <div key={item.id} className={clsx(
                               'flex items-center gap-3 p-3 rounded-xl border bg-white transition-all',
                               item.isAvailable ? 'border-slate-100' : 'border-red-100 bg-red-50/30',
@@ -1409,6 +1563,22 @@ export default function MenuPage() {
                               </div>
                               {!isReadOnly && (
                                 <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    onClick={() => moveItem(cat.id, sub.id, item.id, -1)}
+                                    disabled={itemIdx === 0}
+                                    className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                                    title="Move item up"
+                                  >
+                                    <ChevronUp size={13} />
+                                  </button>
+                                  <button
+                                    onClick={() => moveItem(cat.id, sub.id, item.id, 1)}
+                                    disabled={itemIdx === (sub.items?.length || 0) - 1}
+                                    className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                                    title="Move item down"
+                                  >
+                                    <ChevronDown size={13} />
+                                  </button>
                                   {(customerTags.length > 0 || tableTypesList.length > 0 || (item.variants?.length ?? 0) > 0) && (
                                     <button
                                       onClick={() => openTagPrices(item)}
@@ -1464,7 +1634,8 @@ export default function MenuPage() {
                 )}
               </div>
             );
-          })}
+          });
+          })()}
         </div>
       )}
 

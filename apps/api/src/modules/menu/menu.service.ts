@@ -610,6 +610,67 @@ export class MenuService {
     });
   }
 
+  // ─── Reorder: categories / subcategories / items ──────────
+  // Same pattern as reorderItemImages: client sends the new order, server
+  // writes displayOrder = array index in one transaction. The scope filter
+  // (outletId / businessId / parent id) doubles as the cross-tenant guard so
+  // a caller cannot stamp displayOrder on a row that doesn't belong to its
+  // tier — bad ids simply fall out of the WHERE and the count mismatch trips
+  // a BadRequest.
+  private async assertOwnership(found: number, expected: number, label: string) {
+    if (found !== expected) {
+      throw new BadRequestException(`One or more ${label} do not belong to this scope`);
+    }
+  }
+
+  async reorderCategories(
+    scope: { outletId?: string; businessId?: string },
+    orderedIds: string[],
+  ) {
+    if (!orderedIds?.length) return { reordered: 0 };
+    const where: any = { id: { in: orderedIds } };
+    if (scope.outletId) where.outletId = scope.outletId;
+    if (scope.businessId) where.businessId = scope.businessId;
+    const owned = await this.prisma.category.findMany({ where, select: { id: true } });
+    await this.assertOwnership(owned.length, orderedIds.length, 'categories');
+    await this.prisma.$transaction(
+      orderedIds.map((id, idx) =>
+        this.prisma.category.update({ where: { id }, data: { displayOrder: idx } }),
+      ),
+    );
+    return { reordered: orderedIds.length };
+  }
+
+  async reorderSubcategories(categoryId: string, orderedIds: string[]) {
+    if (!orderedIds?.length) return { reordered: 0 };
+    const owned = await this.prisma.subcategory.findMany({
+      where: { id: { in: orderedIds }, categoryId },
+      select: { id: true },
+    });
+    await this.assertOwnership(owned.length, orderedIds.length, 'subcategories');
+    await this.prisma.$transaction(
+      orderedIds.map((id, idx) =>
+        this.prisma.subcategory.update({ where: { id }, data: { displayOrder: idx } }),
+      ),
+    );
+    return { reordered: orderedIds.length };
+  }
+
+  async reorderItems(subcategoryId: string, orderedIds: string[]) {
+    if (!orderedIds?.length) return { reordered: 0 };
+    const owned = await this.prisma.item.findMany({
+      where: { id: { in: orderedIds }, subcategoryId },
+      select: { id: true },
+    });
+    await this.assertOwnership(owned.length, orderedIds.length, 'items');
+    await this.prisma.$transaction(
+      orderedIds.map((id, idx) =>
+        this.prisma.item.update({ where: { id }, data: { displayOrder: idx } }),
+      ),
+    );
+    return { reordered: orderedIds.length };
+  }
+
   async updateVariant(id: string, data: Partial<{ name: string; shortDescription: string | null; price: number; isAvailable: boolean }>) {
     const variant = await this.prisma.variant.update({ where: { id }, data });
     if (data.name !== undefined || data.shortDescription !== undefined) {

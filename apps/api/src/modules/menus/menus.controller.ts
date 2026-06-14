@@ -15,6 +15,16 @@ export class MenusController {
     return this.service.listForBusiness(businessId);
   }
 
+  // Declared before the generic `menus/:id` PATCH so the literal path wins
+  // route matching even if NestJS shuffles registration order in the future.
+  @Patch('businesses/:businessId/menus/reorder')
+  reorder(
+    @Param('businessId') businessId: string,
+    @Body() body: { orderedIds: string[] },
+  ) {
+    return this.service.reorderBusinessMenus(businessId, body?.orderedIds ?? []);
+  }
+
   @Post('businesses/:businessId/menus')
   create(
     @Param('businessId') businessId: string,

@@ -80,4 +80,32 @@ export class BusinessMenuController {
   deleteVariant(@Param('id') id: string) {
     return this.menuService.deleteVariant(id);
   }
+
+  // ── Reorder endpoints (business tier) ─────────────────────
+  // Reorders the business template. Outlets that have already imported keep
+  // their own independent order — re-importing is what would re-pull this
+  // ordering down.
+  @Patch('categories/reorder')
+  reorderCategories(
+    @Param('businessId') businessId: string,
+    @Body() body: { orderedIds: string[] },
+  ) {
+    return this.menuService.reorderCategories({ businessId }, body?.orderedIds ?? []);
+  }
+
+  @Patch('categories/:categoryId/subcategories/reorder')
+  reorderSubcategories(
+    @Param('categoryId') categoryId: string,
+    @Body() body: { orderedIds: string[] },
+  ) {
+    return this.menuService.reorderSubcategories(categoryId, body?.orderedIds ?? []);
+  }
+
+  @Patch('subcategories/:subcategoryId/items/reorder')
+  reorderItems(
+    @Param('subcategoryId') subcategoryId: string,
+    @Body() body: { orderedIds: string[] },
+  ) {
+    return this.menuService.reorderItems(subcategoryId, body?.orderedIds ?? []);
+  }
 }

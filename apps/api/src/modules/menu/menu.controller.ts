@@ -195,4 +195,37 @@ export class MenuController {
   ) {
     return this.menuService.reorderItemImages(itemId, body.orderedIds);
   }
+
+  // ── Reorder endpoints (outlet tier) ───────────────────────
+  // Outlet admin reorders apply only to this outlet's own rows. They do not
+  // touch the business template — both tiers can hold independent orders.
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Patch('categories/reorder')
+  reorderCategories(
+    @Param('outletId') outletId: string,
+    @Body() body: { orderedIds: string[] },
+  ) {
+    return this.menuService.reorderCategories({ outletId }, body?.orderedIds ?? []);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Patch('categories/:categoryId/subcategories/reorder')
+  reorderSubcategories(
+    @Param('categoryId') categoryId: string,
+    @Body() body: { orderedIds: string[] },
+  ) {
+    return this.menuService.reorderSubcategories(categoryId, body?.orderedIds ?? []);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Patch('subcategories/:subcategoryId/items/reorder')
+  reorderItems(
+    @Param('subcategoryId') subcategoryId: string,
+    @Body() body: { orderedIds: string[] },
+  ) {
+    return this.menuService.reorderItems(subcategoryId, body?.orderedIds ?? []);
+  }
 }
