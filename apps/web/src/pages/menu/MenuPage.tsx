@@ -91,7 +91,12 @@ export default function MenuPage() {
   // Holds the business template tree (with `alreadyImported` per item) plus
   // the user's per-item selection while the import modal is open.
   const [businessTemplate, setBusinessTemplate] = useState<any[] | null>(null);
-  const [selectedImportIds, setSelectedImportIds] = useState<Set<string>>(new Set());
+  // Selection at three levels — a row at any level marks itself (and, by
+  // cascade, everything beneath it) for import. Cascading is computed at
+  // render/submit time from these three sets, not stored explicitly.
+  const [importPickCats, setImportPickCats] = useState<Set<string>>(new Set());
+  const [importPickSubs, setImportPickSubs] = useState<Set<string>>(new Set());
+  const [importPickItems, setImportPickItems] = useState<Set<string>>(new Set());
   const [importTreeLoading, setImportTreeLoading] = useState(false);
 
   const customerOrigin = (window as any).VITE_CUSTOMER_URL
@@ -178,8 +183,6 @@ export default function MenuPage() {
   const subImageRef                 = useRef<HTMLInputElement>(null);
   const [varModal, setVarModal]     = useState<{ open: boolean; itemId?: string }>({ open: false });
   const [deleteTarget, setDeleteTarget] = useState<{ type: string; id: string; name: string } | null>(null);
-  const [importModal, setImportModal] = useState(false);
-  const [importing, setImporting]   = useState<string | null>(null);
   const [saving, setSaving]         = useState(false);
 
   // Tag + table-type pricing
@@ -402,22 +405,6 @@ export default function MenuPage() {
     }
   };
 
-  // ── Import menu from sibling outlet ──────────────────────
-  const runImport = async (sourceOutletId: string) => {
-    setImporting(sourceOutletId);
-    try {
-      const { data } = await api.post(`${menuBase}/import-from/${sourceOutletId}`);
-      const r = data.data;
-      toast.success(`Imported ${r.categories} categories, ${r.items} items`);
-      setImportModal(false);
-      fetchMenu();
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Import failed');
-    } finally {
-      setImporting(null);
-    }
-  };
-
   // Sync subcategory image preview on open
   useEffect(() => {
     if (subModal.open) {
@@ -616,20 +603,9 @@ export default function MenuPage() {
     }
   };
 
-  const importMenuItems = async (menu: MenuRow) => {
-    if (!outletId) return;
-    if (!confirm(`Import all categories from "${menu.name}" into this outlet?`)) return;
-    setMenuBusy(true);
-    try {
-      const { data } = await api.post(`/outlets/${outletId}/menus/${menu.id}/import`);
-      toast.success(`Imported ${data.data?.categoriesCreated ?? 0} categories, ${data.data?.itemsCreated ?? 0} items`);
-      fetchMenu();
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Import failed');
-    } finally {
-      setMenuBusy(false);
-    }
-  };
+  // (importMenuItems removed — wholesale per-menu auto-import was misleading.
+  //  Outlets now import explicitly via the "Import from Business" dialog and
+  //  pick which categories / subcategories / items they want.)
 
   // ── Subcategory CRUD ─────────────────────────────────────
   const saveSubcategory = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -987,30 +963,35 @@ export default function MenuPage() {
   // assigned outlet; otherwise the dropdown can silently retarget mutations
   // (imports, category/item edits) to a sibling outlet.
   const canSwitchOutlet = tier === 'platform';
-  const sourceOutlets = outlets.filter(o => o.id !== outletId);
-  const canImport = categories.length === 0 && sourceOutlets.length > 0 && !!outletId;
   const canImportFromBusiness = !isTemplate && !isReadOnly && !!businessId && !!outletId;
   const currentOutletName = outlets.find((o) => o.id === outletId)?.name;
+
+  const clearImportSelection = () => {
+    setImportPickCats(new Set());
+    setImportPickSubs(new Set());
+    setImportPickItems(new Set());
+  };
 
   const openImportFromBusiness = async () => {
     if (!businessId) return;
     setImportBusinessOpen(true);
     setImportBusinessSummary(null);
-    setSelectedImportIds(new Set());
+    clearImportSelection();
     setImportTreeLoading(true);
     try {
       // Fetch business template + current outlet menu in parallel so we can
-      // flag already-imported items (matched by category/subcategory/item
-      // name path — same matching rule the backend uses to skip dupes).
+      // flag already-imported items. The match key scopes by menuId — two
+      // different menus can legitimately have a "Specials" category, and
+      // they should not collide.
       const [biz, outletMenu] = await Promise.all([
         api.get(`/businesses/${businessId}/menu`),
-        api.get(`/outlets/${outletId}/menu`),
+        api.get(`/outlets/${outletId}/menu`, { params: { includeHidden: 'true' } }),
       ]);
-      const importedKeys = new Set<string>();
+      const importedItemKeys = new Set<string>();
       for (const c of (outletMenu.data.data || [])) {
         for (const s of (c.subcategories || [])) {
           for (const it of (s.items || [])) {
-            importedKeys.add(`${c.name}|${s.name}|${it.name}`);
+            importedItemKeys.add(`${c.menuId ?? ''}|${c.name}|${s.name}|${it.name}`);
           }
         }
       }
@@ -1020,7 +1001,7 @@ export default function MenuPage() {
           ...s,
           items: (s.items || []).map((it: any) => ({
             ...it,
-            alreadyImported: importedKeys.has(`${c.name}|${s.name}|${it.name}`),
+            alreadyImported: importedItemKeys.has(`${c.menuId ?? ''}|${c.name}|${s.name}|${it.name}`),
           })),
         })),
       }));
@@ -1037,15 +1018,80 @@ export default function MenuPage() {
     if (importBusinessBusy) return;
     setImportBusinessOpen(false);
     setBusinessTemplate(null);
-    setSelectedImportIds(new Set());
+    clearImportSelection();
   };
 
-  const importableItems = (businessTemplate || []).flatMap((c: any) =>
-    (c.subcategories || []).flatMap((s: any) => (s.items || []).filter((it: any) => !it.alreadyImported)),
-  );
+  // Cascade-aware predicates: an item is "in scope" if itself, its parent
+  // sub, or its parent cat is picked. A sub is "in scope" if itself or its
+  // parent cat is picked. A cat is in scope if itself is picked.
+  const isCatPicked    = (catId: string) => importPickCats.has(catId);
+  const isSubPicked    = (subId: string, parentCatId: string) =>
+    importPickCats.has(parentCatId) || importPickSubs.has(subId);
+  const isItemPicked   = (itemId: string, parentSubId: string, parentCatId: string) =>
+    importPickCats.has(parentCatId) || importPickSubs.has(parentSubId) || importPickItems.has(itemId);
 
-  const toggleImportItem = (itemId: string) => {
-    setSelectedImportIds((prev) => {
+  const toggleImportCat = (cat: any) => {
+    setImportPickCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat.id)) next.delete(cat.id);
+      else next.add(cat.id);
+      return next;
+    });
+    // Clearing redundant child picks keeps the selection set minimal and
+    // avoids ambiguity at submit time.
+    setImportPickSubs((prev) => {
+      const next = new Set(prev);
+      for (const s of (cat.subcategories || [])) next.delete(s.id);
+      return next;
+    });
+    setImportPickItems((prev) => {
+      const next = new Set(prev);
+      for (const s of (cat.subcategories || [])) {
+        for (const it of (s.items || [])) next.delete(it.id);
+      }
+      return next;
+    });
+  };
+
+  const toggleImportSub = (sub: any, parentCatId: string) => {
+    // If the parent cat is wholly picked, un-picking the cat first preserves
+    // intent — user wanted partial selection. We don't try to be too clever:
+    // just remove the parent from picked-cats and let the user re-build.
+    setImportPickCats((prev) => {
+      if (!prev.has(parentCatId)) return prev;
+      const next = new Set(prev);
+      next.delete(parentCatId);
+      return next;
+    });
+    setImportPickSubs((prev) => {
+      const next = new Set(prev);
+      if (next.has(sub.id)) next.delete(sub.id);
+      else next.add(sub.id);
+      return next;
+    });
+    setImportPickItems((prev) => {
+      const next = new Set(prev);
+      for (const it of (sub.items || [])) next.delete(it.id);
+      return next;
+    });
+  };
+
+  const toggleImportItem = (itemId: string, parentSubId: string, parentCatId: string) => {
+    // Same logic as sub toggle: remove parents from their picked sets if
+    // they're "covering" this item, so the picks accurately reflect intent.
+    setImportPickCats((prev) => {
+      if (!prev.has(parentCatId)) return prev;
+      const next = new Set(prev);
+      next.delete(parentCatId);
+      return next;
+    });
+    setImportPickSubs((prev) => {
+      if (!prev.has(parentSubId)) return prev;
+      const next = new Set(prev);
+      next.delete(parentSubId);
+      return next;
+    });
+    setImportPickItems((prev) => {
       const next = new Set(prev);
       if (next.has(itemId)) next.delete(itemId);
       else next.add(itemId);
@@ -1053,27 +1099,32 @@ export default function MenuPage() {
     });
   };
 
-  const toggleImportGroup = (items: any[]) => {
-    const importable = items.filter((it) => !it.alreadyImported);
-    const allSelected = importable.length > 0 && importable.every((it) => selectedImportIds.has(it.id));
-    setSelectedImportIds((prev) => {
-      const next = new Set(prev);
-      if (allSelected) importable.forEach((it) => next.delete(it.id));
-      else importable.forEach((it) => next.add(it.id));
-      return next;
-    });
-  };
-
-  const selectAllImport = () => {
-    setSelectedImportIds(new Set(importableItems.map((it: any) => it.id)));
-  };
-
-  const clearImportSelection = () => setSelectedImportIds(new Set());
+  // Selection summary surfaced in the dialog header.
+  const importSelectionCount = (() => {
+    let n = 0;
+    for (const c of (businessTemplate || [])) {
+      const wholeCat = importPickCats.has(c.id);
+      for (const s of (c.subcategories || [])) {
+        const wholeSub = wholeCat || importPickSubs.has(s.id);
+        const items = (s.items || []);
+        if (wholeSub) {
+          // Count items the outlet doesn't already have, so the badge matches
+          // what'll actually be created.
+          n += items.filter((it: any) => !it.alreadyImported).length;
+        } else {
+          for (const it of items) {
+            if (importPickItems.has(it.id) && !it.alreadyImported) n++;
+          }
+        }
+      }
+    }
+    return n;
+  })();
 
   const runImportFromBusiness = async () => {
     if (!businessId || !outletId) return;
-    if (selectedImportIds.size === 0) {
-      toast.error('Pick at least one item to import');
+    if (importPickCats.size + importPickSubs.size + importPickItems.size === 0) {
+      toast.error('Pick at least one category, subcategory or item');
       return;
     }
     setImportBusinessBusy(true);
@@ -1081,13 +1132,22 @@ export default function MenuPage() {
     try {
       const { data } = await api.post(
         `/outlets/${outletId}/menu/import-from-business/${businessId}`,
-        { itemIds: Array.from(selectedImportIds) },
+        {
+          categoryIds: Array.from(importPickCats),
+          subcategoryIds: Array.from(importPickSubs),
+          itemIds: Array.from(importPickItems),
+        },
       );
       const r = data.data;
       setImportBusinessSummary(r);
-      toast.success(`Imported ${r.items} item${r.items === 1 ? '' : 's'} from business menu`);
+      const totalCreated = (r.categories ?? 0) + (r.subcategories ?? 0) + (r.items ?? 0);
+      toast.success(
+        totalCreated === 0
+          ? 'Nothing new was imported — everything is already at this outlet'
+          : `Imported ${r.categories} categor${r.categories === 1 ? 'y' : 'ies'}, ${r.subcategories} subcategor${r.subcategories === 1 ? 'y' : 'ies'}, ${r.items} item${r.items === 1 ? '' : 's'}`,
+      );
       await fetchMenu();
-      // Refresh the tree so the just-imported items show as already-imported.
+      // Refresh the tree so just-imported rows reflect in the alreadyImported flag.
       openImportFromBusiness();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Import failed');
@@ -1178,11 +1238,6 @@ export default function MenuPage() {
               <Download size={15} /> Import from Business
             </button>
           )}
-          {!isReadOnly && !isTemplate && canImport && (
-            <button className="btn-secondary" onClick={() => setImportModal(true)} title="Import menu from another outlet">
-              <Download size={15} /> Import from outlet
-            </button>
-          )}
           {!isReadOnly && (
             <button className="btn-primary" onClick={() => setCatModal({ open: true })}>
               <Plus size={15} /> Add Category
@@ -1235,9 +1290,17 @@ export default function MenuPage() {
           hosts the "New menu" button, so it must render even when the menu
           list is empty (fresh business / outlet, or /menus fetch returned
           nothing) — otherwise the user has no way to create the first menu. */}
-      {multipleMenusEnabled && (
+      {multipleMenusEnabled && (() => {
+        // At outlet level, only show menus the outlet has actively imported
+        // (the OutletMenu link row exists) plus the always-on default. Business
+        // menus the outlet hasn't opted into stay hidden — the Import from
+        // Business dialog is the only path that surfaces them.
+        const visibleMenus = isTemplate
+          ? menus
+          : menus.filter((m) => m.isDefault || (m.outletMenu?.id != null));
+        return (
         <div className="card p-2 flex items-center gap-1 overflow-x-auto">
-          {menus.map((m, mIdx) => {
+          {visibleMenus.map((m, mIdx) => {
             const isActive = m.id === activeMenuId;
             return (
               <div key={m.id} className="flex items-center shrink-0">
@@ -1267,7 +1330,7 @@ export default function MenuPage() {
                     </button>
                     <button
                       onClick={() => moveMenu(m.id, 1)}
-                      disabled={mIdx === menus.length - 1}
+                      disabled={mIdx === visibleMenus.length - 1}
                       className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
                       title="Move menu later"
                     >
@@ -1333,14 +1396,6 @@ export default function MenuPage() {
                     >
                       <Clock size={13} />
                     </button>
-                    <button
-                      onClick={() => importMenuItems(m)}
-                      className="btn-ghost p-1.5"
-                      disabled={menuBusy}
-                      title="Import all categories from this menu's business template"
-                    >
-                      <Download size={13} />
-                    </button>
                   </>
                 )}
               </div>
@@ -1355,7 +1410,8 @@ export default function MenuPage() {
             </button>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {loading ? (
         <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="card h-16 animate-pulse" />)}</div>
@@ -1365,11 +1421,15 @@ export default function MenuPage() {
           <p className="text-slate-500 font-medium">No menu yet</p>
           {!isReadOnly && (
             <>
-              <p className="text-xs text-slate-400 mt-1">Start from scratch or copy from a sibling outlet.</p>
+              <p className="text-xs text-slate-400 mt-1">
+                {canImportFromBusiness
+                  ? 'Start from scratch or pick items from the business master menu.'
+                  : 'Start from scratch.'}
+              </p>
               <div className="flex items-center gap-2 mt-4">
                 <button className="btn-primary" onClick={() => setCatModal({ open: true })}><Plus size={14} /> Add first category</button>
-                {sourceOutlets.length > 0 && (
-                  <button className="btn-secondary" onClick={() => setImportModal(true)}><Download size={14} /> Import from outlet</button>
+                {canImportFromBusiness && (
+                  <button className="btn-secondary" onClick={openImportFromBusiness}><Download size={14} /> Import from Business</button>
                 )}
               </div>
             </>
@@ -2334,48 +2394,6 @@ export default function MenuPage() {
         )}
       </Modal>
 
-      {/* ── Import-from-outlet modal ────────────────────────── */}
-      <Modal
-        open={importModal}
-        onClose={() => !importing && setImportModal(false)}
-        title="Import menu from another outlet"
-        subtitle="Copies all categories, items, variants and options from the selected outlet."
-        size="md"
-      >
-        {sourceOutlets.length === 0 ? (
-          <p className="text-sm text-slate-500 py-6 text-center">No other outlets available in your business.</p>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-xs text-slate-500">Pick a source outlet:</p>
-            {sourceOutlets.map(o => (
-              <button
-                key={o.id}
-                disabled={!!importing}
-                onClick={() => runImport(o.id)}
-                className={clsx(
-                  'w-full text-left flex items-center gap-3 px-3 py-3 rounded-xl border transition-all',
-                  importing === o.id
-                    ? 'border-brand-300 bg-brand-50'
-                    : 'border-slate-200 hover:border-brand-300 hover:bg-brand-50/50',
-                  importing && importing !== o.id && 'opacity-40 cursor-not-allowed',
-                )}
-              >
-                <div className="icon-wrap w-9 h-9 bg-brand-50 text-brand-500 rounded-lg">
-                  <Store size={15} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-slate-800 text-sm">{o.name}</p>
-                  <p className="text-[11px] text-slate-400">{o.address || 'No address'}</p>
-                </div>
-                {importing === o.id && (
-                  <span className="w-4 h-4 border-2 border-brand-200 border-t-brand-500 rounded-full animate-spin" />
-                )}
-              </button>
-            ))}
-          </div>
-        )}
-      </Modal>
-
       {/* ── Delete confirm ──────────────────────────────────── */}
       <ConfirmDialog
         open={!!deleteTarget}
@@ -2393,41 +2411,31 @@ export default function MenuPage() {
         open={importBusinessOpen}
         onClose={closeImportFromBusiness}
         title={`Import from Business menu → ${currentOutletName || 'this outlet'}`}
-        subtitle="Pick items from the business master list. Each imported item becomes an independent copy at the target outlet only — other outlets and the business template are not affected."
+        subtitle="Pick a category, subcategory, or individual items. Picking a category brings its whole tree across (including empty subs). Imported rows are independent copies at this outlet — the business template is untouched."
         size="lg"
       >
         <div className="space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="text-xs text-slate-500">
-              {importableItems.length === 0
-                ? 'Nothing left to import — all items are already at this outlet.'
-                : `${selectedImportIds.size} of ${importableItems.length} importable item${importableItems.length === 1 ? '' : 's'} selected.`}
+              {importPickCats.size + importPickSubs.size + importPickItems.size === 0
+                ? 'Nothing picked yet. Use the checkboxes to select what to bring across.'
+                : `${importSelectionCount} new item${importSelectionCount === 1 ? '' : 's'} will be created. ${importPickCats.size} categor${importPickCats.size === 1 ? 'y' : 'ies'}, ${importPickSubs.size} subcategor${importPickSubs.size === 1 ? 'y' : 'ies'}, ${importPickItems.size} item-only pick${importPickItems.size === 1 ? '' : 's'}.`}
             </p>
-            {importableItems.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  className="text-[11px] font-semibold text-brand-600 hover:underline"
-                  onClick={selectAllImport}
-                >
-                  Select all
-                </button>
-                <span className="text-slate-300">·</span>
-                <button
-                  type="button"
-                  className="text-[11px] font-semibold text-slate-500 hover:text-slate-700"
-                  onClick={clearImportSelection}
-                  disabled={selectedImportIds.size === 0}
-                >
-                  Clear
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                className="text-[11px] font-semibold text-slate-500 hover:text-slate-700"
+                onClick={clearImportSelection}
+                disabled={importPickCats.size + importPickSubs.size + importPickItems.size === 0}
+              >
+                Clear selection
+              </button>
+            </div>
           </div>
 
           {importBusinessSummary && (
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 text-xs text-emerald-700">
-              Imported {importBusinessSummary.items} item{importBusinessSummary.items === 1 ? '' : 's'} into your outlet.
+              Imported {importBusinessSummary.categories} categor{importBusinessSummary.categories === 1 ? 'y' : 'ies'}, {importBusinessSummary.subcategories} subcategor{importBusinessSummary.subcategories === 1 ? 'y' : 'ies'}, {importBusinessSummary.items} item{importBusinessSummary.items === 1 ? '' : 's'} into your outlet.
             </div>
           )}
 
@@ -2435,77 +2443,83 @@ export default function MenuPage() {
             <div className="py-6 text-center text-xs text-slate-500">Loading business menu…</div>
           ) : !businessTemplate || businessTemplate.length === 0 ? (
             <div className="py-6 text-center text-xs text-slate-500">
-              The business hasn't published any menu items yet.
+              The business hasn't published any categories yet.
             </div>
           ) : (
             <div className="max-h-[55vh] overflow-y-auto space-y-3 pr-1">
               {businessTemplate.map((cat: any) => {
-                const allCatItems = (cat.subcategories || []).flatMap((s: any) => s.items || []);
-                const importableInCat = allCatItems.filter((it: any) => !it.alreadyImported);
-                const catAllSelected = importableInCat.length > 0 && importableInCat.every((it: any) => selectedImportIds.has(it.id));
-                const catSomeSelected = importableInCat.some((it: any) => selectedImportIds.has(it.id));
+                const allItems = (cat.subcategories || []).flatMap((s: any) => s.items || []);
+                const itemCount = allItems.length;
+                const catChecked = isCatPicked(cat.id);
+                const catHasChildPick = !catChecked && (
+                  (cat.subcategories || []).some((s: any) =>
+                    importPickSubs.has(s.id) || (s.items || []).some((it: any) => importPickItems.has(it.id)),
+                  )
+                );
                 return (
                   <div key={cat.id} className="border border-slate-100 rounded-xl overflow-hidden">
-                    <div className="flex items-center gap-2 px-3 py-2 bg-slate-50">
+                    <label className="flex items-center gap-2 px-3 py-2 bg-slate-50 cursor-pointer">
                       <input
                         type="checkbox"
-                        disabled={importableInCat.length === 0}
-                        checked={catAllSelected}
-                        ref={(el) => { if (el) el.indeterminate = !catAllSelected && catSomeSelected; }}
-                        onChange={() => toggleImportGroup(allCatItems)}
+                        checked={catChecked}
+                        ref={(el) => { if (el) el.indeterminate = catHasChildPick; }}
+                        onChange={() => toggleImportCat(cat)}
                         className="accent-brand-500"
                       />
                       <p className="text-sm font-bold text-slate-800 flex-1">{cat.name}</p>
                       <span className="text-[10px] font-semibold text-slate-400">
-                        {allCatItems.length} item{allCatItems.length === 1 ? '' : 's'}
+                        {itemCount} item{itemCount === 1 ? '' : 's'}
                       </span>
-                    </div>
+                    </label>
                     <div className="divide-y divide-slate-50">
                       {(cat.subcategories || []).map((sub: any) => {
                         const subItems: any[] = sub.items || [];
-                        const importableInSub = subItems.filter((it) => !it.alreadyImported);
-                        const subAllSelected = importableInSub.length > 0 && importableInSub.every((it) => selectedImportIds.has(it.id));
-                        const subSomeSelected = importableInSub.some((it) => selectedImportIds.has(it.id));
+                        const subChecked = isSubPicked(sub.id, cat.id);
+                        const subHasChildPick = !subChecked && subItems.some((it: any) => importPickItems.has(it.id));
                         return (
                           <div key={sub.id}>
-                            <div className="flex items-center gap-2 px-4 py-1.5 bg-white">
+                            <label className="flex items-center gap-2 px-4 py-1.5 bg-white cursor-pointer">
                               <input
                                 type="checkbox"
-                                disabled={importableInSub.length === 0}
-                                checked={subAllSelected}
-                                ref={(el) => { if (el) el.indeterminate = !subAllSelected && subSomeSelected; }}
-                                onChange={() => toggleImportGroup(subItems)}
+                                checked={subChecked}
+                                ref={(el) => { if (el) el.indeterminate = subHasChildPick; }}
+                                onChange={() => toggleImportSub(sub, cat.id)}
                                 className="accent-brand-500"
                               />
                               <p className="text-xs font-semibold text-slate-600 flex-1">{sub.name}</p>
                               <span className="text-[10px] text-slate-400">
                                 {subItems.length} item{subItems.length === 1 ? '' : 's'}
                               </span>
-                            </div>
+                            </label>
                             {subItems.length === 0 ? (
-                              <p className="text-[11px] text-slate-400 italic px-10 py-1.5">No items in this subcategory</p>
+                              <p className="text-[11px] text-slate-400 italic px-10 py-1.5">
+                                No items in this subcategory{subChecked ? ' — the empty sub will still be copied' : ''}
+                              </p>
                             ) : (
                               <div className="divide-y divide-slate-50">
                                 {subItems.map((it: any) => {
-                                  const selected = selectedImportIds.has(it.id);
+                                  const itemChecked = isItemPicked(it.id, sub.id, cat.id);
+                                  // Already-imported items are shown but
+                                  // greyed out so the user gets the full
+                                  // picture; the import call simply skips
+                                  // dupes on the server side.
                                   return (
                                     <label
                                       key={it.id}
                                       className={`flex items-center gap-2 px-10 py-2 text-xs cursor-pointer ${
-                                        it.alreadyImported ? 'opacity-60 cursor-not-allowed' : 'hover:bg-slate-50'
+                                        it.alreadyImported ? 'opacity-60' : 'hover:bg-slate-50'
                                       }`}
                                     >
                                       <input
                                         type="checkbox"
-                                        disabled={it.alreadyImported}
-                                        checked={selected}
-                                        onChange={() => toggleImportItem(it.id)}
+                                        checked={itemChecked}
+                                        onChange={() => toggleImportItem(it.id, sub.id, cat.id)}
                                         className="accent-brand-500"
                                       />
                                       <span className="flex-1 font-medium text-slate-700">{it.name}</span>
                                       <span className="font-mono text-slate-500">₹{Number(it.basePrice).toFixed(0)}</span>
                                       {it.alreadyImported && (
-                                        <span className="badge badge-slate text-[10px]">Imported</span>
+                                        <span className="badge badge-slate text-[10px]">Already imported</span>
                                       )}
                                     </label>
                                   );
@@ -2515,6 +2529,11 @@ export default function MenuPage() {
                           </div>
                         );
                       })}
+                      {(cat.subcategories || []).length === 0 && (
+                        <p className="text-[11px] text-slate-400 italic px-4 py-2">
+                          No subcategories yet{catChecked ? ' — the empty category will still be copied' : ''}
+                        </p>
+                      )}
                     </div>
                   </div>
                 );
@@ -2533,10 +2552,10 @@ export default function MenuPage() {
             <button
               className="btn-primary"
               onClick={runImportFromBusiness}
-              disabled={importBusinessBusy || selectedImportIds.size === 0}
+              disabled={importBusinessBusy || (importPickCats.size + importPickSubs.size + importPickItems.size === 0)}
             >
               {importBusinessBusy && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-              <Download size={14} /> Import {selectedImportIds.size > 0 ? `(${selectedImportIds.size})` : ''}
+              <Download size={14} /> Import
             </button>
           </div>
         </div>

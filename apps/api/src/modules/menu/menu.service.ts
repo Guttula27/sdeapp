@@ -709,128 +709,8 @@ export class MenuService {
     });
   }
 
-  // ─── Import menu from sibling outlet ─────────────────────
-  async importFromOutlet(targetOutletId: string, sourceOutletId: string) {
-    if (targetOutletId === sourceOutletId) {
-      throw new BadRequestException('Source and target outlet must differ');
-    }
-
-    const [target, source] = await Promise.all([
-      this.prisma.outlet.findUnique({ where: { id: targetOutletId }, select: { id: true, businessId: true } }),
-      this.prisma.outlet.findUnique({ where: { id: sourceOutletId }, select: { id: true, businessId: true } }),
-    ]);
-    if (!target) throw new NotFoundException('Target outlet not found');
-    if (!source) throw new NotFoundException('Source outlet not found');
-    if (target.businessId !== source.businessId) {
-      throw new BadRequestException('Outlets must belong to the same business');
-    }
-
-    const existing = await this.prisma.category.count({
-      where: { outletId: targetOutletId, isActive: true },
-    });
-    if (existing > 0) {
-      throw new BadRequestException('Target menu is not empty — delete categories first or pick an empty outlet');
-    }
-
-    const sourceCategories = await this.prisma.category.findMany({
-      where: { outletId: sourceOutletId, isActive: true },
-      orderBy: { displayOrder: 'asc' },
-      include: {
-        subcategories: {
-          where: { isActive: true },
-          orderBy: { displayOrder: 'asc' },
-          include: {
-            items: {
-              where: { isDisplayed: true },
-              orderBy: { displayOrder: 'asc' },
-              include: { variants: true, options: true, tags: true },
-            },
-          },
-        },
-      },
-    });
-
-    let categoriesCount = 0;
-    let subcategoriesCount = 0;
-    let itemsCount = 0;
-
-    await this.prisma.$transaction(async (tx) => {
-      for (const cat of sourceCategories) {
-        const newCat = await tx.category.create({
-          data: {
-            outletId: targetOutletId,
-            name: cat.name,
-            imageUrl: cat.imageUrl,
-            displayOrder: cat.displayOrder,
-            // Preserve the menu mapping when copying: the imported category
-            // lands inside the same menu it had at the business level.
-            menuId: cat.menuId ?? undefined,
-          },
-        });
-        categoriesCount++;
-
-        for (const sub of cat.subcategories) {
-          const newSub = await tx.subcategory.create({
-            data: {
-              categoryId: newCat.id,
-              name: sub.name,
-              displayOrder: sub.displayOrder,
-            },
-          });
-          subcategoriesCount++;
-
-          for (const item of sub.items) {
-            const newItem = await tx.item.create({
-              data: {
-                subcategoryId: newSub.id,
-                name: item.name,
-                description: item.description,
-                basePrice: item.basePrice,
-                parcelCharge: item.parcelCharge,
-                preparationTime: item.preparationTime,
-                imageUrl: item.imageUrl,
-                isPopular: item.isPopular,
-                isAvailable: item.isAvailable,
-                isDisplayed: item.isDisplayed,
-                displayOrder: item.displayOrder,
-              },
-            });
-            itemsCount++;
-
-            if (item.variants.length) {
-              await tx.variant.createMany({
-                data: item.variants.map(v => ({
-                  itemId: newItem.id,
-                  name: v.name,
-                  price: v.price,
-                  isAvailable: v.isAvailable,
-                })),
-              });
-            }
-            if (item.options.length) {
-              await tx.option.createMany({
-                data: item.options.map(o => ({
-                  itemId: newItem.id,
-                  name: o.name,
-                  price: o.price,
-                })),
-              });
-            }
-            if (item.tags.length) {
-              await tx.itemTag.createMany({
-                data: item.tags.map(t => ({
-                  itemId: newItem.id,
-                  name: t.name,
-                })),
-              });
-            }
-          }
-        }
-      }
-    });
-
-    return { categories: categoriesCount, subcategories: subcategoriesCount, items: itemsCount };
-  }
+  // Outlet-to-outlet menu import has been removed by product decision —
+  // outlets may only import from the parent business template.
 
   /* ── Business-template menu ──────────────────────────────
    *
@@ -938,7 +818,27 @@ export class MenuService {
     return item;
   }
 
-  async importFromBusiness(targetOutletId: string, sourceBusinessId: string, itemIds?: string[]) {
+  // Import from the parent business template. The selection model is
+  // explicit at three levels:
+  //   • categoryIds    — bring the whole category (every sub, every item)
+  //   • subcategoryIds — bring the whole sub (every item)
+  //   • itemIds        — bring just these items
+  // At least one of the three must be non-empty. We deliberately do NOT
+  // wholesale-import the entire template any more; that surprised outlets.
+  // Touched menus are auto-linked + enabled on the outlet so the imported
+  // categories become visible immediately.
+  async importFromBusiness(
+    targetOutletId: string,
+    sourceBusinessId: string,
+    selection: { categoryIds?: string[]; subcategoryIds?: string[]; itemIds?: string[] } = {},
+  ) {
+    const catIds = selection.categoryIds ?? [];
+    const subIds = selection.subcategoryIds ?? [];
+    const itemIds = selection.itemIds ?? [];
+    if (catIds.length + subIds.length + itemIds.length === 0) {
+      throw new BadRequestException('Pick at least one category, subcategory, or item to import');
+    }
+
     const [target, source] = await Promise.all([
       this.prisma.outlet.findUnique({
         where: { id: targetOutletId },
@@ -955,10 +855,13 @@ export class MenuService {
     // the target outlet's default when copying so the new item is taxed correctly.
     const defaultGst = target.gstApplicable ? target.gstPercent : null;
 
-    // When a specific set of items is supplied, restrict the copied tree to
-    // just those — outlets pick items individually. Empty / undefined means
-    // "import the whole template".
-    const itemFilter = itemIds && itemIds.length ? { id: { in: itemIds } } : undefined;
+    const catSet = new Set(catIds);
+    const subSet = new Set(subIds);
+    const itemSet = new Set(itemIds);
+
+    // Pull the full tree once. Filtering happens in-memory below so the same
+    // category can be "wholly picked" (catSet) and partially picked (some
+    // items also in itemSet) without double-fetching.
     const sourceCategories = await this.prisma.category.findMany({
       where: { businessId: sourceBusinessId, isActive: true },
       orderBy: { displayOrder: 'asc' },
@@ -967,9 +870,7 @@ export class MenuService {
           where: { isActive: true },
           orderBy: { displayOrder: 'asc' },
           include: {
-            items: itemFilter
-              ? { where: itemFilter, orderBy: { displayOrder: 'asc' }, include: { variants: true } }
-              : { orderBy: { displayOrder: 'asc' }, include: { variants: true } },
+            items: { orderBy: { displayOrder: 'asc' }, include: { variants: true } },
           },
         },
       },
@@ -983,13 +884,18 @@ export class MenuService {
     // would otherwise blow the default Prisma 5-second transaction timeout.
     type TranslationJob = { entityType: string; entityId: string; fields: Record<string, string | null | undefined> };
     const translationJobs: TranslationJob[] = [];
+    // Menus touched by this import — we'll upsert OutletMenu links for each.
+    const touchedMenuIds = new Set<string>();
 
     await this.prisma.$transaction(async (tx) => {
       for (const cat of sourceCategories) {
-        // When filtering by item, skip whole categories whose subcategories
-        // contain none of the selected items — keeps the outlet menu tidy.
-        const hasItemsInScope = cat.subcategories.some((s) => s.items.length > 0);
-        if (itemFilter && !hasItemsInScope) continue;
+        const wholeCat = catSet.has(cat.id);
+        // Sub is in scope if the whole cat is picked, the sub is individually
+        // picked, or any of its items is in itemSet.
+        const subsInScope = cat.subcategories.filter((s) =>
+          wholeCat || subSet.has(s.id) || s.items.some((it) => itemSet.has(it.id)),
+        );
+        if (subsInScope.length === 0) continue;
 
         // Look for an existing same-name category at the outlet so re-import
         // is additive instead of duplicating top-level groups. Must scope by
@@ -1020,9 +926,18 @@ export class MenuService {
           categoriesCount++;
           translationJobs.push({ entityType: 'Category', entityId: outletCat.id, fields: { name: outletCat.name } });
         }
+        if (cat.menuId) touchedMenuIds.add(cat.menuId);
 
-        for (const sub of cat.subcategories) {
-          if (itemFilter && sub.items.length === 0) continue;
+        for (const sub of subsInScope) {
+          const wholeSub = wholeCat || subSet.has(sub.id);
+          const itemsInScope = wholeSub
+            ? sub.items
+            : sub.items.filter((it) => itemSet.has(it.id));
+          // A sub with no items in scope (and not whole-selected) means the
+          // caller asked for an empty wrapper — usually because it's the sub
+          // of a wholly-selected category that is itself empty. Allow it.
+          if (!wholeSub && itemsInScope.length === 0) continue;
+
           let outletSub = await tx.subcategory.findFirst({
             where: { categoryId: outletCat.id, name: sub.name, isActive: true },
           });
@@ -1034,7 +949,7 @@ export class MenuService {
             translationJobs.push({ entityType: 'Subcategory', entityId: outletSub.id, fields: { name: outletSub.name } });
           }
 
-          for (const item of sub.items) {
+          for (const item of itemsInScope) {
             const existingItem = await tx.item.findFirst({
               where: { subcategoryId: outletSub.id, name: item.name },
             });
@@ -1084,6 +999,18 @@ export class MenuService {
             }
           }
         }
+      }
+
+      // Auto-enable an OutletMenu link for each menu we just imported into.
+      // Without this, the imported categories belong to a menu the outlet
+      // hasn't linked — they'd be invisible in the strip even though the
+      // rows exist. Existing links are preserved (no overwrite of disabled).
+      for (const menuId of touchedMenuIds) {
+        await tx.outletMenu.upsert({
+          where: { outletId_menuId: { outletId: targetOutletId, menuId } },
+          update: {},
+          create: { outletId: targetOutletId, menuId, isEnabled: true },
+        });
       }
     });
 

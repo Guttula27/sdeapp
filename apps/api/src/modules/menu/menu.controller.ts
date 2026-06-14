@@ -150,15 +150,9 @@ export class MenuController {
     return this.menuService.deleteVariant(id);
   }
 
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @Post('import-from/:sourceOutletId')
-  importFromOutlet(
-    @Param('outletId') outletId: string,
-    @Param('sourceOutletId') sourceOutletId: string,
-  ) {
-    return this.menuService.importFromOutlet(outletId, sourceOutletId);
-  }
+  // Outlet-to-outlet menu import was removed by product decision — outlets
+  // import only from the parent business template. The corresponding service
+  // method is also gone.
 
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
@@ -167,7 +161,7 @@ export class MenuController {
     @Param('outletId') outletId: string,
     @Param('businessId') businessId: string,
     @CurrentUser() user: any,
-    @Body() body: { itemIds?: string[] } = {},
+    @Body() body: { categoryIds?: string[]; subcategoryIds?: string[]; itemIds?: string[] } = {},
   ) {
     // Authorization: outlet admins can only import to their own outlet.
     // Business owners can import to any outlet within their business.
@@ -178,7 +172,11 @@ export class MenuController {
     if (user?.businessId && user.businessId !== businessId) {
       throw new ForbiddenException('You can only import from your own business');
     }
-    return this.menuService.importFromBusiness(outletId, businessId, body?.itemIds);
+    return this.menuService.importFromBusiness(outletId, businessId, {
+      categoryIds: body?.categoryIds,
+      subcategoryIds: body?.subcategoryIds,
+      itemIds: body?.itemIds,
+    });
   }
 
   @ApiBearerAuth()
