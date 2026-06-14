@@ -895,7 +895,12 @@ export class MenuService {
         const subsInScope = cat.subcategories.filter((s) =>
           wholeCat || subSet.has(s.id) || s.items.some((it) => itemSet.has(it.id)),
         );
-        if (subsInScope.length === 0) continue;
+        // Only skip when the cat itself isn't whole-picked. If wholeCat is
+        // true, we still want to create the empty category skeleton at the
+        // outlet — that's the explicit promise of category-level selection,
+        // and silently dropping it is exactly what was making the toast say
+        // "Imported 0 …" after a multi-menu pick.
+        if (!wholeCat && subsInScope.length === 0) continue;
 
         // Look for an existing same-name category at the outlet so re-import
         // is additive instead of duplicating top-level groups. Must scope by
@@ -1002,13 +1007,14 @@ export class MenuService {
       }
 
       // Auto-enable an OutletMenu link for each menu we just imported into.
-      // Without this, the imported categories belong to a menu the outlet
-      // hasn't linked — they'd be invisible in the strip even though the
-      // rows exist. Existing links are preserved (no overwrite of disabled).
+      // Importing is an explicit "I want this menu visible at my outlet"
+      // signal, so we force isEnabled=true even when a previous link existed
+      // in a disabled state (otherwise the outlet would import items into a
+      // menu customers still couldn't see).
       for (const menuId of touchedMenuIds) {
         await tx.outletMenu.upsert({
           where: { outletId_menuId: { outletId: targetOutletId, menuId } },
-          update: {},
+          update: { isEnabled: true },
           create: { outletId: targetOutletId, menuId, isEnabled: true },
         });
       }
