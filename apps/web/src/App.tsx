@@ -42,6 +42,10 @@ import OffersPage from './pages/promotions/OffersPage';
 import RewardsPage from './pages/promotions/RewardsPage';
 import ForcePasswordResetPage from './pages/ForcePasswordResetPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import TermsPage from './pages/legal/TermsPage';
+import PrivacyPage from './pages/legal/PrivacyPage';
+import RefundPage from './pages/legal/RefundPage';
+import AgreementPage from './pages/legal/AgreementPage';
 import OfflineBanner from './components/common/OfflineBanner';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -68,6 +72,12 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/force-password-reset" element={<ForcePasswordResetPage />} />
+
+        {/* Legal — public */}
+        <Route path="/legal/terms"     element={<TermsPage />} />
+        <Route path="/legal/privacy"   element={<PrivacyPage />} />
+        <Route path="/legal/refund"    element={<RefundPage />} />
+        <Route path="/legal/agreement" element={<AgreementPage />} />
 
         {/* Authenticated app */}
         <Route

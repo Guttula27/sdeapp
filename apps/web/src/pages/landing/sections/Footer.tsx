@@ -1,7 +1,10 @@
 import { Link } from 'react-router-dom';
 import { Mail, MapPin, Phone, ShieldCheck } from 'lucide-react';
 
-const COLUMNS = [
+type FooterLink = { label: string; href?: string; to?: string };
+type Column = { title: string; links: FooterLink[] };
+
+const COLUMNS: Column[] = [
   {
     title: 'Product',
     links: [
@@ -21,12 +24,12 @@ const COLUMNS = [
     ],
   },
   {
-    title: 'Company',
+    title: 'Legal',
     links: [
-      { label: 'About', href: '#' },
-      { label: 'Blog',  href: '#' },
-      { label: 'Careers', href: '#' },
-      { label: 'Contact', href: '#cta' },
+      { label: 'Terms of Service',    to: '/legal/terms' },
+      { label: 'Privacy Policy',      to: '/legal/privacy' },
+      { label: 'Refund Policy',       to: '/legal/refund' },
+      { label: 'Merchant Agreement',  to: '/legal/agreement' },
     ],
   },
 ];
@@ -58,9 +61,15 @@ export default function Footer() {
               <ul className="mt-4 space-y-2.5">
                 {c.links.map((l) => (
                   <li key={l.label}>
-                    <a href={l.href} className="text-sm text-slate-600 hover:text-brand-600 transition-colors">
-                      {l.label}
-                    </a>
+                    {l.to ? (
+                      <Link to={l.to} className="text-sm text-slate-600 hover:text-brand-600 transition-colors">
+                        {l.label}
+                      </Link>
+                    ) : (
+                      <a href={l.href} className="text-sm text-slate-600 hover:text-brand-600 transition-colors">
+                        {l.label}
+                      </a>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -86,8 +95,9 @@ export default function Footer() {
         <div className="mt-6 pt-6 border-t border-slate-100 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
           <p className="text-xs text-slate-500">© {new Date().getFullYear()} VEZEOR. All rights reserved.</p>
           <div className="flex items-center gap-4 text-xs">
-            <a href="#" className="text-slate-500 hover:text-slate-700">Privacy</a>
-            <a href="#" className="text-slate-500 hover:text-slate-700">Terms</a>
+            <Link to="/legal/privacy" className="text-slate-500 hover:text-slate-700">Privacy</Link>
+            <Link to="/legal/terms" className="text-slate-500 hover:text-slate-700">Terms</Link>
+            <Link to="/legal/refund" className="text-slate-500 hover:text-slate-700">Refunds</Link>
             <Link to="/login" className="text-slate-500 hover:text-slate-700">Sign in</Link>
           </div>
         </div>
