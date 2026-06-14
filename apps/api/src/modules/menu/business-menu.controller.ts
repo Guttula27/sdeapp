@@ -31,6 +31,16 @@ export class BusinessMenuController {
     return this.menuService.createBusinessCategory(businessId, body);
   }
 
+  // MUST precede `categories/:id` — Express/Nest matches in declaration order
+  // and would otherwise capture the literal "reorder" as :id.
+  @Patch('categories/reorder')
+  reorderCategories(
+    @Param('businessId') businessId: string,
+    @Body() body: { orderedIds: string[] },
+  ) {
+    return this.menuService.reorderCategories({ businessId }, body?.orderedIds ?? []);
+  }
+
   @Patch('categories/:id')
   updateCategory(@Param('id') id: string, @Body() body: any) {
     return this.menuService.updateBusinessCategory(id, body);
@@ -82,17 +92,9 @@ export class BusinessMenuController {
   }
 
   // ── Reorder endpoints (business tier) ─────────────────────
-  // Reorders the business template. Outlets that have already imported keep
-  // their own independent order — re-importing is what would re-pull this
-  // ordering down.
-  @Patch('categories/reorder')
-  reorderCategories(
-    @Param('businessId') businessId: string,
-    @Body() body: { orderedIds: string[] },
-  ) {
-    return this.menuService.reorderCategories({ businessId }, body?.orderedIds ?? []);
-  }
-
+  // categories/reorder is declared higher up the file (above categories/:id)
+  // to win route matching. These two only conflict with nothing — distinct
+  // path depth — so they're fine here.
   @Patch('categories/:categoryId/subcategories/reorder')
   reorderSubcategories(
     @Param('categoryId') categoryId: string,
