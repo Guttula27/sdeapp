@@ -91,9 +91,15 @@ export default function MenuPage() {
   // Holds the business template tree (with `alreadyImported` per item) plus
   // the user's per-item selection while the import modal is open.
   const [businessTemplate, setBusinessTemplate] = useState<any[] | null>(null);
+  // Business menu list (name + id + displayOrder) — used to group the import
+  // tree under menu headers so the outlet sees the same hierarchy the
+  // business sees. Fetched alongside the template inside the dialog open.
+  const [businessMenuList, setBusinessMenuList] = useState<Array<{ id: string; name: string; isDefault?: boolean; displayOrder?: number }>>([]);
   // Selection at three levels — a row at any level marks itself (and, by
   // cascade, everything beneath it) for import. Cascading is computed at
-  // render/submit time from these three sets, not stored explicitly.
+  // render/submit time from these three sets, not stored explicitly. Menu-
+  // level selection isn't a separate set; clicking a menu just bulk-adds /
+  // removes its category ids from importPickCats.
   const [importPickCats, setImportPickCats] = useState<Set<string>>(new Set());
   const [importPickSubs, setImportPickSubs] = useState<Set<string>>(new Set());
   const [importPickItems, setImportPickItems] = useState<Set<string>>(new Set());
@@ -979,12 +985,14 @@ export default function MenuPage() {
     clearImportSelection();
     setImportTreeLoading(true);
     try {
-      // Fetch business template + current outlet menu in parallel so we can
-      // flag already-imported items. The match key scopes by menuId — two
-      // different menus can legitimately have a "Specials" category, and
-      // they should not collide.
-      const [biz, outletMenu] = await Promise.all([
+      // Fetch business template + business menu list + current outlet menu
+      // in parallel. The menu list gives us names to render under menu
+      // headers; the outlet menu lets us flag already-imported items
+      // (scoped by menuId so two menus with a same-named category don't
+      // collide on the dedupe key).
+      const [biz, bizMenus, outletMenu] = await Promise.all([
         api.get(`/businesses/${businessId}/menu`),
+        api.get(`/businesses/${businessId}/menus`).catch(() => null),
         api.get(`/outlets/${outletId}/menu`, { params: { includeHidden: 'true' } }),
       ]);
       const importedItemKeys = new Set<string>();
@@ -1006,9 +1014,11 @@ export default function MenuPage() {
         })),
       }));
       setBusinessTemplate(tree);
+      setBusinessMenuList((bizMenus?.data?.data || []) as any[]);
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Could not load business menu');
       setBusinessTemplate([]);
+      setBusinessMenuList([]);
     } finally {
       setImportTreeLoading(false);
     }
@@ -1029,6 +1039,41 @@ export default function MenuPage() {
     importPickCats.has(parentCatId) || importPickSubs.has(subId);
   const isItemPicked   = (itemId: string, parentSubId: string, parentCatId: string) =>
     importPickCats.has(parentCatId) || importPickSubs.has(parentSubId) || importPickItems.has(itemId);
+
+  // Menu-level toggle: bulk add/remove every category that lives under this
+  // menu. We piggy-back on importPickCats — no separate menu set — so the
+  // existing cascade logic just works.
+  const toggleImportMenu = (catsInMenu: any[]) => {
+    if (catsInMenu.length === 0) return;
+    const allCovered = catsInMenu.every((c) => importPickCats.has(c.id));
+    setImportPickCats((prev) => {
+      const next = new Set(prev);
+      if (allCovered) {
+        for (const c of catsInMenu) next.delete(c.id);
+      } else {
+        for (const c of catsInMenu) next.add(c.id);
+      }
+      return next;
+    });
+    // Selecting a menu wholly supersedes any per-sub or per-item picks
+    // beneath it — clear them so the resulting selection is unambiguous.
+    if (!allCovered) {
+      setImportPickSubs((prev) => {
+        const next = new Set(prev);
+        for (const c of catsInMenu) for (const s of (c.subcategories || [])) next.delete(s.id);
+        return next;
+      });
+      setImportPickItems((prev) => {
+        const next = new Set(prev);
+        for (const c of catsInMenu) {
+          for (const s of (c.subcategories || [])) {
+            for (const it of (s.items || [])) next.delete(it.id);
+          }
+        }
+        return next;
+      });
+    }
+  };
 
   const toggleImportCat = (cat: any) => {
     setImportPickCats((prev) => {
@@ -2445,101 +2490,159 @@ export default function MenuPage() {
             <div className="py-6 text-center text-xs text-slate-500">
               The business hasn't published any categories yet.
             </div>
-          ) : (
-            <div className="max-h-[55vh] overflow-y-auto space-y-3 pr-1">
-              {businessTemplate.map((cat: any) => {
-                const allItems = (cat.subcategories || []).flatMap((s: any) => s.items || []);
-                const itemCount = allItems.length;
-                const catChecked = isCatPicked(cat.id);
-                const catHasChildPick = !catChecked && (
-                  (cat.subcategories || []).some((s: any) =>
-                    importPickSubs.has(s.id) || (s.items || []).some((it: any) => importPickItems.has(it.id)),
-                  )
-                );
-                return (
-                  <div key={cat.id} className="border border-slate-100 rounded-xl overflow-hidden">
-                    <label className="flex items-center gap-2 px-3 py-2 bg-slate-50 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={catChecked}
-                        ref={(el) => { if (el) el.indeterminate = catHasChildPick; }}
-                        onChange={() => toggleImportCat(cat)}
-                        className="accent-brand-500"
-                      />
-                      <p className="text-sm font-bold text-slate-800 flex-1">{cat.name}</p>
-                      <span className="text-[10px] font-semibold text-slate-400">
-                        {itemCount} item{itemCount === 1 ? '' : 's'}
-                      </span>
-                    </label>
-                    <div className="divide-y divide-slate-50">
-                      {(cat.subcategories || []).map((sub: any) => {
-                        const subItems: any[] = sub.items || [];
-                        const subChecked = isSubPicked(sub.id, cat.id);
-                        const subHasChildPick = !subChecked && subItems.some((it: any) => importPickItems.has(it.id));
-                        return (
-                          <div key={sub.id}>
-                            <label className="flex items-center gap-2 px-4 py-1.5 bg-white cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={subChecked}
-                                ref={(el) => { if (el) el.indeterminate = subHasChildPick; }}
-                                onChange={() => toggleImportSub(sub, cat.id)}
-                                className="accent-brand-500"
-                              />
-                              <p className="text-xs font-semibold text-slate-600 flex-1">{sub.name}</p>
-                              <span className="text-[10px] text-slate-400">
-                                {subItems.length} item{subItems.length === 1 ? '' : 's'}
-                              </span>
-                            </label>
-                            {subItems.length === 0 ? (
-                              <p className="text-[11px] text-slate-400 italic px-10 py-1.5">
-                                No items in this subcategory{subChecked ? ' — the empty sub will still be copied' : ''}
-                              </p>
-                            ) : (
+          ) : (() => {
+            // Group categories by menuId so the dialog mirrors the same
+            // Menu → Category → Subcategory → Item hierarchy the rest of
+            // the app shows. Categories without a menuId (legacy data) fall
+            // into a synthetic "Unassigned" bucket so they're still pickable.
+            const catsByMenu = new Map<string, any[]>();
+            for (const c of businessTemplate) {
+              const key = c.menuId ?? '__unassigned__';
+              if (!catsByMenu.has(key)) catsByMenu.set(key, []);
+              catsByMenu.get(key)!.push(c);
+            }
+            const menuOrder = [
+              ...businessMenuList
+                .slice()
+                .sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0))
+                .map((m) => ({ id: m.id, name: m.name, isDefault: !!m.isDefault })),
+              ...(catsByMenu.has('__unassigned__')
+                ? [{ id: '__unassigned__', name: 'Unassigned', isDefault: false }]
+                : []),
+            ];
+            // Skip menus that have no categories — empty menus aren't
+            // useful to import from.
+            const renderableMenus = menuOrder.filter((m) => (catsByMenu.get(m.id) || []).length > 0);
+            return (
+              <div className="max-h-[55vh] overflow-y-auto space-y-4 pr-1">
+                {renderableMenus.map((menu) => {
+                  const catsInMenu = catsByMenu.get(menu.id) || [];
+                  const allCatsCovered = catsInMenu.length > 0 && catsInMenu.every((c) => importPickCats.has(c.id));
+                  const someChildPicked = !allCatsCovered && catsInMenu.some((c) =>
+                    importPickCats.has(c.id)
+                    || (c.subcategories || []).some((s: any) =>
+                      importPickSubs.has(s.id) || (s.items || []).some((it: any) => importPickItems.has(it.id)),
+                    ),
+                  );
+                  const totalItemsInMenu = catsInMenu.reduce(
+                    (n, c) => n + (c.subcategories || []).reduce(
+                      (m: number, s: any) => m + (s.items?.length || 0), 0,
+                    ), 0,
+                  );
+                  return (
+                    <div key={menu.id} className="border-2 border-slate-200 rounded-2xl overflow-hidden bg-white">
+                      <label className="flex items-center gap-2 px-3 py-2.5 bg-brand-50 border-b border-slate-200 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={allCatsCovered}
+                          ref={(el) => { if (el) el.indeterminate = someChildPicked; }}
+                          onChange={() => toggleImportMenu(catsInMenu)}
+                          className="accent-brand-500"
+                        />
+                        <Layers size={14} className="text-brand-600 shrink-0" />
+                        <p className="text-sm font-black text-slate-900 flex-1 tracking-tight">
+                          {menu.name}
+                          {menu.isDefault && <span className="ml-1.5 text-[9px] uppercase tracking-wide opacity-60">default</span>}
+                        </p>
+                        <span className="text-[10px] font-semibold text-slate-500">
+                          {catsInMenu.length} categor{catsInMenu.length === 1 ? 'y' : 'ies'} · {totalItemsInMenu} item{totalItemsInMenu === 1 ? '' : 's'}
+                        </span>
+                      </label>
+                      <div className="p-2 space-y-2">
+                        {catsInMenu.map((cat: any) => {
+                          const allItems = (cat.subcategories || []).flatMap((s: any) => s.items || []);
+                          const itemCount = allItems.length;
+                          const catChecked = isCatPicked(cat.id);
+                          const catHasChildPick = !catChecked && (
+                            (cat.subcategories || []).some((s: any) =>
+                              importPickSubs.has(s.id) || (s.items || []).some((it: any) => importPickItems.has(it.id)),
+                            )
+                          );
+                          return (
+                            <div key={cat.id} className="border border-slate-100 rounded-xl overflow-hidden">
+                              <label className="flex items-center gap-2 px-3 py-2 bg-slate-50 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={catChecked}
+                                  ref={(el) => { if (el) el.indeterminate = catHasChildPick; }}
+                                  onChange={() => toggleImportCat(cat)}
+                                  className="accent-brand-500"
+                                />
+                                <p className="text-sm font-bold text-slate-800 flex-1">{cat.name}</p>
+                                <span className="text-[10px] font-semibold text-slate-400">
+                                  {itemCount} item{itemCount === 1 ? '' : 's'}
+                                </span>
+                              </label>
                               <div className="divide-y divide-slate-50">
-                                {subItems.map((it: any) => {
-                                  const itemChecked = isItemPicked(it.id, sub.id, cat.id);
-                                  // Already-imported items are shown but
-                                  // greyed out so the user gets the full
-                                  // picture; the import call simply skips
-                                  // dupes on the server side.
+                                {(cat.subcategories || []).map((sub: any) => {
+                                  const subItems: any[] = sub.items || [];
+                                  const subChecked = isSubPicked(sub.id, cat.id);
+                                  const subHasChildPick = !subChecked && subItems.some((it: any) => importPickItems.has(it.id));
                                   return (
-                                    <label
-                                      key={it.id}
-                                      className={`flex items-center gap-2 px-10 py-2 text-xs cursor-pointer ${
-                                        it.alreadyImported ? 'opacity-60' : 'hover:bg-slate-50'
-                                      }`}
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={itemChecked}
-                                        onChange={() => toggleImportItem(it.id, sub.id, cat.id)}
-                                        className="accent-brand-500"
-                                      />
-                                      <span className="flex-1 font-medium text-slate-700">{it.name}</span>
-                                      <span className="font-mono text-slate-500">₹{Number(it.basePrice).toFixed(0)}</span>
-                                      {it.alreadyImported && (
-                                        <span className="badge badge-slate text-[10px]">Already imported</span>
+                                    <div key={sub.id}>
+                                      <label className="flex items-center gap-2 px-4 py-1.5 bg-white cursor-pointer">
+                                        <input
+                                          type="checkbox"
+                                          checked={subChecked}
+                                          ref={(el) => { if (el) el.indeterminate = subHasChildPick; }}
+                                          onChange={() => toggleImportSub(sub, cat.id)}
+                                          className="accent-brand-500"
+                                        />
+                                        <p className="text-xs font-semibold text-slate-600 flex-1">{sub.name}</p>
+                                        <span className="text-[10px] text-slate-400">
+                                          {subItems.length} item{subItems.length === 1 ? '' : 's'}
+                                        </span>
+                                      </label>
+                                      {subItems.length === 0 ? (
+                                        <p className="text-[11px] text-slate-400 italic px-10 py-1.5">
+                                          No items in this subcategory{subChecked ? ' — the empty sub will still be copied' : ''}
+                                        </p>
+                                      ) : (
+                                        <div className="divide-y divide-slate-50">
+                                          {subItems.map((it: any) => {
+                                            const itemChecked = isItemPicked(it.id, sub.id, cat.id);
+                                            return (
+                                              <label
+                                                key={it.id}
+                                                className={`flex items-center gap-2 px-10 py-2 text-xs cursor-pointer ${
+                                                  it.alreadyImported ? 'opacity-60' : 'hover:bg-slate-50'
+                                                }`}
+                                              >
+                                                <input
+                                                  type="checkbox"
+                                                  checked={itemChecked}
+                                                  onChange={() => toggleImportItem(it.id, sub.id, cat.id)}
+                                                  className="accent-brand-500"
+                                                />
+                                                <span className="flex-1 font-medium text-slate-700">{it.name}</span>
+                                                <span className="font-mono text-slate-500">₹{Number(it.basePrice).toFixed(0)}</span>
+                                                {it.alreadyImported && (
+                                                  <span className="badge badge-slate text-[10px]">Already imported</span>
+                                                )}
+                                              </label>
+                                            );
+                                          })}
+                                        </div>
                                       )}
-                                    </label>
+                                    </div>
                                   );
                                 })}
+                                {(cat.subcategories || []).length === 0 && (
+                                  <p className="text-[11px] text-slate-400 italic px-4 py-2">
+                                    No subcategories yet{catChecked ? ' — the empty category will still be copied' : ''}
+                                  </p>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                      {(cat.subcategories || []).length === 0 && (
-                        <p className="text-[11px] text-slate-400 italic px-4 py-2">
-                          No subcategories yet{catChecked ? ' — the empty category will still be copied' : ''}
-                        </p>
-                      )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
             <button
