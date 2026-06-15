@@ -9,6 +9,7 @@ import { RootState } from '../../store';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
 import { downloadQrCard } from '../../utils/qrCard';
+import { getCustomerOrigin } from '../../utils/customerOrigin';
 
 async function fileToDataUrl(file: File, maxSize = 1000, quality = 0.85): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -333,7 +334,7 @@ export default function BusinessProfilePage() {
           className="btn-secondary"
           onClick={async () => {
             if (!businessId) return;
-            const origin = (window as any).VITE_CUSTOMER_URL || window.location.origin.replace(':5173', ':5174');
+            const origin = getCustomerOrigin();
             await downloadQrCard({
               outletName: biz?.name,
               outletAddress: biz?.address,

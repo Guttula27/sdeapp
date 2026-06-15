@@ -14,6 +14,7 @@ import { useUserRole } from '../../hooks/useUserRole';
 import Modal from '../../components/common/Modal';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 import { downloadQrCard } from '../../utils/qrCard';
+import { getCustomerOrigin } from '../../utils/customerOrigin';
 
 /* ── helpers ─────────────────────────────────────────────── */
 const FOOD_GRADE_COLOR: Record<string, string> = {
@@ -105,8 +106,7 @@ export default function MenuPage() {
   const [importPickItems, setImportPickItems] = useState<Set<string>>(new Set());
   const [importTreeLoading, setImportTreeLoading] = useState(false);
 
-  const customerOrigin = (window as any).VITE_CUSTOMER_URL
-    || window.location.origin.replace(':5173', ':5174');
+  const customerOrigin = getCustomerOrigin();
 
   const downloadMenuQr = (
     target: 'category' | 'subcategory' | 'item',

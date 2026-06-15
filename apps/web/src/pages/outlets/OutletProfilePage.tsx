@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { RootState } from '../../store';
 import { downloadQrCard } from '../../utils/qrCard';
+import { getCustomerOrigin } from '../../utils/customerOrigin';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
 import { useUserRole } from '../../hooks/useUserRole';
@@ -560,7 +561,7 @@ export default function OutletProfilePage() {
 
   const downloadQR = async () => {
     if (!outlet?.id) return;
-    const origin = (window as any).VITE_CUSTOMER_URL || window.location.origin.replace(':5173', ':5174');
+    const origin = getCustomerOrigin();
     await downloadQrCard({
       outletName: outlet?.name,
       outletAddress: outlet?.address,
