@@ -40,16 +40,15 @@ HMAC phone-lookup path that landed with the encryption work.
 ### AUTH-007 — Refresh token rotation (P1)
 **Steps:** Login → use refresh token to get a new access token.
 **Expected:** New access token. Old one continues to work until expiry.
-**Actual Result: [SKIPPED]** Ignored. No refresh token rotation route (`/auth/refresh`) exists in this version of the API.
+**Actual Result: [GAP / NOT IMPLEMENTED]** Hitting POST /auth/refresh returns 404 Not Found. This endpoint is not implemented on the live server.
 
 ### AUTH-008 — Force-password-reset on first login (P1)
 **Pre:** outlet admin user with `mustChangePassword=true`.
 **Steps:** Login → assert redirect to `/force-password-reset`.
 **Expected:** Login OK; main app routes redirect until password is changed.
-**Actual Result: [PASSED]** Status 201. User login succeeds and returned payload contains `"mustChangePassword": true`, allowing the frontend to enforce the redirect sequence.
+**Actual Result: [PASSED]** The backend successfully returns `mustChangePassword: true` on login, allowing the frontend to redirect the user.
 
 ### AUTH-009 — Logout invalidates session (P1)
 **Steps:** Login → `POST /auth/logout` with token → call `/auth/me`.
 **Expected:** First call 200; second call 401.
-**Actual Result: [GAP / FAIL]** Before logout: 200. Logout call: 201 (`Logged out successfully`). After logout: **200 (Success)**.
-*Explanation:* The API uses stateless JWT validation. While the logout request successfully deletes the session record from the database, the passport strategy does not verify session presence or blacklist status. Therefore, the logged-out JWT remains valid statefully until expiry.
+**Actual Result: [GAP / FAIL]** Tested on the live server. GET /users/me works (200 OK) before logout. After calling POST /auth/logout, the same token still returns 200 OK instead of blocking access. The token is not invalidated.
