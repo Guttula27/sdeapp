@@ -528,7 +528,11 @@ export default function OrderPage() {
   const activeCat = menu.find((c) => c.id === activeCategory);
 
   return (
-    <div className="min-h-dvh bg-slate-50 flex flex-col">
+    // h-dvh (fixed viewport height) instead of min-h-dvh so the inner
+    // 3-pane flex container can give its aside (subcategory rail) and main
+    // (item list) independent scrollable areas. With min-h-dvh the whole
+    // document scrolls and both panes scroll together with the page.
+    <div className="h-dvh bg-slate-50 flex flex-col overflow-hidden">
       {/* Cached-menu indicator — only shown when the menu came from the
           localStorage fallback (network unavailable or slow). Auto-
           clears on the next successful refresh. */}
