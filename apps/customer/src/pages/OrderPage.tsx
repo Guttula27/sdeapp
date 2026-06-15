@@ -798,7 +798,7 @@ export default function OrderPage() {
                   active ? 'border-brand-300 ring-2 ring-brand-100' : 'border-slate-200',
                 )}>
                   {thumb ? (
-                    <img src={thumb} alt="" className="w-full h-full object-cover" />
+                    <img src={thumb} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-base">
                       🍽️
@@ -1082,6 +1082,7 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
       <div className="flex gap-3 p-3 items-center">
         {item.thumbnailUrl || item.imageUrl ? (
           <img src={item.thumbnailUrl || item.imageUrl} alt={item.name}
+            loading="lazy" decoding="async"
             className={clsx('w-16 h-16 rounded-xl object-cover shrink-0', disabled && 'grayscale')} />
         ) : (
           <div className="w-16 h-16 bg-gradient-to-br from-slate-100 to-slate-200 rounded-xl shrink-0 flex items-center justify-center">
@@ -1318,7 +1319,7 @@ function ItemDetailModal({
           {galleryImages.length > 0 ? (
             <div className="flex overflow-x-auto snap-x snap-mandatory rounded-t-3xl">
               {galleryImages.map((url: string, i: number) => (
-                <img key={i} src={url} alt="" className="w-full snap-center shrink-0 h-48 object-cover" />
+                <img key={i} src={url} alt="" loading="lazy" decoding="async" className="w-full snap-center shrink-0 h-48 object-cover" />
               ))}
             </div>
           ) : (

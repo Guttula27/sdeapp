@@ -11,12 +11,13 @@ import Modal from '../../components/common/Modal';
 import { downloadQrCard } from '../../utils/qrCard';
 import { getCustomerOrigin } from '../../utils/customerOrigin';
 
-async function fileToDataUrl(file: File, maxSize = 1000, quality = 0.85): Promise<string> {
+async function fileToDataUrl(file: File, maxSize = 600, quality = 0.72): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
+    // (defaults match the menu page now — 600px / q=0.72)
   });
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const el = new Image();
@@ -123,11 +124,11 @@ export default function BusinessProfilePage() {
   };
 
   const onPickPrimary = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pick(e, { maxSize: 1000, sizeLimitKB: 1024 });
+    const url = await pick(e, { maxSize: 600, sizeLimitKB: 4096 });
     if (url) setPrimary(url);
   };
   const onPickGallery = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pick(e, { maxSize: 1000, sizeLimitKB: 1024 });
+    const url = await pick(e, { maxSize: 600, sizeLimitKB: 4096 });
     if (url) setGallery(p => [...p, { url, isNew: true }]);
   };
 

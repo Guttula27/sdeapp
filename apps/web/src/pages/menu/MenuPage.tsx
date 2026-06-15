@@ -43,13 +43,20 @@ const Field = ({ label, error, children }: { label: string; error?: string; chil
   </div>
 );
 
-async function fileToDataUrl(file: File, maxSize = 800, quality = 0.82): Promise<string> {
+async function fileToDataUrl(file: File, maxSize = 600, quality = 0.72): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+  return resizeDataUrl(dataUrl, maxSize, quality);
+}
+
+// Re-encode an existing data URL through canvas — used both for fresh
+// uploads and the "Optimize images" backfill button. Returns the input
+// untouched if a 2D canvas isn't available (Safari Private Mode).
+async function resizeDataUrl(dataUrl: string, maxSize = 600, quality = 0.72): Promise<string> {
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const el = new Image();
     el.onload = () => resolve(el);
@@ -190,6 +197,8 @@ export default function MenuPage() {
   const [varModal, setVarModal]     = useState<{ open: boolean; itemId?: string }>({ open: false });
   const [deleteTarget, setDeleteTarget] = useState<{ type: string; id: string; name: string } | null>(null);
   const [saving, setSaving]         = useState(false);
+  // Image-optimizer (one-shot backfill) progress. null when idle.
+  const [optimizing, setOptimizing] = useState<{ total: number; done: number; saved: number } | null>(null);
 
   // Tag + table-type pricing
   const [customerTags, setCustomerTags] = useState<any[]>([]);
@@ -483,20 +492,26 @@ export default function MenuPage() {
     }
   };
 
+  // Upload caps tuned for the inline-base64 storage path. 600 px / q=0.72
+  // produces ~30-55 KB images that look sharp on phone-class displays and
+  // keep a 100-item menu under ~5 MB even before the move to object
+  // storage. Logos / explicit thumbnails stay smaller — they only ever
+  // render at avatar size. Source file cap is loosened to 4 MB so modern
+  // 12 MP phone photos don't get rejected before resize even runs.
   const onPickImage     = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pickImageFile(e, { maxSize: 800, quality: 0.82, sizeLimitKB: 1024 });
+    const url = await pickImageFile(e, { maxSize: 600, quality: 0.72, sizeLimitKB: 4096 });
     if (url) setItemImage(url);
   };
   const onPickThumbnail = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pickImageFile(e, { maxSize: 320, quality: 0.8, sizeLimitKB: 300 });
+    const url = await pickImageFile(e, { maxSize: 240, quality: 0.72, sizeLimitKB: 2048 });
     if (url) setThumbnail(url);
   };
   const onPickGallery   = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pickImageFile(e, { maxSize: 1000, quality: 0.82, sizeLimitKB: 1024 });
+    const url = await pickImageFile(e, { maxSize: 600, quality: 0.72, sizeLimitKB: 4096 });
     if (url) setGallery(prev => [...prev, { url, isNew: true }]);
   };
   const onPickSubImage  = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pickImageFile(e, { maxSize: 320, quality: 0.8, sizeLimitKB: 300 });
+    const url = await pickImageFile(e, { maxSize: 240, quality: 0.72, sizeLimitKB: 2048 });
     if (url) setSubImage(url);
   };
 
@@ -964,6 +979,84 @@ export default function MenuPage() {
   const totalItems = categories.reduce((s, c) =>
     s + c.subcategories?.reduce((ss: number, sc: any) => ss + (sc.items?.length || 0), 0), 0);
 
+  // One-shot image optimizer. Walks every item in the current scope,
+  // re-encodes any base64 imageUrl / thumbnailUrl that's bigger than the
+  // current upload cap, PATCHes the shrunk version back. Skips items
+  // already under threshold so re-running is cheap and idempotent.
+  // Galleries are not touched here (low traffic + extra round-trips); we
+  // can add them later if the menu list size still needs more headroom.
+  const TARGET_BYTES = 80 * 1024; // ~80 KB base64 = ~60 KB raw — fits the new 600px / q=0.72 cap
+  const optimizeAllImages = async () => {
+    if (optimizing) return;
+    // Collect candidates: items with a base64 imageUrl or thumbnailUrl
+    // larger than TARGET_BYTES. Network URLs (http://, https://) and
+    // empty fields are skipped.
+    type Candidate = { id: string; imageUrl?: string; thumbnailUrl?: string };
+    const candidates: Candidate[] = [];
+    for (const cat of categories) {
+      for (const sub of (cat.subcategories || [])) {
+        for (const it of (sub.items || [])) {
+          const heavyMain = typeof it.imageUrl === 'string'
+            && it.imageUrl.startsWith('data:')
+            && it.imageUrl.length > TARGET_BYTES;
+          const heavyThumb = typeof it.thumbnailUrl === 'string'
+            && it.thumbnailUrl.startsWith('data:')
+            && it.thumbnailUrl.length > TARGET_BYTES;
+          if (heavyMain || heavyThumb) {
+            candidates.push({
+              id: it.id,
+              imageUrl: heavyMain ? it.imageUrl : undefined,
+              thumbnailUrl: heavyThumb ? it.thumbnailUrl : undefined,
+            });
+          }
+        }
+      }
+    }
+    if (candidates.length === 0) {
+      toast.success('All images are already optimized — nothing to do');
+      return;
+    }
+    if (!confirm(`Re-compress ${candidates.length} item image${candidates.length === 1 ? '' : 's'} to 600px / 72% quality? Existing photos are reused, no re-upload needed.`)) {
+      return;
+    }
+    setOptimizing({ total: candidates.length, done: 0, saved: 0 });
+    let totalSavedBytes = 0;
+    let done = 0;
+    // Sequential pass — keeps the canvas single-threaded (browsers cap
+    // off-thread image decode anyway) and avoids overloading the API.
+    for (const c of candidates) {
+      try {
+        const patch: Record<string, string> = {};
+        if (c.imageUrl) {
+          const next = await resizeDataUrl(c.imageUrl, 600, 0.72);
+          if (next.length < c.imageUrl.length) {
+            patch.imageUrl = next;
+            totalSavedBytes += c.imageUrl.length - next.length;
+          }
+        }
+        if (c.thumbnailUrl) {
+          const next = await resizeDataUrl(c.thumbnailUrl, 240, 0.72);
+          if (next.length < c.thumbnailUrl.length) {
+            patch.thumbnailUrl = next;
+            totalSavedBytes += c.thumbnailUrl.length - next.length;
+          }
+        }
+        if (Object.keys(patch).length > 0) {
+          await api.patch(`${menuBase}/items/${c.id}`, patch);
+        }
+      } catch (e: any) {
+        // Don't abort the whole batch on a single failure — log and move on.
+        // eslint-disable-next-line no-console
+        console.warn('optimize failed for item', c.id, e);
+      }
+      done++;
+      setOptimizing({ total: candidates.length, done, saved: Math.round(totalSavedBytes / 1024) });
+    }
+    setOptimizing(null);
+    toast.success(`Optimized ${done} item${done === 1 ? '' : 's'} — freed ${(totalSavedBytes / 1024 / 1024).toFixed(1)} MB`);
+    fetchMenu();
+  };
+
   const isMultiOutlet = outlets.length > 1;
   // Only users without a fixed outlet — currently just platform admins — get
   // to switch outlets via the picker. Outlet admins are locked to their
@@ -1284,6 +1377,18 @@ export default function MenuPage() {
               <Download size={15} /> Import from Business
             </button>
           )}
+          {!isReadOnly && totalItems > 0 && (
+            <button
+              className="btn-ghost text-xs"
+              onClick={optimizeAllImages}
+              disabled={!!optimizing}
+              title="Re-compress old item images to the current size cap. Safe to run anytime."
+            >
+              {optimizing
+                ? `Optimizing ${optimizing.done}/${optimizing.total}…`
+                : 'Optimize images'}
+            </button>
+          )}
           {!isReadOnly && (
             <button className="btn-primary" onClick={() => setCatModal({ open: true })}>
               <Plus size={15} /> Add Category
@@ -1541,7 +1646,7 @@ export default function MenuPage() {
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2 flex-1 min-w-0">
                             {sub.imageUrl ? (
-                              <img src={sub.imageUrl} alt="" className="w-7 h-7 rounded-md object-cover border border-slate-200 shrink-0" />
+                              <img src={sub.imageUrl} alt="" loading="lazy" decoding="async" className="w-7 h-7 rounded-md object-cover border border-slate-200 shrink-0" />
                             ) : (
                               <span className="w-1.5 h-1.5 bg-brand-400 rounded-full shrink-0" />
                             )}
@@ -1602,7 +1707,14 @@ export default function MenuPage() {
                               item.isAvailable ? 'border-slate-100' : 'border-red-100 bg-red-50/30',
                             )}>
                               <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center shrink-0 text-lg">
-                                {item.imageUrl ? <img src={item.imageUrl} className="w-full h-full object-cover rounded-xl" /> : '🍽️'}
+                                {(item.thumbnailUrl || item.imageUrl) ? (
+                                  <img
+                                    src={item.thumbnailUrl || item.imageUrl}
+                                    loading="lazy"
+                                    decoding="async"
+                                    className="w-full h-full object-cover rounded-xl"
+                                  />
+                                ) : '🍽️'}
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -1855,38 +1967,6 @@ export default function MenuPage() {
       >
         <form id="item-form" onSubmit={saveItem} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Thumbnail">
-              <input
-                ref={thumbInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="hidden"
-                onChange={onPickThumbnail}
-              />
-              {thumbnail ? (
-                <div className="relative w-24 h-24 rounded-xl overflow-hidden border border-slate-200">
-                  <img src={thumbnail} alt="" className="w-full h-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => setThumbnail(null)}
-                    className="absolute top-1 right-1 bg-red-500 text-white p-0.5 rounded-md"
-                    title="Remove"
-                  >
-                    <XIcon size={11} />
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => thumbInputRef.current?.click()}
-                  className="w-24 h-24 rounded-xl border-2 border-dashed border-slate-300 hover:border-brand-400 hover:bg-brand-50/30 flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-brand-600 transition-colors"
-                >
-                  <ImagePlus size={18} />
-                  <span className="text-[10px] font-semibold">Thumbnail</span>
-                </button>
-              )}
-              <p className="text-[11px] text-slate-400 mt-1.5">JPG / PNG / WebP. ≤300&nbsp;KB. 320×320.</p>
-            </Field>
             <Field label="Primary photo">
               <input
                 ref={fileInputRef}
@@ -1926,7 +2006,43 @@ export default function MenuPage() {
                   <span className="text-[10px] font-semibold">Primary photo</span>
                 </button>
               )}
-              <p className="text-[11px] text-slate-400 mt-1.5">JPG / PNG / WebP. ≤1&nbsp;MB. 800×800.</p>
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                Auto-resized to 600&nbsp;px / JPEG. Used everywhere — including the menu thumbnail — unless you set a separate one →
+              </p>
+            </Field>
+            <Field label="Thumbnail (optional)">
+              <input
+                ref={thumbInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={onPickThumbnail}
+              />
+              {thumbnail ? (
+                <div className="relative w-24 h-24 rounded-xl overflow-hidden border border-slate-200">
+                  <img src={thumbnail} alt="" className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setThumbnail(null)}
+                    className="absolute top-1 right-1 bg-red-500 text-white p-0.5 rounded-md"
+                    title="Use the primary photo as thumbnail"
+                  >
+                    <XIcon size={11} />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => thumbInputRef.current?.click()}
+                  className="w-24 h-24 rounded-xl border-2 border-dashed border-slate-300 hover:border-brand-400 hover:bg-brand-50/30 flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-brand-600 transition-colors"
+                >
+                  <ImagePlus size={16} />
+                  <span className="text-[10px] font-semibold">Thumbnail</span>
+                </button>
+              )}
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                Override only if you want a different image on cards. Leave blank to reuse the primary photo.
+              </p>
             </Field>
           </div>
 
