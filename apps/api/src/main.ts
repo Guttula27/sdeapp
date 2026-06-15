@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { WinstonModule } from 'nest-winston';
 import { AppModule } from './app.module';
@@ -11,9 +12,17 @@ async function bootstrap() {
   // Boot Nest with Winston as the framework logger so every
   // `Logger.log()` / framework boot message flows through the same
   // pipeline as our app + audit logs.
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: WinstonModule.createLogger(winstonAppConfig),
   });
+
+  // Replace Express's default body parsers (100 KB) with 16 MB ceilings so
+  // base64-data-URL image uploads on item / outlet / business endpoints
+  // don't 413 before reaching the route. The matching DB column was widened
+  // from TEXT (64 KB) to MEDIUMTEXT (16 MB) in 20260615120000; this raises
+  // the wire ceiling to the same headroom.
+  app.useBodyParser('json',       { limit: '16mb' });
+  app.useBodyParser('urlencoded', { limit: '16mb', extended: true });
 
   app.getHttpAdapter().getInstance().disable('x-powered-by');
 
