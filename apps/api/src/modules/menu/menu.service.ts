@@ -400,6 +400,36 @@ export class MenuService {
     return sub;
   }
 
+  // Sub deletion mirrors deleteCategory: hard-delete when no orders ever
+  // referenced an item beneath the sub; otherwise soft-deactivate the sub
+  // and its items so historical orders still resolve cleanly. Used for both
+  // outlet rows and business templates — the template path skips the order
+  // count entirely (template items can never be ordered).
+  async deleteSubcategory(id: string) {
+    const orderItemCount = await this.prisma.orderItem.count({
+      where: { item: { subcategoryId: id } },
+    });
+    if (orderItemCount > 0) {
+      return this.prisma.subcategory.update({
+        where: { id },
+        data: { isActive: false },
+      });
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const items = await tx.item.findMany({ where: { subcategoryId: id }, select: { id: true } });
+      const itemIds = items.map((i) => i.id);
+      if (itemIds.length) {
+        await tx.itemTag.deleteMany({ where: { itemId: { in: itemIds } } });
+        await tx.option.deleteMany({ where: { itemId: { in: itemIds } } });
+        await tx.variant.deleteMany({ where: { itemId: { in: itemIds } } });
+        await tx.translation.deleteMany({ where: { entityType: 'Item', entityId: { in: itemIds } } });
+        await tx.item.deleteMany({ where: { id: { in: itemIds } } });
+      }
+      await tx.translation.deleteMany({ where: { entityType: 'Subcategory', entityId: id } });
+      return tx.subcategory.delete({ where: { id } });
+    });
+  }
+
   // ─── Items ────────────────────────────────────────────────
 
   async createItem(subcategoryId: string, data: any) {

@@ -849,6 +849,7 @@ export default function MenuPage() {
     setSaving(true);
     try {
       if (deleteTarget.type === 'category')    await api.delete(`${menuBase}/categories/${deleteTarget.id}`);
+      if (deleteTarget.type === 'subcategory') await api.delete(`${menuBase}/subcategories/${deleteTarget.id}`);
       if (deleteTarget.type === 'item')        await api.delete(`${menuBase}/items/${deleteTarget.id}`);
       if (deleteTarget.type === 'variant')     await api.delete(`${menuBase}/variants/${deleteTarget.id}`);
       toast.success('Deleted');
@@ -1577,6 +1578,13 @@ export default function MenuPage() {
                                 title="Download QR for this subcategory"
                               >
                                 <QrCode size={12} />
+                              </button>
+                              <button
+                                onClick={() => setDeleteTarget({ type: 'subcategory', id: sub.id, name: sub.name })}
+                                className="btn-ghost p-1.5 text-red-400 hover:bg-red-50"
+                                title="Delete subcategory"
+                              >
+                                <Trash2 size={12} />
                               </button>
                               <button
                                 onClick={() => setItemModal({ open: true, subcategoryId: sub.id })}

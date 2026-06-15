@@ -86,6 +86,13 @@ export class MenuController {
 
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
+  @Delete('subcategories/:id')
+  deleteSubcategory(@Param('id') id: string) {
+    return this.menuService.deleteSubcategory(id);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
   @Post('subcategories/:subcategoryId/items')
   createItem(@Param('subcategoryId') subcategoryId: string, @Body() body: any) {
     return this.menuService.createItem(subcategoryId, body);

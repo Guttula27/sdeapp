@@ -61,6 +61,11 @@ export class BusinessMenuController {
     return this.menuService.updateSubcategory(id, body);
   }
 
+  @Delete('subcategories/:id')
+  deleteSubcategory(@Param('id') id: string) {
+    return this.menuService.deleteSubcategory(id);
+  }
+
   @Post('subcategories/:subcategoryId/items')
   createItem(@Param('subcategoryId') subcategoryId: string, @Body() body: any) {
     return this.menuService.createBusinessItem(subcategoryId, body);
