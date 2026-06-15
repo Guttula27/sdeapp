@@ -928,7 +928,9 @@ export default function OrderPage() {
                       <p className="text-[11px] text-indigo-600 mt-0.5">+ {item.toppings.map(t => t.label).join(', ')}</p>
                     )}
                     {item.bundleSelectionLabels?.length && (
-                      <p className="text-[11px] text-brand-800 mt-0.5">Picks: {item.bundleSelectionLabels.join(', ')}</p>
+                      <p className="text-[11px] text-brand-800 mt-0.5">
+                        {item.bundleSelections?.length ? 'Picks' : 'Includes'}: {item.bundleSelectionLabels.join(', ')}
+                      </p>
                     )}
                     <p className="text-sm font-bold text-brand-600 mt-0.5">₹{(item.price * item.quantity).toFixed(2)}</p>
                   </div>
@@ -1522,6 +1524,36 @@ function ItemDetailModal({
             </div>
           )}
 
+          {/* "What's inside" — for auto-included bundles (no per-customer
+              pick). Read-only list so the diner knows what comes with the
+              bundle before they tap Add. The picker UI below replaces this
+              for X-of-Y bundles. */}
+          {item.isBundle && maxBundlePicks === 0 && Array.isArray(item.bundleChildren) && item.bundleChildren.length > 0 && (
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
+                What's inside ({item.bundleChildren.length})
+              </p>
+              <ul className="space-y-1.5">
+                {item.bundleChildren.map((child: any) => {
+                  const childName = child.childItem?.name || 'Item';
+                  const variantName = child.variant?.name ? ` · ${child.variant.name}` : '';
+                  const qtyLabel = (Number(child.quantity) || 1) > 1 ? ` × ${child.quantity}` : '';
+                  return (
+                    <li
+                      key={child.id}
+                      className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-100"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-brand-400 shrink-0" />
+                      <span className="text-sm font-semibold text-slate-700">
+                        {childName}{variantName}{qtyLabel}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
           {/* Bundle picker — only when maxBundleSelections is set. */}
           {maxBundlePicks > 0 && Array.isArray(item.bundleChildren) && item.bundleChildren.length > 0 && (
             <div>
@@ -1616,6 +1648,18 @@ function ItemDetailModal({
                   return `${child.childItem?.name || 'Item'}${v}`;
                 });
                 onAdd(picks, toppings, { selections: ids, labels });
+              } else if (item.isBundle && Array.isArray(item.bundleChildren) && item.bundleChildren.length > 0) {
+                // Auto-included bundle: stash the children labels on the cart
+                // line so the cart, receipt and tracking views can surface
+                // "What's inside" without re-fetching. Empty selections =
+                // "no user choice was required", which the server already
+                // skips validation for (maxPicks === 0 path).
+                const labels = item.bundleChildren.map((child: any) => {
+                  const v = child.variant?.name ? ` · ${child.variant.name}` : '';
+                  const q = (Number(child.quantity) || 1) > 1 ? ` × ${child.quantity}` : '';
+                  return `${child.childItem?.name || 'Item'}${v}${q}`;
+                });
+                onAdd(picks, toppings, { selections: [], labels });
               } else {
                 onAdd(picks, toppings);
               }

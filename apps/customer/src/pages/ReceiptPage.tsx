@@ -90,7 +90,12 @@ export default function ReceiptPage() {
             </div>
           </div>
 
-          {/* Items — grouped by menu when the order spans more than one. */}
+          {/* Items — grouped by menu when the order spans more than one.
+              Bundle children (OrderItem rows that carry a bundleId) are
+              collapsed under one parent row so the customer sees the bundle
+              as a single line with each component listed beneath, instead of
+              the post-expansion flat list (which puts the whole bundle
+              price on the first child and ₹0 on the rest). */}
           <div>
             <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Items</p>
             {(() => {
@@ -103,30 +108,98 @@ export default function ReceiptPage() {
                 groups.get(key)!.items.push(it);
               }
               const showHeaders = groups.size > 1;
+              type Row =
+                | { kind: 'item'; item: any }
+                | { kind: 'bundle'; bundleId: string; name: string; children: any[]; quantity: number; totalPrice: number };
+              const groupBundleRows = (rows: any[]): Row[] => {
+                const out: Row[] = [];
+                const seen = new Map<string, Extract<Row, { kind: 'bundle' }>>();
+                for (const it of rows) {
+                  if (it?.bundleId) {
+                    let bundle = seen.get(it.bundleId);
+                    if (!bundle) {
+                      bundle = {
+                        kind: 'bundle',
+                        bundleId: it.bundleId,
+                        name: it.bundleParent?.name || 'Combo',
+                        children: [],
+                        quantity: 0,
+                        totalPrice: 0,
+                      };
+                      seen.set(it.bundleId, bundle);
+                      out.push(bundle);
+                    }
+                    bundle.children.push(it);
+                    bundle.totalPrice += Number(it.totalPrice ?? 0);
+                  } else {
+                    out.push({ kind: 'item', item: it });
+                  }
+                }
+                // Derive parent qty from the first child (the orders service
+                // stamps full bundle qty on every child) since the bundle
+                // parent itself isn't a separate OrderItem row.
+                for (const r of out) {
+                  if (r.kind === 'bundle' && r.children.length > 0) {
+                    r.quantity = Number(r.children[0].quantity ?? 1);
+                  }
+                }
+                return out;
+              };
               return Array.from(groups.values()).map((g, gi) => (
                 <div key={g.name || `g-${gi}`} className="mb-3 last:mb-0">
                   {showHeaders && g.name && (
                     <p className="text-[10px] font-bold text-brand-600 uppercase tracking-wider mb-1">{g.name}</p>
                   )}
                   <div className="divide-y divide-slate-100">
-                    {g.items.map((it: any) => (
-                      <div key={it.id} className="py-2.5">
-                        <div className="flex justify-between items-start gap-2">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-slate-800">
-                              <span className="text-brand-800 font-bold mr-1">{it.quantity}×</span>
-                              {it.item?.name}
-                              {it.variant && <span className="text-xs text-slate-500"> ({it.variant.name})</span>}
-                            </p>
-                            {it.notes && <p className="text-[11px] text-slate-400 mt-0.5">{it.notes}</p>}
+                    {groupBundleRows(g.items).map((row) => {
+                      if (row.kind === 'bundle') {
+                        return (
+                          <div key={`b-${row.bundleId}`} className="py-2.5">
+                            <div className="flex justify-between items-start gap-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-slate-800">
+                                  <span className="text-brand-800 font-bold mr-1">{row.quantity}×</span>
+                                  {row.name}
+                                  <span className="text-[10px] font-semibold text-brand-700 ml-1.5">
+                                    · {row.children.length} item{row.children.length === 1 ? '' : 's'}
+                                  </span>
+                                </p>
+                                <ul className="mt-1 ml-5 space-y-0.5 list-disc text-[11px] text-slate-500">
+                                  {row.children.map((c: any) => (
+                                    <li key={c.id}>
+                                      {c.quantity}× {c.item?.name}
+                                      {c.variant && <span className="text-slate-400"> ({c.variant.name})</span>}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="text-sm font-bold text-slate-800">₹{row.totalPrice.toFixed(2)}</p>
+                              </div>
+                            </div>
                           </div>
-                          <div className="text-right shrink-0">
-                            <p className="text-[10px] text-slate-400">@ ₹{Number(it.unitPrice).toFixed(2)}</p>
-                            <p className="text-sm font-bold text-slate-800">₹{Number(it.totalPrice).toFixed(2)}</p>
+                        );
+                      }
+                      const it = row.item;
+                      return (
+                        <div key={it.id} className="py-2.5">
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-slate-800">
+                                <span className="text-brand-800 font-bold mr-1">{it.quantity}×</span>
+                                {it.item?.name}
+                                {it.variant && <span className="text-xs text-slate-500"> ({it.variant.name})</span>}
+                              </p>
+                              {it.notes && <p className="text-[11px] text-slate-400 mt-0.5">{it.notes}</p>}
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-[10px] text-slate-400">@ ₹{Number(it.unitPrice).toFixed(2)}</p>
+                              <p className="text-sm font-bold text-slate-800">₹{Number(it.totalPrice).toFixed(2)}</p>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ));
