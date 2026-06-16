@@ -12,17 +12,19 @@
  * helper surface stays the same — upload code keeps calling
  * `fileToDataUrl` and only the eventual sink changes.
  *
- * Defaults are intentionally tight: 600 px / q=0.72 on the main image
- * produces ~30-55 KB JPEGs that look sharp on phone-class displays and
- * keep a 100-item menu under ~5 MB. Logos / explicit thumbnails go even
- * smaller — they only ever render at avatar size.
+ * Defaults are intentionally tight: 400 px / q=0.70 on the main image
+ * produces ~12-22 KB JPEGs that load on weak (2G/edge) networks where
+ * 600 px was timing out. Images look visibly soft on retina phones but
+ * stay usable; if quality matters more than load time we'll move to
+ * object storage and bump the cap back up.
  */
 
 export const IMAGE_PRESETS = {
   // Main item photo, item gallery, outlet primary image, cluster cover.
-  // 600 px gives ~1.3× density at the ~360 px detail-sheet width on
-  // retina phones — crisp without bloat.
-  ITEM:     { maxSize: 600, quality: 0.72, sizeLimitKB: 4096 },
+  // 400 px renders at ~1.1× density at the ~360 px detail-sheet width on
+  // retina phones — soft but functional. Trade-off acknowledged: this is
+  // a stop-gap until object storage lands (option E in the perf plan).
+  ITEM:     { maxSize: 400, quality: 0.70, sizeLimitKB: 4096 },
   // Logos and explicit thumbnails. Always rendered at avatar size, so
   // anything past 240 px is wasted bytes.
   AVATAR:   { maxSize: 240, quality: 0.72, sizeLimitKB: 2048 },

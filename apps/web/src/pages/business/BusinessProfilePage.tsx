@@ -11,7 +11,7 @@ import Modal from '../../components/common/Modal';
 import { downloadQrCard } from '../../utils/qrCard';
 import { getCustomerOrigin } from '../../utils/customerOrigin';
 
-async function fileToDataUrl(file: File, maxSize = 600, quality = 0.72): Promise<string> {
+async function fileToDataUrl(file: File, maxSize = 400, quality = 0.70): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
@@ -124,11 +124,11 @@ export default function BusinessProfilePage() {
   };
 
   const onPickPrimary = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pick(e, { maxSize: 600, sizeLimitKB: 4096 });
+    const url = await pick(e, { maxSize: 400, sizeLimitKB: 4096 });
     if (url) setPrimary(url);
   };
   const onPickGallery = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pick(e, { maxSize: 600, sizeLimitKB: 4096 });
+    const url = await pick(e, { maxSize: 400, sizeLimitKB: 4096 });
     if (url) setGallery(p => [...p, { url, isNew: true }]);
   };
 

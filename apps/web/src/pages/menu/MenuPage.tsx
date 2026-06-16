@@ -43,7 +43,7 @@ const Field = ({ label, error, children }: { label: string; error?: string; chil
   </div>
 );
 
-async function fileToDataUrl(file: File, maxSize = 600, quality = 0.72): Promise<string> {
+async function fileToDataUrl(file: File, maxSize = 400, quality = 0.70): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
@@ -56,7 +56,7 @@ async function fileToDataUrl(file: File, maxSize = 600, quality = 0.72): Promise
 // Re-encode an existing data URL through canvas — used both for fresh
 // uploads and the "Optimize images" backfill button. Returns the input
 // untouched if a 2D canvas isn't available (Safari Private Mode).
-async function resizeDataUrl(dataUrl: string, maxSize = 600, quality = 0.72): Promise<string> {
+async function resizeDataUrl(dataUrl: string, maxSize = 400, quality = 0.70): Promise<string> {
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const el = new Image();
     el.onload = () => resolve(el);
@@ -492,14 +492,14 @@ export default function MenuPage() {
     }
   };
 
-  // Upload caps tuned for the inline-base64 storage path. 600 px / q=0.72
-  // produces ~30-55 KB images that look sharp on phone-class displays and
-  // keep a 100-item menu under ~5 MB even before the move to object
-  // storage. Logos / explicit thumbnails stay smaller — they only ever
-  // render at avatar size. Source file cap is loosened to 4 MB so modern
-  // 12 MP phone photos don't get rejected before resize even runs.
+  // Upload caps tuned for weak-network reality (2G/edge effective
+  // 30-80 kbps). 400 px / q=0.70 lands at ~12-22 KB per image, ~1.5 MB
+  // for a 100-item menu — workable inside a 30-second wait on a weak
+  // connection. Looks soft on retina phones; revisit when object storage
+  // lands (option E in the perf plan). Source file cap kept at 4 MB so
+  // modern phone photos don't get rejected before resize runs.
   const onPickImage     = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pickImageFile(e, { maxSize: 600, quality: 0.72, sizeLimitKB: 4096 });
+    const url = await pickImageFile(e, { maxSize: 400, quality: 0.70, sizeLimitKB: 4096 });
     if (url) setItemImage(url);
   };
   const onPickThumbnail = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -507,7 +507,7 @@ export default function MenuPage() {
     if (url) setThumbnail(url);
   };
   const onPickGallery   = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pickImageFile(e, { maxSize: 600, quality: 0.72, sizeLimitKB: 4096 });
+    const url = await pickImageFile(e, { maxSize: 400, quality: 0.70, sizeLimitKB: 4096 });
     if (url) setGallery(prev => [...prev, { url, isNew: true }]);
   };
   const onPickSubImage  = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -985,7 +985,7 @@ export default function MenuPage() {
   // already under threshold so re-running is cheap and idempotent.
   // Galleries are not touched here (low traffic + extra round-trips); we
   // can add them later if the menu list size still needs more headroom.
-  const TARGET_BYTES = 80 * 1024; // ~80 KB base64 = ~60 KB raw — fits the new 600px / q=0.72 cap
+  const TARGET_BYTES = 35 * 1024; // ~35 KB base64 = ~26 KB raw — anything bigger than this is above the 400px / q=0.70 ceiling and worth re-compressing
   const optimizeAllImages = async () => {
     if (optimizing) return;
     // Collect candidates: items with a base64 imageUrl or thumbnailUrl
@@ -1016,7 +1016,7 @@ export default function MenuPage() {
       toast.success('All images are already optimized — nothing to do');
       return;
     }
-    if (!confirm(`Re-compress ${candidates.length} item image${candidates.length === 1 ? '' : 's'} to 600px / 72% quality? Existing photos are reused, no re-upload needed.`)) {
+    if (!confirm(`Re-compress ${candidates.length} item image${candidates.length === 1 ? '' : 's'} to 400px / 70% quality? Existing photos are reused, no re-upload needed.`)) {
       return;
     }
     setOptimizing({ total: candidates.length, done: 0, saved: 0 });
@@ -1028,7 +1028,7 @@ export default function MenuPage() {
       try {
         const patch: Record<string, string> = {};
         if (c.imageUrl) {
-          const next = await resizeDataUrl(c.imageUrl, 600, 0.72);
+          const next = await resizeDataUrl(c.imageUrl, 400, 0.70);
           if (next.length < c.imageUrl.length) {
             patch.imageUrl = next;
             totalSavedBytes += c.imageUrl.length - next.length;
@@ -2007,7 +2007,7 @@ export default function MenuPage() {
                 </button>
               )}
               <p className="text-[11px] text-slate-400 mt-1.5">
-                Auto-resized to 600&nbsp;px / JPEG. Used everywhere — including the menu thumbnail — unless you set a separate one →
+                Auto-resized to 400&nbsp;px / JPEG so menus load on weak networks. Used everywhere — including the menu thumbnail — unless you set a separate one →
               </p>
             </Field>
             <Field label="Thumbnail (optional)">

@@ -18,7 +18,7 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 type Range = { id: string; openTime: string; closeTime: string };
 type DayCfg = { closed: boolean; ranges: Range[] };
 
-async function fileToDataUrl(file: File, maxSize = 600, quality = 0.72): Promise<string> {
+async function fileToDataUrl(file: File, maxSize = 400, quality = 0.70): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
@@ -311,7 +311,7 @@ export default function OutletProfilePage() {
     catch { toast.error('Could not read image'); return null; }
   };
   const onPickPrimary = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pick(e, { maxSize: 600, sizeLimitKB: 4096 });
+    const url = await pick(e, { maxSize: 400, sizeLimitKB: 4096 });
     if (url) setPrimary(url);
   };
   const onPickLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -319,7 +319,7 @@ export default function OutletProfilePage() {
     if (url) setLogo(url);
   };
   const onPickGallery = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pick(e, { maxSize: 600, sizeLimitKB: 4096 });
+    const url = await pick(e, { maxSize: 400, sizeLimitKB: 4096 });
     if (url) setGallery(p => [...p, { url, isNew: true }]);
   };
 

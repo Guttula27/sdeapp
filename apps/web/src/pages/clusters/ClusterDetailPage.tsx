@@ -11,7 +11,7 @@ import { downloadQrCard } from '../../utils/qrCard';
 
 // Compresses image to ~1000px max dim, JPEG q=.85 — same helper the
 // business-profile page uses to keep the data URLs Prisma-Text-safe.
-async function fileToDataUrl(file: File, maxSize = 600, quality = 0.72): Promise<string> {
+async function fileToDataUrl(file: File, maxSize = 400, quality = 0.70): Promise<string> {
   const reader = new FileReader();
   const dataUrl: string = await new Promise((res, rej) => {
     reader.onload = () => res(reader.result as string);
@@ -298,7 +298,7 @@ export default function ClusterDetailPage() {
               onChange={async (e) => {
                 const f = e.target.files?.[0];
                 if (!f) return;
-                const url = await fileToDataUrl(f, 600);
+                const url = await fileToDataUrl(f, 400);
                 setForm((s) => ({ ...s, thumbnailUrl: url }));
               }}
             />
@@ -332,7 +332,7 @@ export default function ClusterDetailPage() {
               onChange={async (e) => {
                 const f = e.target.files?.[0];
                 if (!f) return;
-                const url = await fileToDataUrl(f, 600);
+                const url = await fileToDataUrl(f, 400);
                 setForm((s) => ({ ...s, primaryImageUrl: url }));
               }}
             />
@@ -390,7 +390,7 @@ export default function ClusterDetailPage() {
             onChange={async (e) => {
               const files = Array.from(e.target.files ?? []);
               if (!files.length) return;
-              const additions = await Promise.all(files.map((f) => fileToDataUrl(f, 600)));
+              const additions = await Promise.all(files.map((f) => fileToDataUrl(f, 400)));
               setGallery((prev) => [...prev, ...additions.map((url) => ({ url, isNew: true }))]);
               e.target.value = '';
             }}
