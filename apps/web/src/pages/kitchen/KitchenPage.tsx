@@ -3,13 +3,21 @@ import { useSelector } from 'react-redux';
 import { Navigate } from 'react-router-dom';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { ChefHat, Timer, CheckCircle2, Flame, Play, Bell, X, Utensils, ChevronDown, ChevronUp, Maximize2, Minimize2, Printer as PrinterIcon, Bluetooth } from 'lucide-react';
+import { ChefHat, Timer, CheckCircle2, Flame, Play, Bell, BellOff, X, Utensils, ChevronDown, ChevronUp, Maximize2, Minimize2, Printer as PrinterIcon, Bluetooth, Volume2 } from 'lucide-react';
 import { RootState } from '../../store';
 import { getSocket } from '../../services/socket';
 import { useSocketStatus } from '../../hooks/useSocketStatus';
 import api from '../../services/api';
 import { useUserRole } from '../../hooks/useUserRole';
 import { connectPrinter, printReceipt, isPrinterConnected, isBluetoothSupported } from '../../utils/bluetoothPrinter';
+import {
+  playKitchenBell,
+  setupKitchenAudioUnlock,
+  getKitchenBellVolume,
+  setKitchenBellVolume,
+  isKitchenBellMuted,
+  setKitchenBellMuted,
+} from '../../utils/kitchenSound';
 
 // Statuses considered "live" in the kitchen workflow — the default view.
 const ACTIVE_KITCHEN_STATUSES = ['CREATED', 'QUEUED', 'PREPARING', 'READY', 'OUT_FOR_SERVICE'] as const;
@@ -76,6 +84,16 @@ export default function KitchenPage() {
   // reprinting on socket reconnect / refetch.
   const autoPrintedRef = useRef<Set<string>>(new Set());
   const [filter, setFilter] = useState<KitchenFilter>('ACTIVE');
+  // Bell controls — synth WebAudio tone fired on orderCreated. Volume
+  // + mute persisted to localStorage so a station keeps its preference
+  // across shift changes / reloads.
+  const [bellMuted, setBellMuted] = useState(() => isKitchenBellMuted());
+  const [bellVolume, setBellVolume] = useState(() => getKitchenBellVolume());
+  // Skip the bell on the very first batch the page loads (pre-existing
+  // pending orders shouldn't all ding at once). Flipped to false after
+  // the initial fetchForFilter resolves.
+  const initialFetchDone = useRef(false);
+  useEffect(() => { setupKitchenAudioUnlock(); }, []);
   // Top "items to prepare" summary card — collapsed by default so the
   // order cards have the floor; the chef expands when they want the
   // per-item breakdown.
@@ -114,6 +132,9 @@ export default function KitchenPage() {
     // Oldest first so the kitchen sees the longest-waiting order at the top.
     unique.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     setOrders(unique);
+    // Arm the bell only after the initial backlog is in — otherwise
+    // the page reload would ring once per pre-existing PENDING order.
+    initialFetchDone.current = true;
   }, [outletId]);
 
   useEffect(() => {
@@ -198,6 +219,12 @@ export default function KitchenPage() {
           return next;
         });
         toast('🔔 New order!', { duration: 5000 });
+        // Audible bell. Guard on initialFetchDone so we don't ding on
+        // the page-load batch of pre-existing PENDING orders. Mute /
+        // volume read inside playKitchenBell — no extra check here.
+        if (initialFetchDone.current) {
+          playKitchenBell();
+        }
         if (
           outletPrintCfg.auto &&
           printerId &&
@@ -421,6 +448,69 @@ export default function KitchenPage() {
               {printerReady ? (printerName || 'Printer ready') : 'Connect printer'}
             </button>
           )}
+          {/* Bell pill — tap to test, long-press / right-click flips
+              mute. Volume slider tucks into a popover on hover so it
+              doesn't crowd the header for steady-state use. */}
+          <div className="relative group">
+            <button
+              onClick={() => {
+                // Single tap: test the bell at the current volume so
+                // the operator can confirm it's audible before the
+                // shift gets busy.
+                playKitchenBell();
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                const next = !bellMuted;
+                setBellMuted(next);
+                setKitchenBellMuted(next);
+                toast(next ? 'Bell muted' : 'Bell on', { duration: 1500 });
+              }}
+              className={clsx(
+                'flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border transition-colors',
+                bellMuted
+                  ? 'bg-slate-50 border-slate-200 text-slate-400 hover:bg-slate-100'
+                  : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100',
+              )}
+              title={bellMuted
+                ? 'Bell is muted — right-click to unmute'
+                : 'New-order bell on — tap to test, right-click to mute'}
+            >
+              {bellMuted ? <BellOff size={13} /> : <Bell size={13} />}
+              {bellMuted ? 'Muted' : `Bell ${bellVolume}%`}
+            </button>
+            {!bellMuted && (
+              <div className="absolute right-0 top-full mt-1 z-20 hidden group-hover:block bg-white border border-slate-200 rounded-xl shadow-lg p-3 w-52">
+                <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                  <Volume2 size={12} /> Bell volume
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={bellVolume}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setBellVolume(v);
+                    setKitchenBellVolume(v);
+                  }}
+                  onMouseUp={() => playKitchenBell()}
+                  onTouchEnd={() => playKitchenBell()}
+                  className="w-full accent-amber-500"
+                />
+                <button
+                  className="mt-2 w-full text-[11px] font-semibold text-slate-500 hover:text-slate-700"
+                  onClick={() => {
+                    setBellMuted(true);
+                    setKitchenBellMuted(true);
+                  }}
+                >
+                  Mute bell
+                </button>
+              </div>
+            )}
+          </div>
           <button
             onClick={toggleFullscreen}
             className="btn-ghost p-2 text-slate-500 hover:text-slate-800"

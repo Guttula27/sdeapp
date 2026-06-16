@@ -130,6 +130,49 @@ export function CustomerAlertsProvider({ children }: { children: ReactNode }) {
   // user-initiated). Runs once per app mount.
   useEffect(() => { setupAudioUnlock(); }, []);
 
+  // Backgrounded-tab safety net. While the PWA tab is hidden (other
+  // tab open, phone home-screen, etc.) browsers suspend the socket
+  // after ~30s on Chrome/Edge and even faster on iOS. When the tab
+  // comes back to focus we (1) refresh the alert list to catch
+  // anything that fired during the gap and (2) nudge the socket to
+  // reconnect if it's gone half-dead. Combined with the existing
+  // POPUP_REPLAY_MAX_AGE_MS window, a customer who returns to the PWA
+  // within 5 min of a "ready" alert will still hear the loud popup.
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return;
+      refresh();
+      const sock = socketRef.current;
+      if (sock && !sock.connected) {
+        sock.connect();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onVis);
+    };
+  }, [isLoggedIn, refresh]);
+
+  // Belt-and-braces polling for the case where both the socket AND
+  // the visibility-change handler fail us (rare, but iOS Safari has
+  // been known to do it). 45 s is cheap on the API and barely
+  // measurable in mobile data usage, but it guarantees that an alert
+  // fired while the tab is in some weird half-suspended state is
+  // surfaced within a minute.
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const POLL_MS = 45_000;
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        refresh();
+      }
+    }, POLL_MS);
+    return () => clearInterval(interval);
+  }, [isLoggedIn, refresh]);
+
   // Replay missed loud alerts. If the customer wasn't connected when
   // the kitchen marked something ready (PWA closed, network blip,
   // backgrounded tab), the socket push goes to nobody. But the alert
