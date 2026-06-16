@@ -398,4 +398,18 @@
       linear-gradient(90deg, rgb(226 232 240 / .5) 1px, transparent 1px);
     background-size: 32px 32px;
   }
+
+  /* Long-form legal pages — Terms, Privacy, Refund, Merchant Agreement */
+  .legal-prose { color: #334155; font-size: 0.9375rem; line-height: 1.7; }
+  .legal-prose h2 { font-size: 1.25rem; font-weight: 800; color: #0f172a; margin-top: 2rem; margin-bottom: 0.75rem; letter-spacing: -0.01em; }
+  .legal-prose h3 { font-size: 1rem;    font-weight: 700; color: #0f172a; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+  .legal-prose h2:first-child, .legal-prose h3:first-child { margin-top: 0; }
+  .legal-prose p  { margin: 0.75rem 0; }
+  .legal-prose ul { list-style: disc;  padding-left: 1.25rem; margin: 0.5rem 0; }
+  .legal-prose ol { list-style: decimal; padding-left: 1.25rem; margin: 0.5rem 0; }
+  .legal-prose li { margin: 0.25rem 0; }
+  .legal-prose strong { color: #0f172a; font-weight: 700; }
+  .legal-prose a { color: #144245; text-decoration: underline; font-weight: 500; }
+  .legal-prose a:hover { color: #0B4245; }
+  .legal-prose hr { border: 0; border-top: 1px solid #e2e8f0; margin: 1.5rem 0; }
 }

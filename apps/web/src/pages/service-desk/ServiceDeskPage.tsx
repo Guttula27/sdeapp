@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 import { Navigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
-import { CheckCircle2, XCircle, ChefHat, Bell, Truck, Utensils, Clock } from 'lucide-react';
+import { CheckCircle2, XCircle, ChefHat, Bell, Truck, Utensils, Clock, ChevronDown, Maximize2 } from 'lucide-react';
 import { RootState } from '../../store';
 import { getSocket } from '../../services/socket';
 import { useUserRole } from '../../hooks/useUserRole';
@@ -211,6 +211,24 @@ export default function ServiceDeskPage() {
     [queue],
   );
 
+  // Lane expansion — when set, that lane stretches to ~80% of the
+  // horizontal space and the others shrink to vertical "diary tab"
+  // spines. Click a tab to swap focus; click the expanded lane's
+  // header chevron to collapse back to the equal-column layout.
+  const [expandedLane, setExpandedLane] = useState<Lane | null>(null);
+  // Compact-card behaviour — every card is collapsed by default
+  // (header only) and toggles its body on click. Same pattern as the
+  // Orders page so staff who jump between the two have one mental
+  // model.
+  const [openCards, setOpenCards] = useState<Set<string>>(new Set());
+  const toggleCard = (id: string) =>
+    setOpenCards((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
   if (!outletId) {
     return (
       <div className="p-8 text-sm text-slate-500">
@@ -245,15 +263,60 @@ export default function ServiceDeskPage() {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Flex row: each lane is a flex child whose `flex` value swings
+          when one lane is expanded. Default = equal columns; expanded
+          lane → flex 8; collapsed laneas → flex 1 (rendered as a
+          vertical "diary tab" spine). On small screens we drop to a
+          single-column stack so the spines don't get pinched. */}
+      <div className="flex flex-col lg:flex-row gap-3 lg:gap-4 min-h-[60vh]">
         {(Object.keys(LANE_META) as Lane[]).map((lane) => {
           const meta = LANE_META[lane];
           const rows = queue[lane];
           const Icon = meta.icon;
+          const isExpanded = expandedLane === lane;
+          const isCollapsedTab = expandedLane !== null && !isExpanded;
+          // Flex weights: 8/1/1 when one lane is expanded, otherwise
+          // equal. The `lg:` prefix keeps mobile a vertical stack.
+          const flexBasis = expandedLane === null ? 1 : isExpanded ? 8 : 1;
+
+          if (isCollapsedTab) {
+            // Diary-tab spine — click to swap focus to this lane.
+            return (
+              <button
+                key={lane}
+                onClick={() => setExpandedLane(lane)}
+                style={{ flex: flexBasis }}
+                className={clsx(
+                  'hidden lg:flex flex-col items-center justify-center gap-3 rounded-2xl border p-3 transition-all hover:brightness-95',
+                  meta.tint,
+                )}
+                title={`Expand ${meta.title}`}
+              >
+                <Icon size={18} className={meta.accent} />
+                <span
+                  className={clsx('text-[11px] font-bold uppercase tracking-wider', meta.accent)}
+                  style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+                >
+                  {meta.title}
+                </span>
+                <span className="text-xs font-bold bg-white/80 rounded-full px-2 py-0.5 text-slate-700">
+                  {rows.length}
+                </span>
+              </button>
+            );
+          }
+
           return (
-            <section key={lane} className={clsx('rounded-2xl border p-3 min-h-[60vh]', meta.tint)}>
+            <section
+              key={lane}
+              style={{ flex: flexBasis }}
+              className={clsx(
+                'rounded-2xl border p-3 min-h-[60vh] flex flex-col min-w-0',
+                meta.tint,
+              )}
+            >
               <header className="flex items-center justify-between mb-2 px-1">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <Icon size={16} className={meta.accent} />
                   <h2 className={clsx('text-sm font-bold uppercase tracking-wider', meta.accent)}>
                     {meta.title}
@@ -262,110 +325,170 @@ export default function ServiceDeskPage() {
                     {rows.length}
                   </span>
                 </div>
+                <button
+                  onClick={() => setExpandedLane(isExpanded ? null : lane)}
+                  className={clsx(
+                    'inline-flex items-center justify-center w-7 h-7 rounded-lg transition-colors',
+                    isExpanded
+                      ? 'bg-white/80 text-slate-700 hover:bg-white'
+                      : 'bg-white/50 text-slate-500 hover:bg-white/80',
+                  )}
+                  title={isExpanded ? 'Collapse to equal columns' : 'Expand this lane'}
+                >
+                  <Maximize2 size={13} />
+                </button>
               </header>
-              <p className="text-[11px] text-slate-500 px-1 mb-3">{meta.subtitle}</p>
+              {/* Subtitle hidden when expanded so vertical space goes to cards. */}
+              {!isExpanded && (
+                <p className="text-[11px] text-slate-500 px-1 mb-3">{meta.subtitle}</p>
+              )}
 
               {rows.length === 0 && (
                 <p className="text-xs text-slate-400 italic px-2 py-6 text-center">Nothing in this lane.</p>
               )}
 
-              <div className="space-y-2">
+              {/* CSS multi-column masonry — mirrors the Kitchen layout.
+                  Cards are pinned at ~240px wide, so a 30%-wide lane
+                  fits one column and an 80%-expanded lane packs five or
+                  six side-by-side. `break-inside: avoid` (on each card
+                  below) keeps a card from being split between columns. */}
+              <div
+                className="overflow-y-auto pr-1"
+                style={{ columnWidth: '240px', columnGap: '8px' }}
+              >
                 {rows.map((o) => {
                   const items = lane === 'verify' ? verifyItemsFor(o) : liveItemsFor(o);
                   const mins = elapsedMins(o.createdAt);
                   const flashing = flash.has(o.id);
+                  const isCardOpen = openCards.has(o.id);
+                  const readyCount = items.filter((i) => i.status === 'READY').length;
                   return (
                     <article
                       key={o.id}
+                      onClick={() => toggleCard(o.id)}
+                      style={{ breakInside: 'avoid' }}
                       className={clsx(
-                        'bg-white rounded-xl border p-3 transition-all',
+                        'bg-white rounded-xl border p-2.5 transition-all cursor-pointer hover:border-slate-300 mb-2 inline-block w-full',
                         flashing
                           ? 'border-amber-300 shadow-[0_0_0_3px_rgba(245,158,11,0.25)] animate-pulse'
                           : 'border-slate-200',
                       )}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-bold text-slate-900 text-sm">#{o.orderNumber}</span>
-                            {o.table?.number && (
-                              <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
-                                Table {o.table.number}
-                              </span>
-                            )}
-                            {o.isPostpaid && (
-                              <span className="text-[10px] font-semibold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">
-                                Postpaid
-                              </span>
-                            )}
-                          </div>
-                          {o.customer?.name && (
-                            <p className="text-xs text-slate-500 truncate">{o.customer.name}</p>
+                      {/* Compact header — always visible. */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                          <span className="font-bold text-slate-900 text-sm">#{o.orderNumber}</span>
+                          {o.table?.number && (
+                            <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                              T{o.table.number}
+                            </span>
+                          )}
+                          {o.isPostpaid && (
+                            <span className="text-[10px] font-semibold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">
+                              Postpaid
+                            </span>
+                          )}
+                          <span className="text-[10px] font-semibold text-slate-500">
+                            {items.length} item{items.length === 1 ? '' : 's'}
+                          </span>
+                          {readyCount > 0 && lane !== 'verify' && (
+                            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">
+                              {readyCount} ready
+                            </span>
                           )}
                         </div>
-                        <span className="text-[11px] text-slate-400 inline-flex items-center gap-1 whitespace-nowrap">
-                          <Clock size={11} /> {mins}m
-                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[11px] text-slate-400 inline-flex items-center gap-1 whitespace-nowrap">
+                            <Clock size={11} /> {mins}m
+                          </span>
+                          <ChevronDown
+                            size={14}
+                            className={clsx(
+                              'text-slate-400 transition-transform',
+                              isCardOpen && 'rotate-180',
+                            )}
+                          />
+                        </div>
                       </div>
+                      {/* Customer line (one row) */}
+                      {(o.customer?.name || o.customer?.phone) && (
+                        <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                          {o.customer?.name}{o.customer?.phone ? ` · ${o.customer.phone}` : ''}
+                        </p>
+                      )}
 
-                      <ul className="mt-2 space-y-0.5 text-sm text-slate-700">
-                        {items.map((it) => (
-                          <li key={it.id} className="flex items-start gap-2">
-                            <span className="font-semibold text-slate-900 min-w-[1.5rem]">×{it.quantity}</span>
-                            <span className="truncate">
-                              {it.item?.name || 'Item'}
-                              {it.variant?.name ? ` — ${it.variant.name}` : ''}
-                              {it.notes ? <span className="text-slate-400"> · {it.notes}</span> : null}
-                            </span>
-                          </li>
-                        ))}
-                        {items.length === 0 && (
-                          <li className="text-xs italic text-slate-400">No items in this lane.</li>
-                        )}
-                      </ul>
-
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {lane === 'verify' && (
-                          <>
-                            <button
-                              onClick={() => confirmOrder(o.id)}
-                              className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
-                            >
-                              <CheckCircle2 size={13} /> Confirm
-                            </button>
-                            <button
-                              onClick={() => strikeOrder(o.id)}
-                              className="inline-flex items-center gap-1 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
-                            >
-                              <XCircle size={13} /> Strike
-                            </button>
-                          </>
-                        )}
-                        {lane === 'release' && (
-                          <button
-                            onClick={() => advanceStatus(o.id, 'READY_FOR_PICKUP')}
-                            className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
-                          >
-                            <Bell size={13} /> Release for pickup
-                          </button>
-                        )}
-                        {lane === 'pickup' && (
-                          <>
-                            <button
-                              onClick={() => advanceStatus(o.id, 'OUT_FOR_SERVICE')}
-                              className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
-                            >
-                              <Truck size={13} /> On its way
-                            </button>
-                            <button
-                              onClick={() => advanceStatus(o.id, 'SERVED')}
-                              className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
-                            >
-                              <Utensils size={13} /> Served
-                            </button>
-                          </>
-                        )}
-                      </div>
+                      {/* Expanded body — items + actions. */}
+                      {isCardOpen && (
+                        <>
+                          <ul className="mt-2 space-y-0.5 text-sm text-slate-700">
+                            {items.map((it) => (
+                              <li key={it.id} className="flex items-start gap-2">
+                                <span className="font-semibold text-slate-900 min-w-[1.5rem]">×{it.quantity}</span>
+                                <span className="truncate flex-1">
+                                  {it.item?.name || 'Item'}
+                                  {it.variant?.name ? ` — ${it.variant.name}` : ''}
+                                  {it.notes ? <span className="text-slate-400"> · {it.notes}</span> : null}
+                                </span>
+                                {it.status === 'READY' && (
+                                  <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">
+                                    ready
+                                  </span>
+                                )}
+                                {it.status === 'PREPARING' && (
+                                  <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded inline-flex items-center gap-1">
+                                    <ChefHat size={9} /> cooking
+                                  </span>
+                                )}
+                              </li>
+                            ))}
+                            {items.length === 0 && (
+                              <li className="text-xs italic text-slate-400">No items in this lane.</li>
+                            )}
+                          </ul>
+                          <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                            {lane === 'verify' && (
+                              <>
+                                <button
+                                  onClick={() => confirmOrder(o.id)}
+                                  className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
+                                >
+                                  <CheckCircle2 size={13} /> Confirm
+                                </button>
+                                <button
+                                  onClick={() => strikeOrder(o.id)}
+                                  className="inline-flex items-center gap-1 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
+                                >
+                                  <XCircle size={13} /> Strike
+                                </button>
+                              </>
+                            )}
+                            {lane === 'release' && (
+                              <button
+                                onClick={() => advanceStatus(o.id, 'READY_FOR_PICKUP')}
+                                className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
+                              >
+                                <Bell size={13} /> Release for pickup
+                              </button>
+                            )}
+                            {lane === 'pickup' && (
+                              <>
+                                <button
+                                  onClick={() => advanceStatus(o.id, 'OUT_FOR_SERVICE')}
+                                  className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
+                                >
+                                  <Truck size={13} /> On its way
+                                </button>
+                                <button
+                                  onClick={() => advanceStatus(o.id, 'SERVED')}
+                                  className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
+                                >
+                                  <Utensils size={13} /> Served
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </>
+                      )}
                     </article>
                   );
                 })}

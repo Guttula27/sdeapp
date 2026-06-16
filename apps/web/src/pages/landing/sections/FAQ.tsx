@@ -8,7 +8,11 @@ const QA = [
   },
   {
     q: 'Which payment gateways do you support?',
-    a: 'UPI (any app), cards, wallets and net banking via Razorpay. Cash is supported natively with auto-confirmation. Additional gateways and split-payment flows can be added on Enterprise.',
+    a: 'UPI (any app), cards, wallets and net banking via Razorpay. Cash is supported natively with auto-confirmation. Settlement reaches your bank account directly — VEZEOR is not a payment aggregator and takes no cut of customer payments.',
+  },
+  {
+    q: 'What does VEZEOR cost?',
+    a: 'The platform is free. You only pay for the messages we dispatch to your customers on your behalf — order-received, ready-for-pickup, payment receipt, feedback. You can pre-pay by buying a Message Pool, or post-pay against monthly invoices. There is no licence fee, no per-outlet fee and no per-seat fee.',
   },
   {
     q: 'Do you support food courts with multiple vendors?',
@@ -32,7 +36,7 @@ const QA = [
   },
   {
     q: 'What kind of support do you offer?',
-    a: 'Email support on Starter, priority chat + phone support on Growth, and a dedicated customer success manager with SLA on Enterprise.',
+    a: 'Email support is included for every outlet. Priority chat / phone support and dedicated customer success will be available as opt-in paid add-ons once we roll out the premium support tier.',
   },
 ];
 

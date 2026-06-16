@@ -9,13 +9,15 @@ import { RootState } from '../../store';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
 import { downloadQrCard } from '../../utils/qrCard';
+import { getCustomerOrigin } from '../../utils/customerOrigin';
 
-async function fileToDataUrl(file: File, maxSize = 1000, quality = 0.85): Promise<string> {
+async function fileToDataUrl(file: File, maxSize = 400, quality = 0.70): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
+    // (defaults match the menu page now — 600px / q=0.72)
   });
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const el = new Image();
@@ -122,11 +124,11 @@ export default function BusinessProfilePage() {
   };
 
   const onPickPrimary = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pick(e, { maxSize: 1000, sizeLimitKB: 1024 });
+    const url = await pick(e, { maxSize: 400, sizeLimitKB: 4096 });
     if (url) setPrimary(url);
   };
   const onPickGallery = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pick(e, { maxSize: 1000, sizeLimitKB: 1024 });
+    const url = await pick(e, { maxSize: 400, sizeLimitKB: 4096 });
     if (url) setGallery(p => [...p, { url, isNew: true }]);
   };
 
@@ -333,7 +335,7 @@ export default function BusinessProfilePage() {
           className="btn-secondary"
           onClick={async () => {
             if (!businessId) return;
-            const origin = (window as any).VITE_CUSTOMER_URL || window.location.origin.replace(':5173', ':5174');
+            const origin = getCustomerOrigin();
             await downloadQrCard({
               outletName: biz?.name,
               outletAddress: biz?.address,

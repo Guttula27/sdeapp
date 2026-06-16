@@ -157,6 +157,15 @@ export type ReceiptItemLine = {
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+  // When set, this line represents a combo / bundle — the children
+  // are listed beneath the parent line, indented, and the parent's
+  // quantity / amount are the combo's totals (children are display-
+  // only, no separate price column).
+  bundleChildren?: Array<{
+    itemName: string;
+    variantName?: string | null;
+    quantity: number;
+  }>;
 };
 
 export type ReceiptDiscountLine = {
@@ -182,10 +191,26 @@ export type CustomerReceiptPayload = {
   discounts: ReceiptDiscountLine[];      // each rendered as -₹X
   taxable: number;                       // subtotal - discount
   // Either cgst+sgst pair (intra-state) or igst alone (inter-state).
+  // Legacy single-rate fields — kept for back-compat with older receipt
+  // payloads / cached snapshots. Multi-rate carts populate `taxLines`
+  // below; when present, the printer renders one CGST/SGST row per
+  // unique GST rate (food at 5% + beverages at 18% each get their own
+  // line) and the single-rate fields are ignored.
   cgst?: number;
   sgst?: number;
   igst?: number;
   gstPct?: number;                       // total %, used for "CGST 2.5%" label
+  // Per-GST-rate breakdown. Each entry sums the items on the order
+  // that snapshotted the same OrderItem.gstRate. For intra-state
+  // orders `cgst` and `sgst` are populated (half the group's tax
+  // each); for inter-state `igst` carries the full group tax.
+  taxLines?: Array<{
+    rate: number;
+    cgst?: number;
+    sgst?: number;
+    igst?: number;
+    gstAmount: number;
+  }>;
   roundOff?: number;
   total: number;
   paidVia?: string | null;
@@ -234,6 +259,15 @@ function buildCustomerEscPos(r: CustomerReceiptPayload): Uint8Array {
     push(`${it.quantity} x ${it.itemName}\n`);
     if (it.variantName) push(`   ${it.variantName}\n`);
     push(pad(`   @ ${fmt(it.unitPrice)}`, fmt(it.totalPrice)) + '\n');
+    // Combo expansion — indent each sub-item beneath its combo line
+    // so the customer sees what came in the combo without the bill
+    // listing every child as a separate priced row.
+    if (it.bundleChildren?.length) {
+      for (const ch of it.bundleChildren) {
+        const variant = ch.variantName ? ` (${ch.variantName})` : '';
+        push(`     - ${ch.itemName}${variant} x ${ch.quantity}\n`);
+      }
+    }
   }
   push(dash() + '\n');
 
@@ -247,12 +281,31 @@ function buildCustomerEscPos(r: CustomerReceiptPayload): Uint8Array {
   if (r.discounts.length > 0) {
     push(pad('Taxable', fmt(r.taxable)) + '\n');
   }
-  if (r.cgst != null && r.sgst != null && (r.cgst > 0 || r.sgst > 0)) {
-    const half = ((r.gstPct ?? 0) / 2).toFixed(1).replace(/\.0$/, '');
+  // GST split — per-rate when the order has items snapshotted at
+  // different rates (food at 5% + beverages at 18%), single-rate
+  // fallback for the common case + legacy payloads.
+  // Always two decimals so half-rates like 2.5% never round up to 3%
+  // and the printed rate matches the Indian GST receipt convention.
+  const fmtPct = (n: number) => n.toFixed(2);
+  if (r.taxLines && r.taxLines.length > 0) {
+    for (const tl of r.taxLines) {
+      if (tl.cgst != null && tl.sgst != null) {
+        const half = fmtPct(tl.rate / 2);
+        push(pad(`CGST ${half}%`, fmt(tl.cgst)) + '\n');
+        push(pad(`SGST ${half}%`, fmt(tl.sgst)) + '\n');
+      } else if (tl.igst != null) {
+        const full = fmtPct(tl.rate);
+        push(pad(`IGST ${full}%`, fmt(tl.igst)) + '\n');
+      }
+    }
+  } else if (r.cgst != null && r.sgst != null && (r.cgst > 0 || r.sgst > 0)) {
+    // Legacy single-rate fallback. Same 2-decimal rule as the
+    // multi-rate path so a half-rate (2.5%) never prints as 3%.
+    const half = ((r.gstPct ?? 0) / 2).toFixed(2);
     push(pad(`CGST ${half}%`, fmt(r.cgst)) + '\n');
     push(pad(`SGST ${half}%`, fmt(r.sgst)) + '\n');
   } else if (r.igst && r.igst > 0) {
-    const full = (r.gstPct ?? 0).toFixed(1).replace(/\.0$/, '');
+    const full = (r.gstPct ?? 0).toFixed(2);
     push(pad(`IGST ${full}%`, fmt(r.igst)) + '\n');
   }
   if (r.roundOff && r.roundOff !== 0) {

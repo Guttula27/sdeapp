@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { useCustomerAuth } from './context/CustomerAuthContext';
 import BottomNav from './components/BottomNav';
 import HomePage from './pages/HomePage';
@@ -21,6 +21,20 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return isLoggedIn ? <>{children}</> : <Navigate to="/auth" replace />;
 }
 
+// Legacy /order/item/:itemId QR redirect — funnels already-printed QRs
+// through the canonical scan resolver so they get the cluster / auth
+// handling and OrderPage's item-detail-over-menu UX. Without this, the
+// old <Navigate to="/order" /> dropped both the itemId and ?outlet=.
+function LegacyItemQrRedirect() {
+  const { itemId } = useParams();
+  const [params] = useSearchParams();
+  const outletId = params.get('outlet');
+  const target = outletId && itemId
+    ? `/s/outlet/${outletId}/item/${itemId}`
+    : '/order';
+  return <Navigate to={target} replace />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -41,9 +55,12 @@ export default function App() {
 
           <Route path="/order"  element={<OrderPage />} />
           {/* /order/item/:itemId retired — item details now open as a
-              half-screen sheet inside OrderPage. Legacy deep links
-              redirect to /order so the visitor can pick the item again. */}
-          <Route path="/order/item/:itemId" element={<Navigate to="/order" replace />} />
+              half-screen sheet inside OrderPage. Already-printed QRs
+              encoded this URL with ?outlet=… so we forward to the
+              canonical scan resolver, which handles cluster routing +
+              auth and lands on /order?outlet=…&item=… (where OrderPage
+              pops the item sheet over the outlet menu). */}
+          <Route path="/order/item/:itemId" element={<LegacyItemQrRedirect />} />
           {/* Cluster shell — food-court roof with outlet picker + unified cart */}
           <Route path="/cluster/:publicCode" element={<ClusterPage />} />
           {/* /cluster/:publicCode/item/:itemId retired — same sheet pattern in ClusterPage. */}

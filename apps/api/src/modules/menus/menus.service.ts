@@ -193,23 +193,38 @@ export class MenusService {
       }),
     ]);
     const byMenuId = new Map(links.map((l) => [l.menuId, l]));
-    return menus.map((m) => {
+    // Honour the outlet's own ordering when it has reordered locally; fall
+    // back to the business template order otherwise. createdAt is the final
+    // stable tiebreaker so two menus with identical displayOrder still come
+    // back deterministically.
+    const decorated = menus.map((m) => {
       const link = byMenuId.get(m.id);
       const outletEnabled = link ? link.isEnabled : false;
-      // Section-disable wins over outlet-enable for non-default menus.
       const effectiveEnabled = outletEnabled && (m.isDefault || !sectionDisabledMenuIds.has(m.id));
+      const sortKey = link ? link.displayOrder : m.displayOrder;
       return {
-        ...m,
-        outletMenu: link
-          ? {
-              id: link.id,
-              isEnabled: effectiveEnabled,
-              overrideTimings: link.overrideTimings,
-              timingSlots: link.timingSlots,
-            }
-          : { id: null, isEnabled: effectiveEnabled, overrideTimings: false, timingSlots: [] },
+        menu: m,
+        link,
+        outletEnabled,
+        effectiveEnabled,
+        sortKey,
       };
     });
+    decorated.sort((a, b) => {
+      if (a.sortKey !== b.sortKey) return a.sortKey - b.sortKey;
+      return a.menu.createdAt.getTime() - b.menu.createdAt.getTime();
+    });
+    return decorated.map(({ menu, link, effectiveEnabled }) => ({
+      ...menu,
+      outletMenu: link
+        ? {
+            id: link.id,
+            isEnabled: effectiveEnabled,
+            overrideTimings: link.overrideTimings,
+            timingSlots: link.timingSlots,
+          }
+        : { id: null, isEnabled: effectiveEnabled, overrideTimings: false, timingSlots: [] },
+    }));
   }
 
   async toggleOutletMenu(outletId: string, menuId: string, body: { isEnabled?: boolean; overrideTimings?: boolean }) {
@@ -354,5 +369,59 @@ export class MenusService {
     });
 
     return { categoriesCreated, itemsCreated };
+  }
+
+  // ─── Reorder ───────────────────────────────────────────────
+  // Two independent ordering surfaces:
+  //   • Menu.displayOrder       — business tier
+  //   • OutletMenu.displayOrder — outlet tier (overrides the business order
+  //     for that outlet only)
+  // listForOutlet honours OutletMenu.displayOrder when present and falls back
+  // to Menu.displayOrder otherwise, so an outlet that hasn't reordered stays
+  // in sync with the business template.
+
+  async reorderBusinessMenus(businessId: string, orderedIds: string[]) {
+    if (!orderedIds?.length) return { reordered: 0 };
+    const owned = await this.prisma.menu.findMany({
+      where: { id: { in: orderedIds }, businessId },
+      select: { id: true },
+    });
+    if (owned.length !== orderedIds.length) {
+      throw new BadRequestException('One or more menus do not belong to this business');
+    }
+    await this.prisma.$transaction(
+      orderedIds.map((id, idx) =>
+        this.prisma.menu.update({ where: { id }, data: { displayOrder: idx } }),
+      ),
+    );
+    return { reordered: orderedIds.length };
+  }
+
+  async reorderOutletMenus(outletId: string, orderedIds: string[]) {
+    if (!orderedIds?.length) return { reordered: 0 };
+    const outlet = await this.prisma.outlet.findUnique({
+      where: { id: outletId },
+      select: { businessId: true },
+    });
+    if (!outlet) throw new NotFoundException('Outlet not found');
+    const owned = await this.prisma.menu.findMany({
+      where: { id: { in: orderedIds }, businessId: outlet.businessId },
+      select: { id: true },
+    });
+    if (owned.length !== orderedIds.length) {
+      throw new BadRequestException('One or more menus do not belong to this outlet');
+    }
+    // Upsert so menus the outlet hasn't actively enabled still pick up the
+    // new order. Existing isEnabled state is preserved on update.
+    await this.prisma.$transaction(
+      orderedIds.map((menuId, idx) =>
+        this.prisma.outletMenu.upsert({
+          where: { outletId_menuId: { outletId, menuId } },
+          update: { displayOrder: idx },
+          create: { outletId, menuId, displayOrder: idx, isEnabled: true },
+        }),
+      ),
+    );
+    return { reordered: orderedIds.length };
   }
 }

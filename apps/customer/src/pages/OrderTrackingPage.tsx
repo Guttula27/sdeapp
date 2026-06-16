@@ -52,6 +52,46 @@ function elapsed(t: string) {
   return rest ? `${h}h ${rest}m` : `${h}h`;
 }
 
+// Group expanded combo (bundle) children back under their parent so the
+// customer sees one combo entry on the bill + tracking views, with the
+// sub-items listed beneath. Standalone OrderItems pass through.
+type TrackRow =
+  | { kind: 'item'; item: any }
+  | { kind: 'bundle'; bundleId: string; name: string; children: any[]; quantity: number; totalPrice: number };
+
+function groupBundles(items: any[]): TrackRow[] {
+  const out: TrackRow[] = [];
+  const seen = new Map<string, Extract<TrackRow, { kind: 'bundle' }>>();
+  for (const it of items) {
+    if (it?.bundleId) {
+      let bundle = seen.get(it.bundleId);
+      if (!bundle) {
+        bundle = {
+          kind: 'bundle',
+          bundleId: it.bundleId,
+          name: it.bundleParent?.name || 'Combo',
+          children: [],
+          quantity: 0,
+          totalPrice: 0,
+        };
+        seen.set(it.bundleId, bundle);
+        out.push(bundle);
+      }
+      bundle.children.push(it);
+      bundle.totalPrice += Number(it.totalPrice ?? 0);
+      if (Number(it.totalPrice ?? 0) > 0) bundle.quantity += Number(it.quantity ?? 0);
+    } else {
+      out.push({ kind: 'item', item: it });
+    }
+  }
+  for (const row of out) {
+    if (row.kind === 'bundle' && row.quantity === 0 && row.children.length > 0) {
+      row.quantity = Number(row.children[0].quantity ?? 1);
+    }
+  }
+  return out;
+}
+
 /* ── component ───────────────────────────────────────────── */
 export default function OrderTrackingPage() {
   const { orderId } = useParams();
@@ -315,18 +355,54 @@ export default function OrderTrackingPage() {
               const items = order.items || [];
               const hasSequencing = items.some((i: any) => i.sequenceNumber != null);
               if (!hasSequencing) {
-                return items.map((item: any) => (
-                  <ItemProgressRow
-                    key={item.id}
-                    item={item}
-                    onReviewSaved={(review) => {
-                      setOrder((prev: any) => prev ? ({
-                        ...prev,
-                        items: prev.items.map((oi: any) => oi.id === item.id ? { ...oi, review } : oi),
-                      }) : prev);
-                    }}
-                  />
-                ));
+                // Group expanded combo children under their parent so
+                // the customer sees the combo as one block with each
+                // sub-item's progress (cooking / ready / served) shown
+                // beneath. Standalone items render as before.
+                return groupBundles(items).map((row: TrackRow) => {
+                  if (row.kind === 'bundle') {
+                    return (
+                      <div
+                        key={`b-${row.bundleId}`}
+                        className="rounded-2xl border border-brand-100 bg-brand-50/40 p-3 space-y-2"
+                      >
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-bold text-brand-900">
+                            {row.quantity}× {row.name}
+                            <span className="text-[10px] font-semibold text-brand-700 ml-1.5">
+                              · {row.children.length} items
+                            </span>
+                          </p>
+                        </div>
+                        {row.children.map((child: any) => (
+                          <ItemProgressRow
+                            key={child.id}
+                            item={child}
+                            onReviewSaved={(review) => {
+                              setOrder((prev: any) => prev ? ({
+                                ...prev,
+                                items: prev.items.map((oi: any) => oi.id === child.id ? { ...oi, review } : oi),
+                              }) : prev);
+                            }}
+                          />
+                        ))}
+                      </div>
+                    );
+                  }
+                  const item = row.item;
+                  return (
+                    <ItemProgressRow
+                      key={item.id}
+                      item={item}
+                      onReviewSaved={(review) => {
+                        setOrder((prev: any) => prev ? ({
+                          ...prev,
+                          items: prev.items.map((oi: any) => oi.id === item.id ? { ...oi, review } : oi),
+                        }) : prev);
+                      }}
+                    />
+                  );
+                });
               }
               const labels: Record<string, string> = order.sequenceLabels || {};
               const groups = new Map<string, any[]>();
@@ -395,17 +471,79 @@ export default function OrderTrackingPage() {
 
           {showItems && (
             <div className="px-5 pb-5 border-t border-slate-100 pt-4 space-y-1">
-              {order.items?.map((item: any) => (
-                <div key={item.id} className="flex items-center justify-between gap-2 text-xs text-slate-500">
-                  <span className="truncate flex-1">{item.quantity}× {item.item?.name}{item.variant ? ` (${item.variant.name})` : ''}</span>
-                  <FavoriteHeart itemId={item.itemId} initial={favoriteIds.has(item.itemId)} />
-                  <span className="shrink-0">₹{Number(item.totalPrice).toFixed(2)}</span>
-                </div>
-              ))}
+              {groupBundles(order.items || []).map((row: any) => {
+                if (row.kind === 'bundle') {
+                  return (
+                    <div key={`b-${row.bundleId}`} className="text-xs text-slate-500">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate flex-1 font-semibold text-slate-700">
+                          {row.quantity}× {row.name}
+                        </span>
+                        <span className="shrink-0">₹{row.totalPrice.toFixed(2)}</span>
+                      </div>
+                      <ul className="pl-3 mt-0.5 space-y-0.5">
+                        {row.children.map((c: any) => (
+                          <li key={c.id} className="text-[11px] text-slate-400 truncate">
+                            • {c.item?.name || 'Item'}
+                            {c.variant?.name ? ` (${c.variant.name})` : ''} × {c.quantity}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                }
+                const item = row.item;
+                return (
+                  <div key={item.id} className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                    <span className="truncate flex-1">{item.quantity}× {item.item?.name}{item.variant ? ` (${item.variant.name})` : ''}</span>
+                    <FavoriteHeart itemId={item.itemId} initial={favoriteIds.has(item.itemId)} />
+                    <span className="shrink-0">₹{Number(item.totalPrice).toFixed(2)}</span>
+                  </div>
+                );
+              })}
               <div className="border-t border-slate-100 mt-2 pt-2 space-y-1">
                 <div className="flex justify-between text-xs text-slate-400">
                   <span>Subtotal</span><span>₹{Number(order.subtotal).toFixed(2)}</span>
                 </div>
+                {/* Discount breakdown — each coupon / reward gets its own
+                    line so the customer sees what cut the bill. */}
+                {(() => {
+                  const coupons = ((order as any).couponUsages || [])
+                    .map((c: any) => ({
+                      label: c.coupon?.code ? `Coupon (${c.coupon.code})` : (c.coupon?.name || 'Coupon'),
+                      amount: Number(c.discountAmount),
+                    }))
+                    .filter((c: any) => c.amount > 0);
+                  const rewards = ((order as any).rewardTransactions || [])
+                    .map((r: any) => ({
+                      label: `Reward (${Math.abs(r.points)} pts)`,
+                      amount: Number(r.amountValue || 0),
+                    }))
+                    .filter((r: any) => r.amount > 0);
+                  const explicit = coupons.reduce((s: number, c: any) => s + c.amount, 0)
+                    + rewards.reduce((s: number, r: any) => s + r.amount, 0);
+                  const total = Number(order.discountAmount || 0);
+                  const leftover = Math.max(0, total - explicit);
+                  const lines = [
+                    ...coupons,
+                    ...rewards,
+                    ...(leftover > 0
+                      ? [{ label: explicit > 0 ? 'Other discount' : 'Discount', amount: leftover }]
+                      : []),
+                  ];
+                  return lines.map((l, i) => (
+                    <div key={i} className="flex justify-between text-xs text-emerald-700">
+                      <span>{l.label}</span>
+                      <span>− ₹{l.amount.toFixed(2)}</span>
+                    </div>
+                  ));
+                })()}
+                {Number((order as any).parcelAmount || 0) > 0 && (
+                  <div className="flex justify-between text-xs text-slate-400">
+                    <span>Parcel charge</span>
+                    <span>₹{Number((order as any).parcelAmount).toFixed(2)}</span>
+                  </div>
+                )}
                 {Number(order.taxAmount) > 0 && (
                   <>
                     <div className="flex justify-between text-xs text-slate-400">
@@ -421,6 +559,11 @@ export default function OrderTrackingPage() {
                 <div className="flex justify-between font-black text-slate-900 text-sm pt-1 border-t border-slate-100">
                   <span>Total</span><span>₹{Number(order.totalAmount).toFixed(2)}</span>
                 </div>
+                {Number(order.discountAmount || 0) > 0 && (
+                  <p className="text-center text-[11px] font-bold text-emerald-700 mt-1">
+                    You saved ₹{Number(order.discountAmount).toFixed(2)} on this bill
+                  </p>
+                )}
               </div>
             </div>
           )}

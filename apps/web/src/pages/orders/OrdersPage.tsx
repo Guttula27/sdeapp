@@ -464,6 +464,9 @@ export default function OrdersPage() {
                   {item.variant && (
                     <p className="text-[10px] italic text-slate-400">{item.variant.name}</p>
                   )}
+                  {item.notes && (
+                    <p className="text-[10px] text-indigo-600 truncate">{item.notes}</p>
+                  )}
                 </div>
                 {!isReadOnly && !terminal && next && (
                   <button
@@ -887,6 +890,9 @@ export default function OrdersPage() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-slate-800 truncate">{item.item?.name}</p>
                         {item.variant && <p className="text-xs text-slate-400">{item.variant.name}</p>}
+                        {item.notes && (
+                          <p className="text-[11px] text-indigo-600 mt-0.5">{item.notes}</p>
+                        )}
                       </div>
                       {item.sequenceNumber != null && (
                         <span

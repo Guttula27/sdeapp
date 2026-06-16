@@ -21,6 +21,10 @@ export type QuoteInput = {
   lines: QuoteLineInput[];
   isParcel?: boolean;
   customerId?: string;
+  // Dine-in table the cart belongs to. Used to resolve table-type price
+  // overrides — the customer sees the section price on the menu, the
+  // quote must match. Optional for counter / parcel flows.
+  tableId?: string;
   // One coupon at most per the stacking rule the user chose.
   couponId?: string;
   // Reward points the customer wants to burn (gated by min + max%).
@@ -53,7 +57,26 @@ export type Quote = {
   parcelAmount: number;
   // Promotions
   autoDiscounts: { id: string; name: string; amount: number; level: 'BILL' | 'LINE' }[];
-  offerFreebies: { offerId: string; offerName: string; getItemId: string | null; getItemName: string; quantity: number }[];
+  // Eligible freebies the customer can pick at checkout. Each entry
+  // carries a pool descriptor — scope ITEM = single fixed item (legacy);
+  // ALL / CATEGORY / ITEMS = customer picks `pickQuantity` items from
+  // the eligible pool. The legacy `getItemId` / `getItemName` /
+  // `quantity` fields stay populated for the ITEM scope to keep
+  // existing customer banners working without changes.
+  offerFreebies: Array<{
+    offerId: string;
+    offerName: string;
+    pickQuantity: number;
+    pool:
+      | { scope: 'ITEM'; itemId: string; itemName: string }
+      | { scope: 'ALL'; items: Array<{ id: string; name: string; basePrice: number }> }
+      | { scope: 'CATEGORY'; categoryId: string; categoryName: string; items: Array<{ id: string; name: string; basePrice: number }> }
+      | { scope: 'ITEMS'; items: Array<{ id: string; name: string; basePrice: number }> };
+    // Back-compat shims for older clients.
+    getItemId: string | null;
+    getItemName: string;
+    quantity: number;
+  }>;
   coupon?: { id: string; code: string; name: string; amount: number };
   reward?: { points: number; amount: number };
   // Totals
@@ -89,6 +112,27 @@ export class PricingService {
     const gstOn = !!outlet.gstApplicable;
     const outletDefaultPct = gstOn ? Number(outlet.gstPercent ?? 0) : 0;
 
+    // Resolve viewer's customer tag (for tag-price overrides) and the
+    // table's type (for section-price overrides). Identical to what
+    // OrdersService.create does — without these the quote total wouldn't
+    // match the order total and the customer would be charged the wrong
+    // amount via Razorpay.
+    let viewerTagId: string | null = null;
+    if (input.customerId) {
+      const a = await this.prisma.customerTagAssignment.findUnique({
+        where: { userId_outletId: { userId: input.customerId, outletId: input.outletId } },
+      });
+      viewerTagId = a?.customerTagId ?? null;
+    }
+    let tableTypeId: string | null = null;
+    if (input.tableId) {
+      const t = await this.prisma.table.findUnique({
+        where: { id: input.tableId },
+        select: { tableTypeId: true, outletId: true },
+      });
+      if (t?.outletId === input.outletId) tableTypeId = t.tableTypeId;
+    }
+
     // 1. Resolve lines → price + category + subcategory. Bundles are just
     //    items where isBundle=true, so the same lookup covers both — the
     //    parent Item.basePrice is the bundle price.
@@ -102,6 +146,12 @@ export class PricingService {
         select: {
           id: true, name: true, basePrice: true, gstRate: true,
           subcategoryId: true, subcategory: { select: { categoryId: true } },
+          customerTagPrices: viewerTagId
+            ? { where: { customerTagId: viewerTagId } }
+            : false,
+          tableTypePrices: tableTypeId
+            ? { where: { tableTypeId } }
+            : false,
         },
       });
       if (!item) throw new BadRequestException('Item not found');
@@ -110,6 +160,36 @@ export class PricingService {
         const v = await this.prisma.variant.findUnique({ where: { id: l.variantId }, select: { price: true } });
         if (v) unit = Number(v.price);
       }
+      // Price-override precedence (same as resolveOrderItems): CustomerTag
+      // > TableType > variant > basePrice. A tagged customer sees their
+      // tag price on the menu; the quote must match.
+      const ctPrice = viewerTagId
+        ? (item as any).customerTagPrices?.find(
+            (p: any) =>
+              p.customerTagId === viewerTagId &&
+              (l.variantId ? p.variantId === l.variantId : !p.variantId),
+          )
+        : null;
+      const ttPrice = tableTypeId
+        ? (item as any).tableTypePrices?.find(
+            (p: any) =>
+              p.tableTypeId === tableTypeId &&
+              (l.variantId ? p.variantId === l.variantId : !p.variantId),
+          )
+        : null;
+      if (ctPrice?.price != null) unit = Number(ctPrice.price);
+      else if (ttPrice?.price != null) unit = Number(ttPrice.price);
+
+      // GST rate: TableType > CustomerTag > item default > outlet fallback
+      // (mirrors resolveOrderItems).
+      let gstRate = 0;
+      if (gstOn) {
+        if (ttPrice?.gstRate != null) gstRate = Number(ttPrice.gstRate);
+        else if (ctPrice?.gstRate != null) gstRate = Number(ctPrice.gstRate);
+        else if (item.gstRate != null) gstRate = Number(item.gstRate);
+        else gstRate = outletDefaultPct;
+      }
+
       lines.push({
         itemId: item.id,
         variantId: l.variantId,
@@ -117,7 +197,7 @@ export class PricingService {
         name: item.name,
         unitPrice: unit,
         totalPrice: unit * l.quantity,
-        gstRate: gstOn ? Number(item.gstRate ?? outletDefaultPct) : 0,
+        gstRate,
         categoryId: item.subcategory?.categoryId,
         subcategoryId: item.subcategoryId,
       });
@@ -189,14 +269,93 @@ export class PricingService {
     const activeOffers = await this.offers.activeForOutlet(input.outletId);
     const offerFreebies: Quote['offerFreebies'] = [];
 
+    // Resolve an offer's pool descriptor. ITEM = legacy single item;
+    // ALL / CATEGORY / ITEMS = customer-pick at checkout. ITEMS pool
+    // hydrates names/prices for the modal in one go so the client
+    // doesn't fan out per-id lookups.
+    const buildPool = async (offer: any): Promise<Quote['offerFreebies'][number]['pool'] | null> => {
+      const scope: string | null = offer.getScope ?? (offer.getItemId ? 'ITEM' : null);
+      if (scope === 'ITEM') {
+        if (!offer.getItemId) return null;
+        return { scope: 'ITEM', itemId: offer.getItemId, itemName: offer.getItem?.name ?? 'Free item' };
+      }
+      // For ALL / CATEGORY / ITEMS we resolve the pool to concrete
+      // items here so the customer picker renders without an extra
+      // round-trip. Cap ALL at 200 items so a sprawling menu doesn't
+      // bloat the quote response.
+      if (scope === 'ALL') {
+        const items = await this.prisma.item.findMany({
+          where: {
+            isAvailable: true,
+            isDisplayed: true,
+            subcategory: { category: { outletId: input.outletId } },
+          },
+          select: { id: true, name: true, basePrice: true },
+          orderBy: { name: 'asc' },
+          take: 200,
+        });
+        return {
+          scope: 'ALL',
+          items: items.map((it) => ({ id: it.id, name: it.name, basePrice: Number(it.basePrice) })),
+        };
+      }
+      if (scope === 'CATEGORY') {
+        if (!offer.getCategoryId) return null;
+        const items = await this.prisma.item.findMany({
+          where: {
+            isAvailable: true,
+            isDisplayed: true,
+            subcategory: { categoryId: offer.getCategoryId },
+          },
+          select: { id: true, name: true, basePrice: true },
+          orderBy: { name: 'asc' },
+        });
+        return {
+          scope: 'CATEGORY',
+          categoryId: offer.getCategoryId,
+          categoryName: offer.getCategory?.name ?? 'Category',
+          items: items.map((it) => ({ id: it.id, name: it.name, basePrice: Number(it.basePrice) })),
+        };
+      }
+      if (scope === 'ITEMS') {
+        const ids: string[] = Array.isArray(offer.getItemIds) ? offer.getItemIds : [];
+        if (ids.length === 0) return null;
+        const items = await this.prisma.item.findMany({
+          where: { id: { in: ids }, isAvailable: true },
+          select: { id: true, name: true, basePrice: true },
+        });
+        return {
+          scope: 'ITEMS',
+          items: items.map((it) => ({ id: it.id, name: it.name, basePrice: Number(it.basePrice) })),
+        };
+      }
+      return null;
+    };
+
     for (const offer of activeOffers) {
+      // Resolve the offer's eligible-pool descriptor first; if it's
+      // misconfigured (e.g. ITEMS with empty list), skip silently
+      // rather than letting the customer pick from nothing.
+      const pool = await buildPool(offer);
+      if (!pool) continue;
+
+      // Legacy fields the existing customer banner reads.
+      const legacy = pool.scope === 'ITEM'
+        ? { getItemId: pool.itemId, getItemName: pool.itemName }
+        : { getItemId: null, getItemName: pool.scope === 'CATEGORY'
+            ? `Pick from ${pool.categoryName}`
+            : pool.scope === 'ITEMS'
+              ? `Pick ${offer.getQuantity ?? 1} from ${pool.items.length} options`
+              : 'Pick your free item' };
+
       if (offer.triggerType === 'MIN_BILL') {
-        if (rawSubtotal >= Number(offer.minBillAmount ?? 0) && offer.getItemId) {
+        if (rawSubtotal >= Number(offer.minBillAmount ?? 0)) {
           offerFreebies.push({
             offerId: offer.id,
             offerName: offer.name,
-            getItemId: offer.getItemId,
-            getItemName: offer.getItem?.name ?? 'Free item',
+            pickQuantity: offer.getQuantity ?? 1,
+            pool,
+            ...legacy,
             quantity: offer.getQuantity ?? 1,
           });
         }
@@ -204,14 +363,15 @@ export class PricingService {
         const buyQty = lines
           .filter((l) => l.itemId === offer.buyItemId)
           .reduce((s, l) => s + l.quantity, 0);
-        if (offer.buyQuantity && buyQty >= offer.buyQuantity && offer.getItemId) {
+        if (offer.buyQuantity && buyQty >= offer.buyQuantity) {
           const multiples = Math.floor(buyQty / offer.buyQuantity);
           const freebieQty = multiples * (offer.getQuantity ?? 1);
           offerFreebies.push({
             offerId: offer.id,
             offerName: offer.name,
-            getItemId: offer.getItemId,
-            getItemName: offer.getItem?.name ?? 'Free item',
+            pickQuantity: freebieQty,
+            pool,
+            ...legacy,
             quantity: freebieQty,
           });
         }

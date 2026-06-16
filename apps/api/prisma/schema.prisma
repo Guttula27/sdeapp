@@ -15,6 +15,25 @@ enum UserStatus {
   SUSPENDED
 }
 
+// Visibility scope for staff users — controls which admin staff list
+// a user appears on. See User.ownerScope for the full semantics.
+enum UserOwnerScope {
+  PLATFORM
+  BUSINESS
+  OUTLET
+}
+
+// How an item is sold. NUMBER (default) = count-based — qty is "how
+// many of this dish". GRAMS / MILLILITERS = portion-based — the item's
+// variants represent fixed portion sizes (e.g. 100g, 250g, 500g) and
+// the customer picks which portion. Drives admin form layout + how
+// the variant name is auto-formatted.
+enum ItemQuantityUnit {
+  NUMBER
+  GRAMS
+  MILLILITERS
+}
+
 enum BusinessType {
   RESTAURANT
   QSR
@@ -59,6 +78,11 @@ enum OrderItemStatus {
   PENDING
   PREPARING
   READY
+  // Parcel-only intermediate: kitchen finished a dish (READY) and the
+  // parcel desk has boxed it. Once every live item is PACKED the order
+  // auto-rolls to READY_FOR_PICKUP and the customer is notified.
+  // Non-parcel orders skip this state — items go READY → SERVED.
+  PACKED
   SERVED
   CANCELLED
 }
@@ -159,31 +183,40 @@ model User {
   outletId   String?
   outlet     Outlet?   @relation(fields: [outletId], references: [id])
 
-  customerOrders Order[]  @relation("CustomerOrders")
-  staffOrders    Order[]  @relation("StaffOrders")
-  customerClusterOrders ClusterOrder[] @relation("CustomerClusterOrders")
-  customerAlerts CustomerAlert[]
-  sessions       Session[]
-  auditLogs      AuditLog[]
-  kitchenStations KitchenStation[] @relation("StationWorker")
-  serviceStationWorkers ServiceStationWorker[]
+  // Who created this staff member — drives visibility in the admin
+  // staff lists. OUTLET = exclusive to the outlet, hidden from
+  // business-level views. BUSINESS = managed at business level, can
+  // be assigned / reassigned to any outlet under the same business.
+  // PLATFORM = system staff (rare). NULL on legacy rows is treated
+  // as BUSINESS so historical behaviour for pre-cutover staff stays
+  // unchanged.
+  ownerScope UserOwnerScope?
+
+  customerOrders         Order[]                 @relation("CustomerOrders")
+  staffOrders            Order[]                 @relation("StaffOrders")
+  customerClusterOrders  ClusterOrder[]          @relation("CustomerClusterOrders")
+  customerAlerts         CustomerAlert[]
+  sessions               Session[]
+  auditLogs              AuditLog[]
+  kitchenStations        KitchenStation[]        @relation("StationWorker")
+  serviceStationWorkers  ServiceStationWorker[]
   customerTagAssignments CustomerTagAssignment[] @relation("UserCustomerTagAssignments")
-  favorites       Favorite[]
-  outletLinks     OutletCustomer[] @relation("UserOutletLinks")
-  responsibilities UserResponsibility[]
-  orderItemReviews OrderItemReview[] @relation("ReviewByCustomer")
-  reviewReplies    OrderItemReview[] @relation("ReviewReplyBy")
-  couponTargets    CouponCustomer[] @relation("CouponTargets")
-  couponUsages     CouponUsage[]    @relation("CouponUsages")
-  rewardAccount    CustomerRewardAccount? @relation("RewardAccount")
-  rewardTransactions RewardTransaction[] @relation("RewardTransactions")
-  orderStatusChanges OrderStatusHistory[] @relation("OrderStatusHistoryActor")
-  preferredUpiApp String?
-  profileImageUrl String? @db.Text
-  alertRingtone   String? @default("chime")
-  alertVolume     Int?    @default(70)
-  mustChangePassword Boolean @default(false)
-  preferredLanguage String? @default("en")
+  favorites              Favorite[]
+  outletLinks            OutletCustomer[]        @relation("UserOutletLinks")
+  responsibilities       UserResponsibility[]
+  orderItemReviews       OrderItemReview[]       @relation("ReviewByCustomer")
+  reviewReplies          OrderItemReview[]       @relation("ReviewReplyBy")
+  couponTargets          CouponCustomer[]        @relation("CouponTargets")
+  couponUsages           CouponUsage[]           @relation("CouponUsages")
+  rewardAccount          CustomerRewardAccount?  @relation("RewardAccount")
+  rewardTransactions     RewardTransaction[]     @relation("RewardTransactions")
+  orderStatusChanges     OrderStatusHistory[]    @relation("OrderStatusHistoryActor")
+  preferredUpiApp        String?
+  profileImageUrl        String?                 @db.MediumText
+  alertRingtone          String?                 @default("chime")
+  alertVolume            Int?                    @default(70)
+  mustChangePassword     Boolean                 @default(false)
+  preferredLanguage      String?                 @default("en")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -192,14 +225,14 @@ model User {
 }
 
 model Role {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   name        String
   description String?
-  isSystem    Boolean  @default(false)
+  isSystem    Boolean   @default(false)
   // Template roles live at platform scope (businessId null) and act as
   // defaults that get cloned into each new business's role of the same name.
   // Edits to a template cascade to every per-business copy.
-  isTemplate  Boolean  @default(false)
+  isTemplate  Boolean   @default(false)
   businessId  String?
   business    Business? @relation(fields: [businessId], references: [id])
   outletId    String?
@@ -217,8 +250,8 @@ model Role {
 }
 
 model Responsibility {
-  id          String @id @default(cuid())
-  name        String @unique
+  id          String  @id @default(cuid())
+  name        String  @unique
   description String?
   module      String
 
@@ -235,8 +268,8 @@ model UserResponsibility {
   // false → revoke this permission from the user's role
   granted          Boolean
 
-  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  responsibility   Responsibility @relation(fields: [responsibilityId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  responsibility Responsibility @relation(fields: [responsibilityId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -247,9 +280,9 @@ model UserResponsibility {
 
 // ─── Internationalisation ─────────────────────────────────
 model Language {
-  code       String  @id              // ISO 639-1, e.g. "en", "hi", "ta"
-  name       String                   // English display name, e.g. "Hindi"
-  nativeName String                   // Native display name, e.g. "हिन्दी"
+  code       String  @id // ISO 639-1, e.g. "en", "hi", "ta"
+  name       String // English display name, e.g. "Hindi"
+  nativeName String // Native display name, e.g. "हिन्दी"
   isEnabled  Boolean @default(true)
 
   translations Translation[]
@@ -261,12 +294,12 @@ model Language {
 }
 
 model Translation {
-  entityType   String     // e.g. "Item", "Category", "Outlet", "Order.itemSnapshot"
+  entityType   String // e.g. "Item", "Category", "Outlet", "Order.itemSnapshot"
   entityId     String
-  fieldName    String     // e.g. "name", "description", "address"
+  fieldName    String // e.g. "name", "description", "address"
   languageCode String
-  value        String     @db.Text
-  source       String     @default("auto") // "auto" | "manual"
+  value        String @db.Text
+  source       String @default("auto") // "auto" | "manual"
 
   language Language @relation(fields: [languageCode], references: [code], onDelete: Cascade)
 
@@ -341,29 +374,29 @@ model Facility {
 }
 
 model Business {
-  id           String       @id @default(cuid())
-  name         String
-  description  String?      @db.VarChar(250)
-  address      String?
-  addressLine1 String?
-  addressLine2 String?
-  city         String?
-  state        String?
-  pincode      String?
-  country      String?      @default("India")
-  mapsLocation String?
-  gstNumber    String?
-  upiId        String?
-  businessType BusinessType
-  logoUrl      String?  @db.Text
-  thumbnailUrl String?  @db.Text
-  primaryImageUrl String? @db.Text
-  status       UserStatus   @default(ACTIVE)
+  id              String       @id @default(cuid())
+  name            String
+  description     String?      @db.VarChar(250)
+  address         String?
+  addressLine1    String?
+  addressLine2    String?
+  city            String?
+  state           String?
+  pincode         String?
+  country         String?      @default("India")
+  mapsLocation    String?
+  gstNumber       String?
+  upiId           String?
+  businessType    BusinessType
+  logoUrl         String?      @db.MediumText
+  thumbnailUrl    String?      @db.MediumText
+  primaryImageUrl String?      @db.MediumText
+  status          UserStatus   @default(ACTIVE)
 
   // Short, public-shareable identifier (e.g. "BIZ-A4F23C81"). Required for
   // Cluster businesses since they need a QR-resolvable code; backfilled for
   // every business at migration time so the column is uniformly populated.
-  publicCode   String?  @unique @db.VarChar(20)
+  publicCode String? @unique @db.VarChar(20)
 
   // CLUSTER: a Business of category "Cluster" is a logical roof (food court,
   // theatre) that aggregates outlets from other businesses. It owns no outlets
@@ -371,7 +404,7 @@ model Business {
   // member outlets in via the ClusterMember join. Customers see all members
   // under one shell with a unified cart and a single payment that the backend
   // splits per outlet (Razorpay Route).
-  isCluster    Boolean  @default(false)
+  isCluster Boolean @default(false)
 
   // When true the business uses multiple menus (e.g. Breakfast / Lunch / Dinner).
   // When false a single hidden "Main Menu" is used and the UI hides menu tabs.
@@ -422,7 +455,7 @@ model BusinessImage {
   id           String   @id @default(cuid())
   businessId   String
   business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  url          String   @db.Text
+  url          String   @db.MediumText
   displayOrder Int      @default(0)
 
   createdAt DateTime @default(now())
@@ -451,17 +484,23 @@ model Outlet {
   description     String?    @db.VarChar(250)
   phone           String?
   gstNumber       String?
+  // FSSAI registration / license number printed on the customer bill
+  // (mandatory under FSSAI rules for any business serving food).
+  // 14-digit numeric in production but kept as a free-text column so a
+  // central kitchen's CKL number or a manufacturing licence shape can
+  // also be entered without schema gymnastics.
+  fssaiNumber     String?    @db.VarChar(32)
   upiId           String?
-  logoUrl         String?    @db.Text
-  primaryImageUrl String?    @db.Text
+  logoUrl         String?    @db.MediumText
+  primaryImageUrl String?    @db.MediumText
   isActive        Boolean    @default(true)
 
   // Outlet-level operations defaults. Parcel is available everywhere by
   // default — the obsolete SELF_SERVICE_PARCEL outlet type has been retired
   // and counter / hybrid outlets all offer parcel out of the box.
-  defaultPrepTime       Int?
-  parcelChargeEnabled   Boolean @default(true)
-  defaultParcelCharge   Decimal @db.Decimal(10, 2) @default(0)
+  defaultPrepTime     Int?
+  parcelChargeEnabled Boolean @default(true)
+  defaultParcelCharge Decimal @default(0) @db.Decimal(10, 2)
 
   // Persistent order sequence (continuous across days). orderNumber on each
   // created order pulls + increments this counter atomically. Token counter is
@@ -480,7 +519,7 @@ model Outlet {
 
   // GST / tax config
   gstApplicable    Boolean @default(false)
-  gstPercent       Decimal @db.Decimal(5, 2) @default(0)
+  gstPercent       Decimal @default(0) @db.Decimal(5, 2)
   priceIncludesGst Boolean @default(false)
 
   // Razorpay Route — the outlet's Razorpay Linked Account (LA) ID. When the
@@ -489,29 +528,29 @@ model Outlet {
   // In stubbed test mode (RAZORPAY_STUB_TRANSFERS=true) the split is computed
   // and persisted on ClusterOrder.routeTransfers, but no real transfer fires.
   razorpayLinkedAccountId String?
-  businessId String
-  business   Business   @relation(fields: [businessId], references: [id])
-  facilityId String?
-  facility   Facility?  @relation(fields: [facilityId], references: [id])
+  businessId              String
+  business                Business  @relation(fields: [businessId], references: [id])
+  facilityId              String?
+  facility                Facility? @relation(fields: [facilityId], references: [id])
 
-  users      User[]
-  sections   Section[]
-  categories Category[]
-  orders     Order[]
-  tables     Table[]
-  qrCodes    QRCode[]
-  kitchenStations KitchenStation[]
-  serviceStations ServiceStation[]
-  customerTags CustomerTag[]
+  users                  User[]
+  sections               Section[]
+  categories             Category[]
+  orders                 Order[]
+  tables                 Table[]
+  qrCodes                QRCode[]
+  kitchenStations        KitchenStation[]
+  serviceStations        ServiceStation[]
+  customerTags           CustomerTag[]
   customerTagAssignments CustomerTagAssignment[] @relation("OutletCustomerTagAssignments")
-  toppings   Topping[]
-  images     OutletImage[]
-  hours      OutletHour[]
-  tableTypes TableType[]
-  customerLinks OutletCustomer[] @relation("OutletCustomerLinks")
-  roles         Role[]
-  menus         OutletMenu[]
-  messageTemplates MessageTemplate[]
+  toppings               Topping[]
+  images                 OutletImage[]
+  hours                  OutletHour[]
+  tableTypes             TableType[]
+  customerLinks          OutletCustomer[]        @relation("OutletCustomerLinks")
+  roles                  Role[]
+  menus                  OutletMenu[]
+  messageTemplates       MessageTemplate[]
 
   // 1:1 with ClusterMember (the join row makes outletId unique, so an
   // outlet is in at most one cluster at a time — "cluster-exclusive while
@@ -528,8 +567,8 @@ model Outlet {
   // assigned to it. When `kitchenAllowManualPrint` is on, station staff can
   // tap a Print button on a ticket to print on demand. Both default off so
   // outlets opt-in explicitly.
-  kitchenAutoPrint         Boolean @default(false)
-  kitchenAllowManualPrint  Boolean @default(false)
+  kitchenAutoPrint        Boolean @default(false)
+  kitchenAllowManualPrint Boolean @default(false)
 
   // Customer-receipt printing. Mirrors the kitchen pair above but
   // routes to a single dedicated `receiptPrinterId` (the front-of-
@@ -537,8 +576,8 @@ model Outlet {
   // moment an order is created/paid; receiptAllowManualPrint exposes
   // a Print Receipt button so staff can reprint on demand or print
   // only when the customer asks. Both default off.
-  receiptAutoPrint        Boolean @default(false)
-  receiptAllowManualPrint Boolean @default(false)
+  receiptAutoPrint        Boolean  @default(false)
+  receiptAllowManualPrint Boolean  @default(false)
   receiptPrinterId        String?
   receiptPrinter          Printer? @relation("OutletReceiptPrinter", fields: [receiptPrinterId], references: [id], onDelete: SetNull)
 
@@ -562,13 +601,13 @@ model Section {
   outletId String
   outlet   Outlet  @relation(fields: [outletId], references: [id])
 
-  tables          Table[]
-  orders          Order[]
+  tables         Table[]
+  orders         Order[]
   // Menus that are explicitly DISABLED in this section. Absent row =
   // menu visible here (default). Used when a customer scans a table QR
   // and we need to hide certain menus only for that physical area
   // (e.g. "Bar menu" hidden in the "Kids' room" section).
-  menuExclusions  MenuSectionExclusion[]
+  menuExclusions MenuSectionExclusion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -577,19 +616,19 @@ model Section {
 }
 
 model Table {
-  id        String   @id @default(cuid())
-  number    String
-  capacity  Int      @default(4)
-  isActive  Boolean  @default(true)
-  sectionId String?
-  section   Section? @relation(fields: [sectionId], references: [id])
-  outletId  String
-  outlet    Outlet  @relation(fields: [outletId], references: [id])
+  id          String     @id @default(cuid())
+  number      String
+  capacity    Int        @default(4)
+  isActive    Boolean    @default(true)
+  sectionId   String?
+  section     Section?   @relation(fields: [sectionId], references: [id])
+  outletId    String
+  outlet      Outlet     @relation(fields: [outletId], references: [id])
   tableTypeId String?
   tableType   TableType? @relation(fields: [tableTypeId], references: [id])
 
-  qrCode QRCode?
-  orders Order[]
+  qrCode              QRCode?
+  orders              Order[]
   serviceStationLinks ServiceStationTable[]
 
   createdAt DateTime @default(now())
@@ -602,8 +641,9 @@ model QRCode {
   id       String  @id @default(cuid())
   type     QRType
   code     String  @unique
-  // Base64 PNG data URL — easily 5-20KB, so it has to be Text on MySQL.
-  imageUrl String? @db.Text
+  // Base64 PNG data URL — easily 5-20KB. MediumText (16MB) gives plenty
+  // of headroom; older Text (64KB) blew up for high-res phone photos.
+  imageUrl String? @db.MediumText
   isActive Boolean @default(true)
 
   outletId String?
@@ -620,11 +660,11 @@ model QRCode {
 // ─── Menu ─────────────────────────────────────────────────
 
 model Category {
-  id           String    @id @default(cuid())
+  id           String  @id @default(cuid())
   name         String
-  imageUrl     String?   @db.Text
-  displayOrder Int       @default(0)
-  isActive     Boolean   @default(true)
+  imageUrl     String? @db.MediumText
+  displayOrder Int     @default(0)
+  isActive     Boolean @default(true)
 
   // A category belongs to either an outlet (the outlet's live menu) or a
   // business (a template menu outlets can import). Exactly one of outletId /
@@ -644,6 +684,8 @@ model Category {
 
   subcategories Subcategory[]
   discounts     Discount[]
+  // Offers that target this category as the freebie pool (scope=CATEGORY).
+  offerGets     Offer[]       @relation("OfferGetCategory")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -657,7 +699,7 @@ model Category {
 model Subcategory {
   id           String   @id @default(cuid())
   name         String
-  imageUrl     String?   @db.Text
+  imageUrl     String?  @db.MediumText
   displayOrder Int      @default(0)
   isActive     Boolean  @default(true)
   categoryId   String
@@ -679,16 +721,16 @@ model Subcategory {
 // the single menu as implicit. Outlets opt in to specific menus via OutletMenu.
 
 model Menu {
-  id           String  @id @default(cuid())
+  id           String   @id @default(cuid())
   businessId   String
   business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   name         String
-  description  String? @db.VarChar(250)
-  isActive     Boolean @default(true)
-  displayOrder Int     @default(0)
+  description  String?  @db.VarChar(250)
+  isActive     Boolean  @default(true)
+  displayOrder Int      @default(0)
   // Marks the auto-seeded default menu so we can prevent deletion. There's
   // always exactly one isDefault=true per business.
-  isDefault    Boolean @default(false)
+  isDefault    Boolean  @default(false)
 
   timingSlots       MenuTimingSlot[]
   categories        Category[]
@@ -709,10 +751,10 @@ model Menu {
 // ISO: 1=Mon .. 7=Sun. Times are stored as minutes-since-midnight (0..1440)
 // so the API can do clean comparisons without timezone parsing.
 model MenuTimingSlot {
-  id         String @id @default(cuid())
-  menuId     String
-  menu       Menu   @relation(fields: [menuId], references: [id], onDelete: Cascade)
-  dayOfWeek  Int
+  id          String @id @default(cuid())
+  menuId      String
+  menu        Menu   @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int
   startMinute Int
   endMinute   Int
 
@@ -745,12 +787,12 @@ model OutletMenu {
 }
 
 model OutletMenuTimingSlot {
-  id            String @id @default(cuid())
-  outletMenuId  String
-  outletMenu    OutletMenu @relation(fields: [outletMenuId], references: [id], onDelete: Cascade)
-  dayOfWeek     Int
-  startMinute   Int
-  endMinute     Int
+  id           String     @id @default(cuid())
+  outletMenuId String
+  outletMenu   OutletMenu @relation(fields: [outletMenuId], references: [id], onDelete: Cascade)
+  dayOfWeek    Int
+  startMinute  Int
+  endMinute    Int
 
   @@index([outletMenuId, dayOfWeek])
   @@map("paynpik_outlet_menu_timing_slots")
@@ -763,36 +805,41 @@ enum FoodGrade {
 }
 
 model Item {
-  id               String      @id @default(cuid())
-  name             String
-  description      String?
-  shortDescription String?     @db.VarChar(50)
-  longDescription  String?     @db.VarChar(250)
-  thumbnailUrl     String?
-  imageUrl         String? @db.Text
-  basePrice        Decimal     @db.Decimal(10, 2)
+  id                    String            @id @default(cuid())
+  name                  String
+  description           String?
+  shortDescription      String?           @db.VarChar(50)
+  longDescription       String?           @db.VarChar(250)
+  thumbnailUrl          String?           @db.MediumText
+  imageUrl              String?           @db.MediumText
+  basePrice             Decimal           @db.Decimal(10, 2)
   // Default GST % at item level. Used unless overridden per customer-tag or
   // per table-type (CustomerTagPrice.gstRate / TableTypePrice.gstRate). If
   // null, falls back to outlet's gstPercent.
-  gstRate          Decimal?    @db.Decimal(5, 2)
-  parcelAvailable  Boolean     @default(true)
-  useCustomParcelCharge Boolean @default(false)
-  parcelCharge     Decimal?    @db.Decimal(10, 2)
-  preparationTime  Int?
-  foodGrade        FoodGrade   @default(VEG)
-  isAvailable      Boolean     @default(true)
-  isDisplayed      Boolean     @default(true)
-  isPopular        Boolean     @default(false)
-  isSpecial        Boolean     @default(false)
+  gstRate               Decimal?          @db.Decimal(5, 2)
+  parcelAvailable       Boolean           @default(true)
+  useCustomParcelCharge Boolean           @default(false)
+  parcelCharge          Decimal?          @db.Decimal(10, 2)
+  preparationTime       Int?
+  foodGrade             FoodGrade         @default(VEG)
+  isAvailable           Boolean           @default(true)
+  isDisplayed           Boolean           @default(true)
+  isPopular             Boolean           @default(false)
+  isSpecial             Boolean           @default(false)
   // Limited-stock mode: when true, this item tracks `availableQuantity` and is
   // auto-flipped to isAvailable=false once stock hits 0. Outlet staff add stock
   // by incrementing (not replacing) via PATCH /items/:id/stock { addQuantity }.
   // When false, the item is unlimited and the count is ignored.
-  hasLimitedStock    Boolean   @default(false)
-  availableQuantity  Int       @default(0)
-  displayOrder     Int         @default(0)
-  subcategoryId    String
-  subcategory      Subcategory @relation(fields: [subcategoryId], references: [id])
+  hasLimitedStock       Boolean           @default(false)
+  availableQuantity     Int               @default(0)
+  // How this item is sold. NULL = NUMBER (legacy default — keeps every
+  // existing item rendered as a count). GRAMS / MILLILITERS turns the
+  // variants list into portion sizes and labels the customer picker
+  // with the unit suffix (e.g. "250g").
+  quantityUnit          ItemQuantityUnit?
+  displayOrder          Int               @default(0)
+  subcategoryId         String
+  subcategory           Subcategory       @relation(fields: [subcategoryId], references: [id])
 
   kitchenStationId String?
   kitchenStation   KitchenStation? @relation(fields: [kitchenStationId], references: [id])
@@ -802,29 +849,29 @@ model Item {
   // subcategory and inherit every Item feature (variants, customer-tag /
   // table-type price overrides, visibility, limited stock, QR, etc.). The
   // only difference is the expansion at order time.
-  isBundle Boolean @default(false)
+  isBundle            Boolean @default(false)
   // Customer-choice bundles: when set (>0), the customer must pick exactly
   // this many child rows out of the bundleChildren list at order time. Null
   // or 0 = legacy behavior (all children auto-included). Must be ≤ number
   // of configured children; admin form enforces this.
   maxBundleSelections Int?
 
-  variants   Variant[]
-  options    Option[]
-  orderItems OrderItem[]
-  orderItemsAsBundle OrderItem[] @relation("BundleParent")
-  reviews    OrderItemReview[]
-  tags       ItemTag[]
-  customerTagPrices CustomerTagPrice[]
-  tableTypePrices   TableTypePrice[]
-  images       ItemImage[]
-  itemToppings ItemTopping[]
-  favorites    Favorite[]
-  discounts    Discount[]
-  bundleChildren ItemBundleChild[] @relation("BundleParentItem")
-  bundleParentLinks ItemBundleChild[] @relation("BundleChildItem")
-  offerBuyFor  Offer[]      @relation("OfferBuyItem")
-  offerGetFor  Offer[]      @relation("OfferGetItem")
+  variants           Variant[]
+  options            Option[]
+  orderItems         OrderItem[]
+  orderItemsAsBundle OrderItem[]        @relation("BundleParent")
+  reviews            OrderItemReview[]
+  tags               ItemTag[]
+  customerTagPrices  CustomerTagPrice[]
+  tableTypePrices    TableTypePrice[]
+  images             ItemImage[]
+  itemToppings       ItemTopping[]
+  favorites          Favorite[]
+  discounts          Discount[]
+  bundleChildren     ItemBundleChild[]  @relation("BundleParentItem")
+  bundleParentLinks  ItemBundleChild[]  @relation("BundleChildItem")
+  offerBuyFor        Offer[]            @relation("OfferBuyItem")
+  offerGetFor        Offer[]            @relation("OfferGetItem")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -833,11 +880,11 @@ model Item {
 }
 
 model ItemImage {
-  id           String   @id @default(cuid())
+  id           String @id @default(cuid())
   itemId       String
-  item         Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  url          String   @db.Text
-  displayOrder Int      @default(0)
+  item         Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  url          String @db.MediumText
+  displayOrder Int    @default(0)
 
   createdAt DateTime @default(now())
 
@@ -851,10 +898,14 @@ model Variant {
   shortDescription String? @db.VarChar(80)
   price            Decimal @db.Decimal(10, 2)
   isAvailable      Boolean @default(true)
+  // Numeric size for portion-based items. Reads in the parent Item's
+  // quantityUnit (so 250 + GRAMS = "250g"). Optional — when null the
+  // variant is treated as a plain-named variant (Small / Medium / Large).
+  unitQuantity     Int?
   itemId           String
   item             Item    @relation(fields: [itemId], references: [id])
 
-  orderItems OrderItem[]
+  orderItems        OrderItem[]
   customerTagPrices CustomerTagPrice[]
   tableTypePrices   TableTypePrice[]
   bundleChildLinks  ItemBundleChild[]
@@ -868,7 +919,7 @@ model Variant {
 model Option {
   id     String  @id @default(cuid())
   name   String
-  price  Decimal @db.Decimal(10, 2) @default(0)
+  price  Decimal @default(0) @db.Decimal(10, 2)
   itemId String
   item   Item    @relation(fields: [itemId], references: [id])
 
@@ -918,10 +969,10 @@ model KitchenStation {
 // the Web Bluetooth API — the address/identifier is stored so the kitchen
 // PWA knows which device to connect to.
 model Printer {
-  id          String  @id @default(cuid())
-  outletId    String
-  outlet      Outlet  @relation(fields: [outletId], references: [id], onDelete: Cascade)
-  name        String
+  id       String @id @default(cuid())
+  outletId String
+  outlet   Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  name     String
 
   // Inverse of Outlet.receiptPrinter — at most one outlet picks this
   // printer as its receipt target. Deleting the printer resets that
@@ -929,16 +980,16 @@ model Printer {
   receiptForOutlets Outlet[] @relation("OutletReceiptPrinter")
   // Connection type. Today only 'BLUETOOTH'; kept as a string column so we
   // can add wifi/USB later without an enum migration.
-  connection  String  @db.VarChar(20) @default("BLUETOOTH")
+  connection        String   @default("BLUETOOTH") @db.VarChar(20)
   // Device identifier — bluetooth MAC or Web-Bluetooth `deviceId`. Free-form
   // because the value is platform-dependent (Web Bluetooth returns an opaque
   // id, native bridges expose a MAC).
-  address     String? @db.VarChar(128)
+  address           String?  @db.VarChar(128)
   // Optional printer model/notes for the admin's reference.
-  model       String?
-  isActive    Boolean @default(true)
+  model             String?
+  isActive          Boolean  @default(true)
 
-  stations    KitchenStation[]
+  stations KitchenStation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -952,9 +1003,9 @@ model Printer {
 // selected at checkout) and Discount (price reduction on items/categories).
 // Offers auto-trigger when a cart meets the rule and add a ₹0-priced line.
 model Offer {
-  id            String   @id @default(cuid())
-  name          String
-  description   String?
+  id          String  @id @default(cuid())
+  name        String
+  description String?
 
   businessId String
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -968,23 +1019,38 @@ model Offer {
   minBillAmount Decimal? @db.Decimal(10, 2)
 
   buyItemId    String?
-  buyItem      Item?    @relation("OfferBuyItem", fields: [buyItemId], references: [id])
+  buyItem      Item?   @relation("OfferBuyItem", fields: [buyItemId], references: [id])
   buyVariantId String?
   buyQuantity  Int?
 
+  // Legacy single-item path — set with getScope=null. Kept for
+  // back-compat; new offers should prefer the multi-option fields below.
   getItemId    String?
-  getItem      Item?    @relation("OfferGetItem", fields: [getItemId], references: [id])
+  getItem      Item?   @relation("OfferGetItem", fields: [getItemId], references: [id])
   getVariantId String?
   getQuantity  Int?
 
-  // Schedule
-  validFrom    DateTime?
-  validUntil   DateTime?
-  daysOfWeek   String?  @db.VarChar(20)  // CSV, ISO 1=Mon..7=Sun ("1,2,3,4,5")
-  startMinute  Int?     // minutes-since-midnight
-  endMinute    Int?
+  // Multi-option freebie pool. The admin picks how the customer can
+  // choose their freebies:
+  //   ALL      → every active outlet item is eligible
+  //   CATEGORY → only items inside getCategoryId qualify
+  //   ITEMS    → only items whose id is in getItemIds[] qualify
+  //   null     → legacy single-item path (uses getItemId above)
+  // The customer then picks `getQuantity` items from the eligible pool
+  // (duplicates allowed) at checkout.
+  getScope      String?   @db.VarChar(10)
+  getCategoryId String?
+  getCategory   Category? @relation("OfferGetCategory", fields: [getCategoryId], references: [id])
+  getItemIds    Json?
 
-  isActive     Boolean  @default(true)
+  // Schedule
+  validFrom   DateTime?
+  validUntil  DateTime?
+  daysOfWeek  String?   @db.VarChar(20) // CSV, ISO 1=Mon..7=Sun ("1,2,3,4,5")
+  startMinute Int? // minutes-since-midnight
+  endMinute   Int?
+
+  isActive Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -998,26 +1064,26 @@ model Offer {
 // ─── Orders ──────────────────────────────────────────────
 
 model Order {
-  id          String      @id @default(cuid())
-  orderNumber String      @unique
-  tokenNumber Int?
-  status      OrderStatus @default(CREATED)
-  isParcel    Boolean     @default(false)
+  id              String      @id @default(cuid())
+  orderNumber     String      @unique
+  tokenNumber     Int?
+  status          OrderStatus @default(CREATED)
+  isParcel        Boolean     @default(false)
   // True for Dine-in Postpaid orders: created without payment, accepts
   // additional items until `billRequestedAt` is set (Bill Now). Once set,
   // the order is locked and the Cash/UPI payment flow takes over.
-  isPostpaid       Boolean   @default(false)
-  billRequestedAt  DateTime?
-  notes       String?
+  isPostpaid      Boolean     @default(false)
+  billRequestedAt DateTime?
+  notes           String?
 
   subtotal       Decimal @db.Decimal(10, 2)
-  taxAmount      Decimal @db.Decimal(10, 2) @default(0)
+  taxAmount      Decimal @default(0) @db.Decimal(10, 2)
   // SGST + CGST always sum to taxAmount; stored explicitly for cleaner
   // reporting / invoice display. For intra-state Indian GST they're 50/50.
-  sgstAmount     Decimal @db.Decimal(10, 2) @default(0)
-  cgstAmount     Decimal @db.Decimal(10, 2) @default(0)
-  parcelAmount   Decimal @db.Decimal(10, 2) @default(0)
-  discountAmount Decimal @db.Decimal(10, 2) @default(0)
+  sgstAmount     Decimal @default(0) @db.Decimal(10, 2)
+  cgstAmount     Decimal @default(0) @db.Decimal(10, 2)
+  parcelAmount   Decimal @default(0) @db.Decimal(10, 2)
+  discountAmount Decimal @default(0) @db.Decimal(10, 2)
   totalAmount    Decimal @db.Decimal(10, 2)
 
   outletId   String
@@ -1045,15 +1111,24 @@ model Order {
   // which point activeSequence auto-advances. `sequenceLabels` stores the
   // display name per course as JSON, e.g. {"1":"Starter","2":"Main"}.
   // Items with sequenceNumber=null are always active (default behaviour).
-  activeSequence  Int   @default(1)
-  sequenceLabels  Json?
+  activeSequence Int   @default(1)
+  sequenceLabels Json?
 
-  items         OrderItem[]
-  payments      Payment[]
-  statusHistory OrderStatusHistory[]
-  disputes      Dispute[]
+  // Frozen outlet header for the receipt — captured at order creation so
+  // a historical bill always prints the address / GSTIN / FSSAI / phone
+  // the outlet had at the time, even after the outlet moves or updates
+  // its compliance numbers. Shape mirrors the receipt's outlet block:
+  // { name, addressLine1, addressLine2, city, state, pincode, gstNumber,
+  //   fssaiNumber, phone, logoUrl }. Nullable for legacy rows — the
+  //   receipt falls back to the live outlet relation when missing.
+  outletSnapshot Json?
+
+  items          OrderItem[]
+  payments       Payment[]
+  statusHistory  OrderStatusHistory[]
+  disputes       Dispute[]
   customerAlerts CustomerAlert[]
-  couponUsages  CouponUsage[]
+  couponUsages   CouponUsage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1073,14 +1148,14 @@ model Order {
 // admins can edit them through the UI instead of redeploying with new
 // env vars.
 model PlatformSettings {
-  id                 String   @id @default("singleton")
+  id                 String  @id @default("singleton")
   // Default fee % applied to the order total on every Razorpay Route
   // payment. 0 = no fee (outlet receives the full ticket). Per-business
   // overrides on Business take precedence when set.
-  platformFeePercent Decimal  @default(0) @db.Decimal(5, 2)
+  platformFeePercent Decimal @default(0) @db.Decimal(5, 2)
   // Minimum fee in INR. If percent × total falls below this floor, the
   // floor is charged instead.
-  platformFeeMinimum Decimal  @default(0) @db.Decimal(10, 2)
+  platformFeeMinimum Decimal @default(0) @db.Decimal(10, 2)
 
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
@@ -1095,8 +1170,8 @@ model PlatformSettings {
 model MenuSectionExclusion {
   menuId    String
   sectionId String
-  menu      Menu    @relation(fields: [menuId], references: [id], onDelete: Cascade)
-  section   Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  menu      Menu     @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  section   Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 
   @@id([menuId, sectionId])
@@ -1125,36 +1200,36 @@ model ClusterMember {
 // transferId?, status }. In stubbed test mode the transfer is recorded but
 // not actually executed against Razorpay.
 model ClusterOrder {
-  id                  String   @id @default(cuid())
-  clusterOrderNumber  String   @unique
-  clusterBusinessId   String
-  clusterBusiness     Business @relation("ClusterOrders", fields: [clusterBusinessId], references: [id])
-  customerId          String?
-  customer            User?    @relation("CustomerClusterOrders", fields: [customerId], references: [id])
+  id                 String   @id @default(cuid())
+  clusterOrderNumber String   @unique
+  clusterBusinessId  String
+  clusterBusiness    Business @relation("ClusterOrders", fields: [clusterBusinessId], references: [id])
+  customerId         String?
+  customer           User?    @relation("CustomerClusterOrders", fields: [customerId], references: [id])
   // The cluster's shared seating table, if the customer scanned a table QR.
   // Stored as plain string rather than FK because cluster tables may belong
   // to any member outlet — the child Order keeps the canonical FK.
-  tableId             String?
+  tableId            String?
 
-  subtotal            Decimal       @db.Decimal(10, 2)
-  taxAmount           Decimal       @db.Decimal(10, 2) @default(0)
-  parcelAmount        Decimal       @db.Decimal(10, 2) @default(0)
-  totalAmount         Decimal       @db.Decimal(10, 2)
+  subtotal     Decimal @db.Decimal(10, 2)
+  taxAmount    Decimal @default(0) @db.Decimal(10, 2)
+  parcelAmount Decimal @default(0) @db.Decimal(10, 2)
+  totalAmount  Decimal @db.Decimal(10, 2)
 
   // 'RAZORPAY' (real gateway) or 'BYPASS' (testing). Kept as a free-form
   // string rather than extending the hot PaymentMode enum used by the
   // single-outlet Payment model.
-  paymentMethod       String?       @db.VarChar(20)
-  paymentStatus       PaymentStatus @default(PENDING)
-  razorpayOrderId     String?
-  razorpayPaymentId   String?
-  razorpaySignature   String?       @db.Text
-  routeTransfers      Json          @default("[]")
+  paymentMethod     String?       @db.VarChar(20)
+  paymentStatus     PaymentStatus @default(PENDING)
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  razorpaySignature String?       @db.Text
+  routeTransfers    Json          @default("[]")
 
-  childOrders         Order[]       @relation("ClusterChildren")
+  childOrders Order[] @relation("ClusterChildren")
 
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([clusterBusinessId])
   @@index([customerId])
@@ -1162,21 +1237,28 @@ model ClusterOrder {
 }
 
 model OrderItem {
-  id         String          @id @default(cuid())
-  quantity   Int
-  unitPrice  Decimal         @db.Decimal(10, 2)
-  totalPrice Decimal         @db.Decimal(10, 2)
+  id                  String          @id @default(cuid())
+  quantity            Int
+  unitPrice           Decimal         @db.Decimal(10, 2)
+  totalPrice          Decimal         @db.Decimal(10, 2)
   // Resolved GST % captured at order time (sticky against future config changes).
-  gstRate    Decimal         @db.Decimal(5, 2) @default(0)
-  gstAmount  Decimal         @db.Decimal(10, 2) @default(0)
-  notes      String?
-  status     OrderItemStatus @default(PENDING)
-  orderId    String
-  order      Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  itemId     String
-  item       Item            @relation(fields: [itemId], references: [id])
-  variantId  String?
-  variant    Variant?        @relation(fields: [variantId], references: [id])
+  gstRate             Decimal         @default(0) @db.Decimal(5, 2)
+  gstAmount           Decimal         @default(0) @db.Decimal(10, 2)
+  notes               String?
+  status              OrderItemStatus @default(PENDING)
+  // Frozen labels — snapshotted at order-creation time so a historical
+  // receipt prints the name the customer actually ordered, even if the
+  // Item / Variant has since been renamed or deleted. The Prisma
+  // relations are kept so the kitchen + admin views can still link
+  // through to live menu state. Nullable for legacy rows.
+  itemNameSnapshot    String?         @db.VarChar(255)
+  variantNameSnapshot String?         @db.VarChar(255)
+  orderId             String
+  order               Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId              String
+  item                Item            @relation(fields: [itemId], references: [id])
+  variantId           String?
+  variant             Variant?        @relation(fields: [variantId], references: [id])
 
   // Menu snapshot — resolved at order-time via item->subcategory->category.menuId.
   // Frozen even if the category later moves to a different menu, so historical
@@ -1189,8 +1271,8 @@ model OrderItem {
   // child rows share the same bundleId (= the parent Item.id) so the
   // kitchen ticket + receipt can group them under the bundle's name. Only
   // the first child carries the bundle's price; siblings have totalPrice=0.
-  bundleId String?
-  bundleParent Item? @relation("BundleParent", fields: [bundleId], references: [id])
+  bundleId     String?
+  bundleParent Item?   @relation("BundleParent", fields: [bundleId], references: [id])
 
   // Course position (1-based). Null = no sequencing applied — the item is
   // always live. See Order.activeSequence for the gating rule.
@@ -1222,10 +1304,10 @@ model OrderItemReview {
   comment     String?   @db.Text
 
   // Owner/manager response. Reply is optional; once set, repliedAt is too.
-  replyText      String?   @db.Text
-  replyByUserId  String?
-  replyBy        User?     @relation("ReviewReplyBy", fields: [replyByUserId], references: [id])
-  repliedAt      DateTime?
+  replyText     String?   @db.Text
+  replyByUserId String?
+  replyBy       User?     @relation("ReviewReplyBy", fields: [replyByUserId], references: [id])
+  repliedAt     DateTime?
 
   // Payback: links to a Payment row marked isRefund=true. paybackAmount is
   // duplicated for fast reads; the Payment row is the source of truth.
@@ -1233,8 +1315,8 @@ model OrderItemReview {
   paybackPaymentId String?  @unique
   paybackPayment   Payment? @relation(fields: [paybackPaymentId], references: [id])
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([itemId])
   @@index([customerId])
@@ -1242,16 +1324,16 @@ model OrderItemReview {
 }
 
 model OrderStatusHistory {
-  id        String      @id @default(cuid())
-  status    OrderStatus
+  id            String      @id @default(cuid())
+  status        OrderStatus
   // Free-text user id of the staff (or null for system rollups). Real
   // FK is on the relation below — keep the field nullable + SET NULL
   // so deleting a staff user doesn't break the audit trail.
-  changedBy String?
-  changedByUser User? @relation("OrderStatusHistoryActor", fields: [changedBy], references: [id], onDelete: SetNull)
-  notes     String?
-  orderId   String
-  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  changedBy     String?
+  changedByUser User?       @relation("OrderStatusHistoryActor", fields: [changedBy], references: [id], onDelete: SetNull)
+  notes         String?
+  orderId       String
+  order         Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
@@ -1273,7 +1355,7 @@ model Payment {
   orderId         String
   order           Order         @relation(fields: [orderId], references: [id])
 
-  reviewPayback   OrderItemReview?
+  reviewPayback OrderItemReview?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1301,7 +1383,7 @@ model Dispute {
 // ─── Inventory ───────────────────────────────────────────
 
 model MaterialCategory {
-  id         String   @id @default(cuid())
+  id         String             @id @default(cuid())
   name       String
   businessId String
   parentId   String?
@@ -1313,14 +1395,14 @@ model MaterialCategory {
 }
 
 model Material {
-  id           String  @id @default(cuid())
+  id           String            @id @default(cuid())
   name         String
   unit         String
-  currentStock Decimal @db.Decimal(10, 3) @default(0)
-  reorderLevel Decimal? @db.Decimal(10, 3)
-  costPerUnit  Decimal? @db.Decimal(10, 2)
+  currentStock Decimal           @default(0) @db.Decimal(10, 3)
+  reorderLevel Decimal?          @db.Decimal(10, 3)
+  costPerUnit  Decimal?          @db.Decimal(10, 2)
   businessId   String
-  business     Business @relation(fields: [businessId], references: [id])
+  business     Business          @relation(fields: [businessId], references: [id])
   categoryId   String?
   category     MaterialCategory? @relation(fields: [categoryId], references: [id])
 
@@ -1353,15 +1435,15 @@ model Vendor {
 }
 
 model PurchaseOrder {
-  id            String  @id @default(cuid())
-  poNumber      String  @unique
-  quantity      Decimal @db.Decimal(10, 3)
-  unitPrice     Decimal @db.Decimal(10, 2)
-  totalAmount   Decimal @db.Decimal(10, 2)
-  status        String  @default("PENDING")
-  paymentStatus String  @default("UNPAID")
+  id            String   @id @default(cuid())
+  poNumber      String   @unique
+  quantity      Decimal  @db.Decimal(10, 3)
+  unitPrice     Decimal  @db.Decimal(10, 2)
+  totalAmount   Decimal  @db.Decimal(10, 2)
+  status        String   @default("PENDING")
+  paymentStatus String   @default("UNPAID")
   vendorId      String
-  vendor        Vendor  @relation(fields: [vendorId], references: [id])
+  vendor        Vendor   @relation(fields: [vendorId], references: [id])
   materialId    String
   material      Material @relation(fields: [materialId], references: [id])
 
@@ -1426,11 +1508,11 @@ model Subscription {
 }
 
 model Invoice {
-  id             String   @id @default(cuid())
-  amount         Decimal  @db.Decimal(10, 2)
-  gstAmount      Decimal  @db.Decimal(10, 2)
-  totalAmount    Decimal  @db.Decimal(10, 2)
-  status         String   @default("PENDING")
+  id             String       @id @default(cuid())
+  amount         Decimal      @db.Decimal(10, 2)
+  gstAmount      Decimal      @db.Decimal(10, 2)
+  totalAmount    Decimal      @db.Decimal(10, 2)
+  status         String       @default("PENDING")
   dueDate        DateTime
   paidAt         DateTime?
   subscriptionId String
@@ -1531,12 +1613,12 @@ model CustomerTagAssignment {
 model Topping {
   id           String  @id @default(cuid())
   name         String
-  basePriceAdd Decimal @db.Decimal(10, 2) @default(0)
+  basePriceAdd Decimal @default(0) @db.Decimal(10, 2)
   outletId     String
   outlet       Outlet  @relation(fields: [outletId], references: [id], onDelete: Cascade)
 
-  options    ToppingOption[]
-  itemLinks  ItemTopping[]
+  options   ToppingOption[]
+  itemLinks ItemTopping[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1550,7 +1632,7 @@ model ToppingOption {
   toppingId    String
   topping      Topping @relation(fields: [toppingId], references: [id], onDelete: Cascade)
   name         String
-  priceAdd     Decimal @db.Decimal(10, 2) @default(0)
+  priceAdd     Decimal @default(0) @db.Decimal(10, 2)
   displayOrder Int     @default(0)
 
   createdAt DateTime @default(now())
@@ -1560,11 +1642,11 @@ model ToppingOption {
 }
 
 model ItemTopping {
-  id         String  @id @default(cuid())
+  id         String   @id @default(cuid())
   itemId     String
-  item       Item    @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  item       Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
   toppingId  String
-  topping    Topping @relation(fields: [toppingId], references: [id], onDelete: Cascade)
+  topping    Topping  @relation(fields: [toppingId], references: [id], onDelete: Cascade)
   priceAdd   Decimal? @db.Decimal(10, 2)
   isRequired Boolean  @default(false)
 
@@ -1577,11 +1659,11 @@ model ItemTopping {
 // ─── Outlet imagery + hours ───────────────────────────────
 
 model OutletImage {
-  id           String   @id @default(cuid())
+  id           String @id @default(cuid())
   outletId     String
-  outlet       Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
-  url          String   @db.Text
-  displayOrder Int      @default(0)
+  outlet       Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  url          String @db.MediumText
+  displayOrder Int    @default(0)
 
   createdAt DateTime @default(now())
 
@@ -1623,11 +1705,11 @@ model Favorite {
 
 // ─── Manually-added customers (per outlet) ────────────────
 model OutletCustomer {
-  id        String   @id @default(cuid())
-  outletId  String
-  outlet    Outlet   @relation("OutletCustomerLinks", fields: [outletId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation("UserOutletLinks", fields: [userId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  outletId String
+  outlet   Outlet @relation("OutletCustomerLinks", fields: [outletId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User   @relation("UserOutletLinks", fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
@@ -1645,10 +1727,10 @@ model TableType {
   outletId String
   outlet   Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
 
-  tables Table[]
-  prices TableTypePrice[]
+  tables          Table[]
+  prices          TableTypePrice[]
   serviceStations ServiceStation[]
-  menus  TableTypeMenu[]
+  menus           TableTypeMenu[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1761,20 +1843,20 @@ model ServiceStationTable {
 // "Alerts" in the customer app. `sentVia` records how it was delivered:
 // IN_APP, WHATSAPP, or BOTH.
 model CustomerAlert {
-  id           String   @id @default(cuid())
-  customerId   String
-  customer     User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  orderId      String?
-  order        Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  orderItemId  String?  // not FK'd — order items are mutable and may be cancelled
-  trigger      String   // e.g. ORDER_PLACED, PAYMENT_RECEIVED, ITEM_READY
-  title        String
-  body         String   @db.Text
-  ringtone     String?  // resolved at send-time from User.alertRingtone
-  sentVia      String   @default("IN_APP") // IN_APP | WHATSAPP | BOTH
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  orderId       String?
+  order         Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderItemId   String? // not FK'd — order items are mutable and may be cancelled
+  trigger       String // e.g. ORDER_PLACED, PAYMENT_RECEIVED, ITEM_READY
+  title         String
+  body          String   @db.Text
+  ringtone      String? // resolved at send-time from User.alertRingtone
+  sentVia       String   @default("IN_APP") // IN_APP | WHATSAPP | BOTH
   whatsappError String?
-  isRead       Boolean  @default(false)
-  createdAt    DateTime @default(now())
+  isRead        Boolean  @default(false)
+  createdAt     DateTime @default(now())
 
   @@index([customerId])
   @@index([orderId])
@@ -1790,8 +1872,8 @@ model CustomerAlert {
 model IntegrationConfig {
   id           String             @id @default(cuid())
   channel      IntegrationChannel
-  providerKey  String             // stable key, e.g. "RAZORPAY", "GUPSHUP"
-  providerName String             // display name
+  providerKey  String // stable key, e.g. "RAZORPAY", "GUPSHUP"
+  providerName String // display name
   isDefault    Boolean            @default(false)
   isActive     Boolean            @default(true)
   config       Json               @default("{}")
@@ -1811,29 +1893,29 @@ model IntegrationConfig {
 //   OUTLET    — created by an Outlet Admin, scoped to one outlet
 // Approval flow runs through the platform admin; see TemplateApprovalStatus.
 model MessageTemplate {
-  id          String                 @id @default(cuid())
-  scope       TemplateScope
-  channel     TemplateChannel
-  name        String                 // human-friendly slug, unique within scope
-  category    TemplateCategory       @default(TRANSACTIONAL)
-  trigger     String?                // optional: ORDER_PLACED | ORDER_READY | PAYMENT_RECEIVED | CUSTOM
-  language    String                 @default("en")
-  body        String                 @db.Text
+  id        String           @id @default(cuid())
+  scope     TemplateScope
+  channel   TemplateChannel
+  name      String // human-friendly slug, unique within scope
+  category  TemplateCategory @default(TRANSACTIONAL)
+  trigger   String? // optional: ORDER_PLACED | ORDER_READY | PAYMENT_RECEIVED | CUSTOM
+  language  String           @default("en")
+  body      String           @db.Text
   // Json array of {{var}} names extracted from the body. Json instead of
   // String[] because MySQL has no native array type.
-  variables   Json                   @default("[]")
+  variables Json             @default("[]")
 
-  approvalStatus    TemplateApprovalStatus @default(DRAFT)
-  providerKey       String?          // resolved provider that approved it (e.g. "GUPSHUP")
-  providerTemplateId String?         // id returned by provider once live
-  submittedAt       DateTime?
-  reviewedAt        DateTime?
-  rejectionReason   String?
+  approvalStatus     TemplateApprovalStatus @default(DRAFT)
+  providerKey        String? // resolved provider that approved it (e.g. "GUPSHUP")
+  providerTemplateId String? // id returned by provider once live
+  submittedAt        DateTime?
+  reviewedAt         DateTime?
+  rejectionReason    String?
 
-  businessId String?
-  business   Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  outletId   String?
-  outlet     Outlet?   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  businessId  String?
+  business    Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  outletId    String?
+  outlet      Outlet?   @relation(fields: [outletId], references: [id], onDelete: Cascade)
   createdById String?
 
   createdAt DateTime @default(now())
@@ -1845,7 +1927,6 @@ model MessageTemplate {
   @@map("paynpik_message_templates")
 }
 
-
 // ─── Idempotency (Layer 2 outbox / write deduplication) ────
 // Short-lived cache of write responses keyed by client-supplied
 // Idempotency-Key header. The IdempotencyInterceptor consults this
@@ -1855,7 +1936,7 @@ model MessageTemplate {
 model IdempotencyKey {
   id         String   @id @default(cuid())
   key        String   @unique
-  scope      String   @db.VarChar(191)  // e.g. POST /outlets/:id/orders
+  scope      String   @db.VarChar(191) // e.g. POST /outlets/:id/orders
   statusCode Int
   body       Json
   createdAt  DateTime @default(now())
@@ -1878,17 +1959,17 @@ model IdempotencyKey {
 // targeted at a specific list of customers or open to all. Carry usage
 // caps (per-customer and total).
 model Coupon {
-  id            String   @id @default(cuid())
-  code          String   @db.VarChar(50)
-  name          String
-  description   String?
+  id          String  @id @default(cuid())
+  code        String  @db.VarChar(50)
+  name        String
+  description String?
 
   businessId String
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   outletId   String?
   outlet     Outlet?  @relation(fields: [outletId], references: [id], onDelete: Cascade)
 
-  discountType      String   @db.VarChar(10)  // PERCENT | FIXED
+  discountType      String   @db.VarChar(10) // PERCENT | FIXED
   discountValue     Decimal  @db.Decimal(10, 2)
   minBillAmount     Decimal? @db.Decimal(10, 2)
   maxDiscountAmount Decimal? @db.Decimal(10, 2)
@@ -1901,7 +1982,7 @@ model Coupon {
 
   // ALL: any customer ordering at the outlet may pick it.
   // SPECIFIC: only customers listed in targetCustomers may pick it.
-  targetType String  @db.VarChar(10) @default("ALL")
+  targetType String  @default("ALL") @db.VarChar(10)
   isActive   Boolean @default(true)
 
   targetCustomers CouponCustomer[]
@@ -1965,7 +2046,7 @@ model Discount {
   // Target — exactly one of categoryId / subcategoryId / itemId is set for
   // CATEGORY / SUBCATEGORY / ITEM. All three null for BILL. Validated in
   // service layer.
-  targetType    String   @db.VarChar(20)  // CATEGORY | SUBCATEGORY | ITEM | BILL
+  targetType    String       @db.VarChar(20) // CATEGORY | SUBCATEGORY | ITEM | BILL
   categoryId    String?
   category      Category?    @relation(fields: [categoryId], references: [id])
   subcategoryId String?
@@ -1973,14 +2054,14 @@ model Discount {
   itemId        String?
   item          Item?        @relation(fields: [itemId], references: [id])
 
-  discountType      String   @db.VarChar(10)  // PERCENT | FIXED
+  discountType      String   @db.VarChar(10) // PERCENT | FIXED
   discountValue     Decimal  @db.Decimal(10, 2)
-  minBillAmount     Decimal? @db.Decimal(10, 2)  // only meaningful for BILL
+  minBillAmount     Decimal? @db.Decimal(10, 2) // only meaningful for BILL
   maxDiscountAmount Decimal? @db.Decimal(10, 2)
 
   validFrom   DateTime?
   validUntil  DateTime?
-  daysOfWeek  String?  @db.VarChar(20)  // CSV, ISO 1=Mon..7=Sun
+  daysOfWeek  String?   @db.VarChar(20) // CSV, ISO 1=Mon..7=Sun
   startMinute Int?
   endMinute   Int?
 
@@ -2016,17 +2097,17 @@ model Discount {
 // Quantities multiply: ordering 2 of a bundle whose child entry says
 // quantity=3 expands to 6 prep tickets for that child.
 model ItemBundleChild {
-  id           String  @id @default(cuid())
+  id           String   @id @default(cuid())
   parentItemId String
-  parentItem   Item    @relation("BundleParentItem", fields: [parentItemId], references: [id], onDelete: Cascade)
+  parentItem   Item     @relation("BundleParentItem", fields: [parentItemId], references: [id], onDelete: Cascade)
   childItemId  String
-  childItem    Item    @relation("BundleChildItem", fields: [childItemId], references: [id])
+  childItem    Item     @relation("BundleChildItem", fields: [childItemId], references: [id])
   // Optional variant pin — if the bundle includes "Coffee — Large", store
   // the variant id here. Null = the child item's default (variant-less).
   variantId    String?
   variant      Variant? @relation(fields: [variantId], references: [id])
-  quantity     Int     @default(1)
-  displayOrder Int     @default(0)
+  quantity     Int      @default(1)
+  displayOrder Int      @default(0)
 
   createdAt DateTime @default(now())
 
@@ -2043,18 +2124,18 @@ model ItemBundleChild {
 // platform-wide; an outlet can opt out of accepting redemptions via
 // Outlet.acceptRewardRedemption.
 model RewardConfig {
-  id String @id @default("default")
+  id                   String  @id @default("default")
   // Points earned per ₹1 of order subtotal. e.g., 0.10 → 1 point per ₹10.
-  earnRate Decimal @db.Decimal(8, 4) @default(0.1)
+  earnRate             Decimal @default(0.1) @db.Decimal(8, 4)
   // ₹ value per 1 point. e.g., 1.0 → 1 point = ₹1.
-  redeemRate Decimal @db.Decimal(8, 4) @default(1)
+  redeemRate           Decimal @default(1) @db.Decimal(8, 4)
   // Minimum points needed to redeem at all.
-  minRedemptionPoints Int @default(50)
+  minRedemptionPoints  Int     @default(50)
   // Cap on what % of a bill can be paid via points (0–100).
-  maxRedemptionPercent Decimal @db.Decimal(5, 2) @default(50)
+  maxRedemptionPercent Decimal @default(50) @db.Decimal(5, 2)
   // Days after which earned points expire. Null = never.
-  expiryDays Int?
-  isActive   Boolean @default(true)
+  expiryDays           Int?
+  isActive             Boolean @default(true)
 
   updatedAt DateTime @updatedAt
 
@@ -2062,12 +2143,12 @@ model RewardConfig {
 }
 
 model CustomerRewardAccount {
-  id               String  @id @default(cuid())
-  userId           String  @unique
-  user             User    @relation("RewardAccount", fields: [userId], references: [id], onDelete: Cascade)
-  balance          Int     @default(0)
-  lifetimeEarned   Int     @default(0)
-  lifetimeRedeemed Int     @default(0)
+  id               String @id @default(cuid())
+  userId           String @unique
+  user             User   @relation("RewardAccount", fields: [userId], references: [id], onDelete: Cascade)
+  balance          Int    @default(0)
+  lifetimeEarned   Int    @default(0)
+  lifetimeRedeemed Int    @default(0)
 
   transactions RewardTransaction[]
 
@@ -2078,16 +2159,16 @@ model CustomerRewardAccount {
 }
 
 model RewardTransaction {
-  id        String @id @default(cuid())
+  id        String                @id @default(cuid())
   accountId String
   account   CustomerRewardAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
   userId    String
-  user      User   @relation("RewardTransactions", fields: [userId], references: [id])
+  user      User                  @relation("RewardTransactions", fields: [userId], references: [id])
 
   // EARN | REDEEM | EXPIRE | ADJUST
-  type   String @db.VarChar(10)
+  type         String   @db.VarChar(10)
   // Positive for earn / ADJUST+, negative for redeem / expire / ADJUST−.
-  points Int
+  points       Int
   // ₹ value of the redemption when type=REDEEM (null otherwise).
   amountValue  Decimal? @db.Decimal(10, 2)
   balanceAfter Int
@@ -2097,7 +2178,7 @@ model RewardTransaction {
   outletId       String?
 
   notes     String?
-  expiresAt DateTime?  // only set for EARN
+  expiresAt DateTime? // only set for EARN
 
   createdAt DateTime @default(now())
 

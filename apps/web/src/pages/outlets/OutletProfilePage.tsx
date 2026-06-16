@@ -4,9 +4,11 @@ import toast from 'react-hot-toast';
 import {
   Building2, Phone, Clock, ImagePlus, X as XIcon, Lock, Eye, EyeOff, Save,
   Plus, Trash2, Store, QrCode, Download, Hash, RotateCcw, Printer as PrinterIcon, Bluetooth,
+  Package, CreditCard,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import { downloadQrCard } from '../../utils/qrCard';
+import { getCustomerOrigin } from '../../utils/customerOrigin';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
 import { useUserRole } from '../../hooks/useUserRole';
@@ -16,7 +18,7 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 type Range = { id: string; openTime: string; closeTime: string };
 type DayCfg = { closed: boolean; ranges: Range[] };
 
-async function fileToDataUrl(file: File, maxSize = 1000, quality = 0.85): Promise<string> {
+async function fileToDataUrl(file: File, maxSize = 400, quality = 0.70): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
@@ -105,7 +107,7 @@ export default function OutletProfilePage() {
     address: '',
     addressLine1: '', addressLine2: '', city: '', state: '', pincode: '', country: 'India', mapsLocation: '',
     phone: '',
-    gstNumber: '', upiId: '',
+    gstNumber: '', fssaiNumber: '', upiId: '',
   });
   const [kitchenPrint, setKitchenPrint] = useState({ auto: false, allowManual: false });
   // Front-of-house receipt printing. Parallel to kitchenPrint but
@@ -123,6 +125,16 @@ export default function OutletProfilePage() {
     applicable: false,
     percent: '5',
     includesGst: false,
+  });
+  // Operational defaults that the outlet admin owns. These used to live
+  // on the Business Outlets page; the outlet admin sets them now so they
+  // can tune prep time / parcel fee / payment routing without round-tripping
+  // through head office.
+  const [ops, setOps] = useState({
+    defaultPrepTime: '',                  // minutes; empty string = unset
+    parcelChargeEnabled: false,
+    defaultParcelCharge: '0',
+    razorpayLinkedAccountId: '',          // Razorpay Route LA, "acc_..."
   });
   const [tokenCounter, setTokenCounter] = useState({ startNumber: '1', nextNumber: 1, nextOrderSequence: 1 });
   const [savingToken, setSavingToken] = useState(false);
@@ -186,12 +198,19 @@ export default function OutletProfilePage() {
         mapsLocation: o.mapsLocation || '',
         phone: o.phone || '',
         gstNumber: o.gstNumber || '',
+        fssaiNumber: o.fssaiNumber || '',
         upiId: o.upiId || '',
       });
       setGst({
         applicable: !!o.gstApplicable,
         percent: String(o.gstPercent ?? 5),
         includesGst: !!o.priceIncludesGst,
+      });
+      setOps({
+        defaultPrepTime: o.defaultPrepTime != null ? String(o.defaultPrepTime) : '',
+        parcelChargeEnabled: !!o.parcelChargeEnabled,
+        defaultParcelCharge: String(Number(o.defaultParcelCharge ?? 0)),
+        razorpayLinkedAccountId: o.razorpayLinkedAccountId ?? '',
       });
       setKitchenPrint({
         auto: !!o.kitchenAutoPrint,
@@ -292,43 +311,56 @@ export default function OutletProfilePage() {
     catch { toast.error('Could not read image'); return null; }
   };
   const onPickPrimary = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pick(e, { maxSize: 1000, sizeLimitKB: 1024 });
+    const url = await pick(e, { maxSize: 400, sizeLimitKB: 4096 });
     if (url) setPrimary(url);
   };
   const onPickLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pick(e, { maxSize: 320, sizeLimitKB: 300 });
+    const url = await pick(e, { maxSize: 240, sizeLimitKB: 2048 });
     if (url) setLogo(url);
   };
   const onPickGallery = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = await pick(e, { maxSize: 1000, sizeLimitKB: 1024 });
+    const url = await pick(e, { maxSize: 400, sizeLimitKB: 4096 });
     if (url) setGallery(p => [...p, { url, isNew: true }]);
   };
 
   // ── Hours editing ────────────────────────────────────────
-  // Hours auto-save on every change so users don't lose their work when
+  // Hours auto-save on change so users don't lose their work when
   // navigating away (the rest of the page is saved via the explicit Save
-  // button; only hours persist immediately).
-  const persistHours = async (next: DayCfg[]) => {
+  // button; only hours persist immediately). The PUT is debounced ~600ms
+  // so a burst of edits (typing into a time picker, dragging, "apply to
+  // all days") collapses into one server call — without this, two
+  // concurrent PUTs would race the deleteMany+createMany transaction on
+  // the server and deadlock.
+  const hoursTimer = useRef<number | null>(null);
+  const persistHours = (next: DayCfg[]) => {
     if (!outletId) return;
-    const ranges: { dayOfWeek: number; openTime: string; closeTime: string }[] = [];
-    next.forEach((day, dayIdx) => {
-      if (day.closed) return;
-      day.ranges.forEach((r) => {
-        if (r.openTime && r.closeTime && r.closeTime > r.openTime) {
-          ranges.push({ dayOfWeek: dayIdx, openTime: r.openTime, closeTime: r.closeTime });
-        }
+    if (hoursTimer.current) window.clearTimeout(hoursTimer.current);
+    hoursTimer.current = window.setTimeout(async () => {
+      const ranges: { dayOfWeek: number; openTime: string; closeTime: string }[] = [];
+      next.forEach((day, dayIdx) => {
+        if (day.closed) return;
+        day.ranges.forEach((r) => {
+          if (r.openTime && r.closeTime && r.closeTime > r.openTime) {
+            ranges.push({ dayOfWeek: dayIdx, openTime: r.openTime, closeTime: r.closeTime });
+          }
+        });
       });
-    });
-    try {
-      await api.put(`/outlets/${outletId}/hours`, { ranges });
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to save hours');
-    }
+      try {
+        await api.put(`/outlets/${outletId}/hours`, { ranges });
+      } catch (e: any) {
+        toast.error(e.response?.data?.message || 'Failed to save hours');
+      }
+    }, 600);
   };
+
+  // Flush any pending hours save on unmount so we don't lose the last edit.
+  useEffect(() => () => {
+    if (hoursTimer.current) window.clearTimeout(hoursTimer.current);
+  }, []);
 
   const applyWeekChange = (next: DayCfg[]) => {
     setWeek(next);
-    void persistHours(next);
+    persistHours(next);
   };
 
   const toggleDayClosed = (day: number) => {
@@ -401,6 +433,7 @@ export default function OutletProfilePage() {
         mapsLocation: form.mapsLocation.trim() || undefined,
         phone: form.phone.trim() || undefined,
         gstNumber: gst.applicable ? (form.gstNumber.trim() || undefined) : null,
+        fssaiNumber: form.fssaiNumber.trim() || null,
         gstApplicable: gst.applicable,
         gstPercent: gst.applicable ? Number(gst.percent) || 0 : 0,
         priceIncludesGst: gst.applicable ? gst.includesGst : false,
@@ -414,6 +447,10 @@ export default function OutletProfilePage() {
         // Empty-string → null so the FK clears when the admin unsets
         // the printer without picking a new one.
         receiptPrinterId: receiptPrint.printerId || null,
+        defaultPrepTime: ops.defaultPrepTime === '' ? null : Number(ops.defaultPrepTime),
+        parcelChargeEnabled: ops.parcelChargeEnabled,
+        defaultParcelCharge: Number(ops.defaultParcelCharge) || 0,
+        razorpayLinkedAccountId: ops.razorpayLinkedAccountId.trim() || null,
       });
 
       // Gallery sync
@@ -524,7 +561,7 @@ export default function OutletProfilePage() {
 
   const downloadQR = async () => {
     if (!outlet?.id) return;
-    const origin = (window as any).VITE_CUSTOMER_URL || window.location.origin.replace(':5173', ':5174');
+    const origin = getCustomerOrigin();
     await downloadQrCard({
       outletName: outlet?.name,
       outletAddress: outlet?.address,
@@ -690,6 +727,84 @@ export default function OutletProfilePage() {
             </Field>
           </>
         )}
+
+        {/* FSSAI is a separate compliance — outlets without GST may still
+            have it, so it lives outside the gst.applicable conditional. */}
+        <Field label="FSSAI number (printed on the bill)">
+          <input
+            value={form.fssaiNumber}
+            onChange={(e) => setForm((p) => ({ ...p, fssaiNumber: e.target.value }))}
+            className="input"
+            placeholder="14-digit FSSAI / CKL number"
+            maxLength={32}
+          />
+        </Field>
+      </div>
+
+      {/* Operations defaults — moved here from the Business Outlets page.
+          The outlet admin owns prep time / parcel fee / payment routing
+          so they don't have to go through the business owner to tune
+          their own day-to-day numbers. */}
+      <div className="card p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <Package size={15} className="text-slate-400" />
+          <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Operations</p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Default preparation time (minutes)" hint="Shown to customers as the estimated wait time. Leave blank to hide it.">
+            <input
+              type="number"
+              min={1}
+              value={ops.defaultPrepTime}
+              onChange={(e) => setOps((p) => ({ ...p, defaultPrepTime: e.target.value }))}
+              className="input"
+              placeholder="e.g. 15"
+            />
+          </Field>
+          <Field label="Default parcel charge (₹)" hint="Per-order parcel fee. Only applied when the toggle below is on.">
+            <input
+              type="number"
+              min={0}
+              step="0.50"
+              value={ops.defaultParcelCharge}
+              onChange={(e) => setOps((p) => ({ ...p, defaultParcelCharge: e.target.value }))}
+              className="input"
+              placeholder="0"
+            />
+          </Field>
+        </div>
+
+        <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={ops.parcelChargeEnabled}
+            onChange={(e) => setOps((p) => ({ ...p, parcelChargeEnabled: e.target.checked }))}
+            className="w-4 h-4 accent-brand-500 rounded"
+          />
+          Charge the parcel fee on parcel orders
+          <span className="text-[11px] text-slate-400">(parcel is always available; this toggles the fee line)</span>
+        </label>
+
+        <div className="pt-2 mt-1 border-t border-slate-100">
+          <div className="flex items-center gap-2 mb-2">
+            <CreditCard size={14} className="text-slate-400" />
+            <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Payments — Razorpay Route</p>
+          </div>
+          <Field
+            label="Razorpay Linked Account ID"
+            hint="From your Razorpay Route account — starts with `acc_`. When set, the full bill is routed to this Linked Account and gateway fees come out of its settlement. Leave blank to hide Razorpay from customers."
+          >
+            <input
+              value={ops.razorpayLinkedAccountId}
+              onChange={(e) => setOps((p) => ({ ...p, razorpayLinkedAccountId: e.target.value }))}
+              className="input font-mono"
+              placeholder="acc_XXXXXXXXXXXXXX"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field>
+        </div>
       </div>
 
       {/* Token counter */}

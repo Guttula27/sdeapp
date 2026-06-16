@@ -45,10 +45,18 @@ export class OrdersService {
 
   async create(outletId: string, dto: CreateOrderDto, userId?: string) {
     // Outlet GST config — gstApplicable is the master toggle; gstPercent is
-    // the fallback when an item doesn't carry its own rate.
+    // the fallback when an item doesn't carry its own rate. We also pull
+    // the receipt-header fields so we can freeze them on the Order row
+    // (outletSnapshot) — historical bills must reprint the address /
+    // GSTIN / FSSAI that were in effect at order time.
     const outlet = await this.prisma.outlet.findUnique({
       where: { id: outletId },
-      select: { gstApplicable: true, gstPercent: true, priceIncludesGst: true, businessId: true },
+      select: {
+        gstApplicable: true, gstPercent: true, priceIncludesGst: true, businessId: true,
+        name: true, address: true, addressLine1: true, addressLine2: true,
+        city: true, state: true, pincode: true,
+        gstNumber: true, fssaiNumber: true, phone: true, logoUrl: true,
+      },
     });
     const gstOn = !!outlet?.gstApplicable;
     const outletDefaultPct = gstOn ? Number(outlet?.gstPercent ?? 0) : 0;
@@ -81,7 +89,14 @@ export class OrdersService {
     // Customer-choice bundles (maxBundleSelections > 0): the cart line
     // carries bundleSelections — the picked ItemBundleChild ids. We expand
     // only those rows after validating count + ownership.
-    const expanded: { dto: any; bundleId?: string; bundleName?: string; bundlePrice?: number; bundleGstRate?: number; isPrimary?: boolean }[] = [];
+    // Freebie validation — all items the customer marked as freebies
+    // must be picked from active offer pools at the SAME outlet, and
+    // the per-offer count must not exceed the offer's getQuantity.
+    // Pulled before bundle expansion so we can attach freebieOfferId
+    // metadata onto every expanded entry that came from a freebie line.
+    const freebieValidate = await this.validateFreebiePicks(outletId, dto.items as any);
+
+    const expanded: { dto: any; bundleId?: string; bundleName?: string; bundlePrice?: number; bundleGstRate?: number; isPrimary?: boolean; freebieOfferId?: string; freebieOfferName?: string }[] = [];
     for (const li of dto.items) {
       const parent = await this.prisma.item.findUnique({
         where: { id: li.itemId },
@@ -134,20 +149,36 @@ export class OrdersService {
           });
         });
       } else {
-        expanded.push({ dto: li });
+        // Stamp freebie metadata so the post-resolve loop can force
+        // price = 0 and tag the line with the offer name.
+        const freebieOfferId = (li as any).freebieOfferId as string | undefined;
+        const offerName = freebieOfferId ? freebieValidate.offerNames.get(freebieOfferId) : undefined;
+        expanded.push({
+          dto: li,
+          ...(freebieOfferId ? { freebieOfferId, freebieOfferName: offerName } : {}),
+        });
       }
     }
 
     const items = await this.resolveOrderItems(
       expanded.map((e) => e.dto) as any,
-      gstOn ? { viewerTagId, tableTypeId, outletDefaultPct } : null,
+      { viewerTagId, tableTypeId, gstEnabled: gstOn, outletDefaultPct },
     );
 
-    // Override prices for bundle child rows so the bundle's fixed price wins
-    // over the sum of regular item prices. The primary row holds the full
-    // bundle revenue; siblings are zeroed out.
+    // Override prices for freebie + bundle child rows.
     for (let i = 0; i < items.length; i++) {
       const meta = expanded[i];
+      if (meta?.freebieOfferId) {
+        // Freebie line — zero price + GST, prefix the notes with the
+        // offer name so kitchen + receipt show "Freebie: <offer>".
+        const line = items[i];
+        line.unitPrice = 0;
+        line.totalPrice = 0;
+        line.gstAmount = 0;
+        const freebieNote = `Freebie: ${meta.freebieOfferName ?? 'Offer'}`;
+        line.notes = line.notes ? `${freebieNote} | ${line.notes}` : freebieNote;
+        continue;
+      }
       if (!meta?.bundleId) continue;
       const line = items[i];
       (line as any).bundleId = meta.bundleId;
@@ -244,6 +275,10 @@ export class OrdersService {
         lines: promoLines,
         isParcel: !!dto.isParcel,
         customerId: resolvedCustomerId,
+        // tableId drives table-type price + GST overrides inside
+        // pricing.quoteCart so the order's totalAmount matches what
+        // the customer was shown on the payment screen.
+        tableId: dto.tableId,
         couponId: dto.couponId,
         rewardPoints: dto.rewardPoints,
       });
@@ -361,6 +396,22 @@ export class OrdersService {
           parcelAmount,
           discountAmount,
           totalAmount,
+          // Freeze the outlet's receipt header as JSON so a reprint
+          // months later still shows the address / GSTIN / FSSAI that
+          // were in effect when the customer was billed.
+          outletSnapshot: {
+            name:         outlet?.name ?? null,
+            address:      outlet?.address ?? null,
+            addressLine1: outlet?.addressLine1 ?? null,
+            addressLine2: outlet?.addressLine2 ?? null,
+            city:         outlet?.city ?? null,
+            state:        outlet?.state ?? null,
+            pincode:      outlet?.pincode ?? null,
+            gstNumber:    outlet?.gstNumber ?? null,
+            fssaiNumber:  outlet?.fssaiNumber ?? null,
+            phone:        outlet?.phone ?? null,
+            logoUrl:      outlet?.logoUrl ?? null,
+          },
           items: {
             create: items.map((it: any) => ({
               ...it,
@@ -391,7 +442,7 @@ export class OrdersService {
         include: {
           items: { include: { item: true, variant: true } },
           table: true,
-          outlet: { select: { id: true, name: true, address: true, gstNumber: true, upiId: true, logoUrl: true, outletType: true } },
+          outlet: { select: { id: true, name: true, address: true, gstNumber: true, fssaiNumber: true, upiId: true, logoUrl: true, outletType: true } },
           payments: true,
           customer: {
             select: {
@@ -667,7 +718,7 @@ export class OrdersService {
       this.prisma.order.findMany({
         where,
         include: {
-          items:  { include: { item: true, variant: true } },
+          items:  { include: { item: true, variant: true, bundleParent: { select: { id: true, name: true } } } },
           table:  true,
           outlet: { select: { id: true, name: true, outletType: true, business: { select: { id: true, name: true } } } },
           customer: {
@@ -700,6 +751,12 @@ export class OrdersService {
             // Include the snapshot menu so receipts can group by it without
             // having to walk back through subcategory → category.
             menu: { select: { id: true, name: true } },
+            // Combo (bundle) parent — surfaced on every expanded child
+            // so customer-facing surfaces (receipt + track-order) can
+            // collapse N child OrderItems back into one "combo" line
+            // showing the parent name. Kitchen / service / parcel desk
+            // ignore this and keep operating on the children individually.
+            bundleParent: { select: { id: true, name: true } },
             review: {
               include: {
                 paybackPayment: { select: { id: true, mode: true, amount: true, status: true, createdAt: true } },
@@ -717,7 +774,7 @@ export class OrdersService {
             // city-state-pincode on separate lines instead of one comma-joined blob.
             address: true, addressLine1: true, addressLine2: true,
             city: true, state: true, pincode: true,
-            gstNumber: true,
+            gstNumber: true, fssaiNumber: true,
           },
         },
         customer: {
@@ -1039,6 +1096,13 @@ export class OrdersService {
 
     this.validateItemTransition(item.status, status);
 
+    // PACKED only makes sense on a parcel-lane order — non-parcel paths
+    // never need an intermediate packed step (table-service runners go
+    // READY → SERVED, self-service goes READY → SERVED on release).
+    if (status === OrderItemStatus.PACKED && !item.order.isParcel) {
+      throw new BadRequestException('PACKED only applies to parcel orders');
+    }
+
     await this.prisma.orderItem.update({
       where: { id: orderItemId },
       data: { status },
@@ -1082,32 +1146,35 @@ export class OrdersService {
       });
     }
 
-    // Fan-out the service-desk "kitchen done" nudge whenever the rollup
-    // pushes the order onto the lane the service desk owns: OUT_FOR_SERVICE
-    // for self-service (release lane) or READY for table-service (pickup
-    // lane). The same status transitions hit a different alert kind so
-    // the UI can lane-route them.
-    if (updated && rolledUp) {
+    // Fan-out the service-desk / parcel-desk nudge whenever *any* item
+    // transitions to READY — the desk's queue treats orders with at
+    // least one ready item as actionable so partial-ready orders get
+    // released the moment the first dish lands, not only after the
+    // whole order rolls up. Lane shape (self-service release vs
+    // table-service pickup vs parcel pack) is derived from the order.
+    if (
+      updated
+      && status === OrderItemStatus.READY
+      && item.status !== OrderItemStatus.READY
+    ) {
       const shape = this.flowShape(
         updated.outlet?.outletType,
         updated.tableId,
         updated.isParcel,
       );
-      if (rolledUp === OrderStatus.OUT_FOR_SERVICE && shape === 'self-service') {
+      if (shape === 'self-service') {
         this.ordersGateway.emitServiceDeskAlert(updated.outletId, {
           kind: 'release',
           orderId: updated.id,
           orderNumber: updated.orderNumber,
         });
-      } else if (rolledUp === OrderStatus.READY && shape === 'table-service') {
+      } else if (shape === 'table-service') {
         this.ordersGateway.emitServiceDeskAlert(updated.outletId, {
           kind: 'pickup',
           orderId: updated.id,
           orderNumber: updated.orderNumber,
         });
-      } else if (rolledUp === OrderStatus.READY && shape === 'parcel') {
-        // Parcel orders rolling up from item-status updates → parcel
-        // desk gets the "ready to pack" nudge.
+      } else if (shape === 'parcel') {
         this.ordersGateway.emitParcelDeskAlert(updated.outletId, {
           kind: 'pack',
           orderId: updated.id,
@@ -1151,6 +1218,41 @@ export class OrdersService {
         }).catch(() => {});
       }
     }
+
+    // Parcel: when the rollup advances the order to READY_FOR_PICKUP
+    // (because every live item is PACKED), notify the customer that
+    // the parcel is ready to collect. Same dispatcher template that
+    // fires from the order-level READY_FOR_PICKUP transition in
+    // updateStatus() — covers both paths consistently.
+    if (
+      updated
+      && rolledUp === OrderStatus.READY_FOR_PICKUP
+      && updated.customerId
+    ) {
+      const outletForBiz = await this.prisma.outlet.findUnique({
+        where: { id: updated.outletId },
+        select: { name: true, businessId: true },
+      });
+      this.dispatcher.fire('PICKUP_READY', {
+        customerId: updated.customerId,
+        customerName: updated.customer?.name,
+        customerPhone: updated.customer?.phone,
+        businessId: outletForBiz?.businessId ?? null,
+        outletId: updated.outletId,
+        outletName: outletForBiz?.name,
+        orderId: updated.id,
+        orderNumber: updated.orderNumber,
+      }).catch(() => {});
+
+      // Parcel desk should also hear about it (lane label changes from
+      // pack → handover for this order).
+      this.ordersGateway.emitParcelDeskAlert(updated.outletId, {
+        kind: 'handover',
+        orderId: updated.id,
+        orderNumber: updated.orderNumber,
+      });
+    }
+
     return { order: updated, rolledUp };
   }
 
@@ -1161,7 +1263,13 @@ export class OrdersService {
       PENDING_VERIFICATION: [OrderItemStatus.PENDING, OrderItemStatus.CANCELLED],
       PENDING:   [OrderItemStatus.PREPARING, OrderItemStatus.CANCELLED],
       PREPARING: [OrderItemStatus.READY, OrderItemStatus.CANCELLED],
-      READY:     [OrderItemStatus.SERVED, OrderItemStatus.CANCELLED],
+      // READY → PACKED on parcel lanes (parcel desk boxes a dish), or
+      // READY → SERVED on table-service / self-service (runner serves /
+      // counter releases). The lane gate is enforced server-side in
+      // updateItemStatus by checking the order's isParcel flag before
+      // accepting PACKED.
+      READY:     [OrderItemStatus.PACKED, OrderItemStatus.SERVED, OrderItemStatus.CANCELLED],
+      PACKED:    [OrderItemStatus.SERVED, OrderItemStatus.CANCELLED],
       SERVED:    [],
       CANCELLED: [],
     };
@@ -1185,14 +1293,14 @@ export class OrdersService {
     });
     if (!order || order.items.length === 0) return null;
 
-    // Don't touch frozen / manual-only states
-    const frozen: OrderStatus[] = [
-      OrderStatus.READY_FOR_PICKUP, OrderStatus.OUT_FOR_SERVICE,
+    // Terminal / refund / dispute states are off-limits — once an order
+    // hits these it stops auto-progressing regardless of item updates.
+    const terminal: OrderStatus[] = [
       OrderStatus.SERVED, OrderStatus.CANCELLED,
       OrderStatus.DISPUTED, OrderStatus.RESOLVED,
       OrderStatus.FOR_REFUND, OrderStatus.REFUND_COMPLETE,
     ];
-    if (frozen.includes(order.status as OrderStatus)) return null;
+    if (terminal.includes(order.status as OrderStatus)) return null;
 
     // PENDING_VERIFICATION items don't exist for the kitchen, so they
     // also don't count toward rollup decisions — they're treated like
@@ -1203,6 +1311,66 @@ export class OrdersService {
         i.status !== OrderItemStatus.PENDING_VERIFICATION,
     );
     if (live.length === 0) return null;
+
+    // If every live item is SERVED, the order is done — push it through
+    // to SERVED regardless of what intermediate lane state (READY,
+    // OUT_FOR_SERVICE, READY_FOR_PICKUP) it currently sits in. Without
+    // this, a self-service order whose last item the kitchen marked
+    // SERVED would stay parked at OUT_FOR_SERVICE waiting for staff to
+    // tap "Mark Served" — and the customer would still see "On its way".
+    if (live.every((i) => i.status === OrderItemStatus.SERVED)) {
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: {
+          status: OrderStatus.SERVED,
+          statusHistory: {
+            create: {
+              status: OrderStatus.SERVED,
+              changedBy: userId,
+              notes: 'Auto-rolled up — every item served',
+            },
+          },
+        },
+      });
+      return OrderStatus.SERVED;
+    }
+
+    // Parcel-only: when every live item is PACKED (or already SERVED —
+    // counts the same here), the order is ready for the customer to
+    // collect. Advance to READY_FOR_PICKUP regardless of where the
+    // order is currently parked; the post-rollup hook fires the
+    // PICKUP_READY notification so the customer knows to swing by.
+    if (
+      order.isParcel
+      && order.status !== OrderStatus.READY_FOR_PICKUP
+      && live.every((i) =>
+        i.status === OrderItemStatus.PACKED || i.status === OrderItemStatus.SERVED,
+      )
+    ) {
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: {
+          status: OrderStatus.READY_FOR_PICKUP,
+          statusHistory: {
+            create: {
+              status: OrderStatus.READY_FOR_PICKUP,
+              changedBy: userId,
+              notes: 'Auto-rolled up — every parcel item packed',
+            },
+          },
+        },
+      });
+      return OrderStatus.READY_FOR_PICKUP;
+    }
+
+    // Below here we drive the early-lane rollup (CREATED → QUEUED →
+    // PREPARING → READY/OUT_FOR_SERVICE). Once the order is past the
+    // automatic prefix (READY_FOR_PICKUP / OUT_FOR_SERVICE / READY on
+    // table-service), staff own the next step manually.
+    const midLaneFrozen: OrderStatus[] = [
+      OrderStatus.READY_FOR_PICKUP, OrderStatus.OUT_FOR_SERVICE,
+    ];
+    if (midLaneFrozen.includes(order.status as OrderStatus)) return null;
 
     const shape = this.flowShape(order.outlet?.outletType, order.tableId, order.isParcel);
     // Self-service skips the order-level READY step entirely — when the
@@ -1239,10 +1407,136 @@ export class OrdersService {
     return derived;
   }
 
+  /**
+   * Validate every freebie line in the cart against an active offer's
+   * eligible pool. Caller wraps the result with offer-name lookup so
+   * line notes can render "Freebie: <offer name>" downstream.
+   *
+   * Pool semantics:
+   *   - ITEM     legacy → item.id must equal offer.getItemId
+   *   - ALL      every active item at the outlet's menus
+   *   - CATEGORY item must live under offer.getCategoryId
+   *   - ITEMS    item.id must be in offer.getItemIds[]
+   *
+   * Also enforces the per-offer count so a customer can't claim three
+   * freebies on a "get 1" offer.
+   */
+  private async validateFreebiePicks(
+    outletId: string,
+    items: Array<{ itemId: string; quantity: number; freebieOfferId?: string | null }>,
+  ): Promise<{ offerNames: Map<string, string> }> {
+    const offerNames = new Map<string, string>();
+    const freebieIds = new Set<string>();
+    const counts = new Map<string, number>(); // offerId → total qty
+    for (const li of items) {
+      const o = li.freebieOfferId;
+      if (!o) continue;
+      freebieIds.add(o);
+      counts.set(o, (counts.get(o) ?? 0) + (li.quantity ?? 1));
+    }
+    if (freebieIds.size === 0) return { offerNames };
+
+    // Resolve outlet → business; freebies must come from offers on the
+    // same business, either business-wide or pinned to this outlet.
+    const outlet = await this.prisma.outlet.findUnique({
+      where: { id: outletId },
+      select: { businessId: true },
+    });
+    if (!outlet) throw new BadRequestException('Outlet not found');
+
+    const offers = await this.prisma.offer.findMany({
+      where: {
+        id: { in: Array.from(freebieIds) },
+        businessId: outlet.businessId,
+        isActive: true,
+        OR: [{ outletId: null }, { outletId }],
+      },
+    });
+    const byOffer = new Map(offers.map((o) => [o.id, o]));
+    for (const oid of freebieIds) {
+      const offer = byOffer.get(oid);
+      if (!offer) throw new BadRequestException(`Offer ${oid} is not active for this outlet`);
+      offerNames.set(oid, offer.name);
+      // Per-offer cap. The customer can't claim more freebies than the
+      // offer's getQuantity (multiplied for BUY_X_GET_Y is computed at
+      // quote time; we only see the offered freebie count here).
+      const cap = Math.max(1, Number(offer.getQuantity ?? 1));
+      const claimed = counts.get(oid) ?? 0;
+      if (claimed > cap) {
+        throw new BadRequestException(
+          `Offer "${offer.name}" allows up to ${cap} freebie${cap === 1 ? '' : 's'} (got ${claimed})`,
+        );
+      }
+    }
+
+    // Pool membership check, per line. Resolve the item's category so
+    // CATEGORY scope can validate; ALL / ITEMS / ITEM are array lookups.
+    const itemIds = items.filter((i) => i.freebieOfferId).map((i) => i.itemId);
+    const itemRows = await this.prisma.item.findMany({
+      where: { id: { in: itemIds } },
+      select: {
+        id: true,
+        isAvailable: true,
+        subcategory: { select: { category: { select: { id: true, outletId: true, businessId: true } } } },
+      },
+    });
+    const itemMap = new Map(itemRows.map((r) => [r.id, r]));
+
+    for (const li of items) {
+      if (!li.freebieOfferId) continue;
+      const offer = byOffer.get(li.freebieOfferId)!;
+      const item = itemMap.get(li.itemId);
+      if (!item) throw new BadRequestException(`Freebie item ${li.itemId} not found`);
+      if (!item.isAvailable) {
+        throw new BadRequestException(`Freebie item is currently not available`);
+      }
+      const scope: string | null = (offer as any).getScope ?? (offer.getItemId ? 'ITEM' : null);
+      if (scope === 'ITEM') {
+        if (offer.getItemId !== li.itemId) {
+          throw new BadRequestException(`Freebie does not match offer "${offer.name}"`);
+        }
+      } else if (scope === 'ALL') {
+        // Any active item under the same business qualifies. Cheap
+        // check: item's category's business must match the offer's.
+        const cat = item.subcategory?.category;
+        const itemBiz = cat?.businessId ?? null;
+        // For outlet-owned categories the businessId on the category
+        // itself is null, so fall back to the outlet's business via a
+        // single round-trip cache later — for the common (template)
+        // case this short-circuits.
+        if (itemBiz && itemBiz !== offer.businessId) {
+          throw new BadRequestException(`Freebie does not belong to this business`);
+        }
+      } else if (scope === 'CATEGORY') {
+        if (!offer.getCategoryId || item.subcategory?.category?.id !== offer.getCategoryId) {
+          throw new BadRequestException(`Freebie is not in the eligible category for "${offer.name}"`);
+        }
+      } else if (scope === 'ITEMS') {
+        const ids: string[] = Array.isArray((offer as any).getItemIds) ? (offer as any).getItemIds : [];
+        if (!ids.includes(li.itemId)) {
+          throw new BadRequestException(`Freebie is not in the eligible list for "${offer.name}"`);
+        }
+      } else {
+        throw new BadRequestException(`Offer "${offer.name}" has no eligible pool configured`);
+      }
+    }
+    return { offerNames };
+  }
+
   private async resolveOrderItems(
     items: CreateOrderDto['items'],
-    gstCtx: { viewerTagId: string | null; tableTypeId: string | null; outletDefaultPct: number } | null,
+    ctx: {
+      viewerTagId: string | null;
+      tableTypeId: string | null;
+      // Outlet GST master toggle. When false, the helper skips GST rate
+      // resolution entirely but still applies price overrides.
+      gstEnabled: boolean;
+      outletDefaultPct: number;
+    },
   ) {
+    // Pricing context is independent of GST: a tagged customer's tag price
+    // must apply even when the outlet has GST disabled.
+    const { viewerTagId, tableTypeId, gstEnabled, outletDefaultPct } = ctx;
     return Promise.all(
       items.map(async (i) => {
         const item = await this.prisma.item.findUnique({
@@ -1252,11 +1546,11 @@ export class OrdersService {
             // OrderItem — keeps historical receipt grouping stable even if
             // the category is later moved to a different menu.
             subcategory: { select: { category: { select: { menuId: true } } } },
-            customerTagPrices: gstCtx?.viewerTagId
-              ? { where: { customerTagId: gstCtx.viewerTagId } }
+            customerTagPrices: viewerTagId
+              ? { where: { customerTagId: viewerTagId } }
               : false,
-            tableTypePrices: gstCtx?.tableTypeId
-              ? { where: { tableTypeId: gstCtx.tableTypeId } }
+            tableTypePrices: tableTypeId
+              ? { where: { tableTypeId: tableTypeId } }
               : false,
           },
         });
@@ -1277,30 +1571,48 @@ export class OrdersService {
         }
 
         let unitPrice = Number(item.basePrice);
+        let variantName: string | null = null;
         if (i.variantId) {
-          const variant = await this.prisma.variant.findUnique({ where: { id: i.variantId } });
-          if (variant) unitPrice = Number(variant.price);
+          const variant = await this.prisma.variant.findUnique({
+            where: { id: i.variantId },
+            select: { name: true, price: true },
+          });
+          if (variant) {
+            unitPrice = Number(variant.price);
+            variantName = variant.name;
+          }
         }
 
-        // Resolve GST rate: table-type > customer-tag > item default > outlet fallback.
-        // Each rung also overrides price the same way (in pickItemPrice for menu);
-        // here we only resolve the rate to capture for the line.
+        // Price overrides (always applied — independent of GST). Precedence
+        // mirrors the customer-facing menu: CustomerTag > TableType > variant
+        // > basePrice. Without this, a tagged customer would see the tag
+        // price in their cart but be billed the base price.
+        const ttPrice = viewerTagId || tableTypeId
+          ? (item as any).tableTypePrices?.find(
+              (p: any) =>
+                p.tableTypeId === tableTypeId &&
+                (i.variantId ? p.variantId === i.variantId : !p.variantId),
+            )
+          : null;
+        const ctPrice = viewerTagId
+          ? (item as any).customerTagPrices?.find(
+              (p: any) =>
+                p.customerTagId === viewerTagId &&
+                (i.variantId ? p.variantId === i.variantId : !p.variantId),
+            )
+          : null;
+        if (ctPrice?.price != null) unitPrice = Number(ctPrice.price);
+        else if (ttPrice?.price != null) unitPrice = Number(ttPrice.price);
+
+        // GST rate precedence (only when the outlet has GST enabled):
+        // TableType > CustomerTag > item default > outlet fallback. Tax
+        // rules typically follow the dine-in section, not the customer.
         let gstRate = 0;
-        if (gstCtx) {
-          const ttPrice = (item as any).tableTypePrices?.find(
-            (p: any) =>
-              p.tableTypeId === gstCtx.tableTypeId &&
-              (i.variantId ? p.variantId === i.variantId : !p.variantId),
-          );
-          const ctPrice = (item as any).customerTagPrices?.find(
-            (p: any) =>
-              p.customerTagId === gstCtx.viewerTagId &&
-              (i.variantId ? p.variantId === i.variantId : !p.variantId),
-          );
+        if (gstEnabled) {
           if (ttPrice?.gstRate != null) gstRate = Number(ttPrice.gstRate);
           else if (ctPrice?.gstRate != null) gstRate = Number(ctPrice.gstRate);
           else if (item.gstRate != null) gstRate = Number(item.gstRate);
-          else gstRate = gstCtx.outletDefaultPct;
+          else gstRate = outletDefaultPct;
         }
 
         // Toppings: validate against item's available toppings, sum the price add,
@@ -1349,6 +1661,11 @@ export class OrdersService {
           gstAmount,
           notes: composedNotes,
           menuId: (item as any).subcategory?.category?.menuId ?? null,
+          // Frozen labels — printed on historical receipts even after a
+          // rename / delete. Receipts fall back to the live relation
+          // when these are null (legacy rows pre-2026-06-11).
+          itemNameSnapshot: item.name,
+          variantNameSnapshot: variantName,
         };
       }),
     );
@@ -1454,7 +1771,12 @@ export class OrdersService {
     if (shape === 'self-service') {
       preparingNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED];
       readyNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED]; // legacy in-flight orders
-      outForServiceNext = [OrderStatus.READY_FOR_PICKUP, OrderStatus.CANCELLED];
+      // Self-service collapses the manual flow: from OUT_FOR_SERVICE staff
+      // can either go through READY_FOR_PICKUP (customer-ping lane) or
+      // jump straight to SERVED — which is what the admin "Mark Served"
+      // CTA does, and what the auto-rollup uses when every item lands
+      // SERVED. Without SERVED here, both paths 400ed.
+      outForServiceNext = [OrderStatus.READY_FOR_PICKUP, OrderStatus.SERVED, OrderStatus.CANCELLED];
     } else if (shape === 'parcel') {
       preparingNext = [OrderStatus.READY, OrderStatus.CANCELLED];
       readyNext = [OrderStatus.READY_FOR_PICKUP, OrderStatus.SERVED, OrderStatus.CANCELLED];
@@ -1585,7 +1907,7 @@ export class OrdersService {
 
     const newItems = await this.resolveOrderItems(
       dto.items as any,
-      gstOn ? { viewerTagId, tableTypeId, outletDefaultPct } : null,
+      { viewerTagId, tableTypeId, gstEnabled: gstOn, outletDefaultPct },
     );
 
     // Persist new items, then recompute totals across every line on the order.
@@ -1629,7 +1951,7 @@ export class OrdersService {
         include: {
           items: { include: { item: true, variant: true } },
           table: true,
-          outlet: { select: { id: true, name: true, address: true, gstNumber: true, upiId: true, logoUrl: true, outletType: true } },
+          outlet: { select: { id: true, name: true, address: true, gstNumber: true, fssaiNumber: true, upiId: true, logoUrl: true, outletType: true } },
           payments: true,
         },
       });
@@ -1665,7 +1987,7 @@ export class OrdersService {
       include: {
         items: { include: { item: true, variant: true } },
         table: true,
-        outlet: { select: { id: true, name: true, address: true, gstNumber: true, upiId: true, logoUrl: true, outletType: true } },
+        outlet: { select: { id: true, name: true, address: true, gstNumber: true, fssaiNumber: true, upiId: true, logoUrl: true, outletType: true } },
         payments: true,
       },
     });
@@ -1794,9 +2116,26 @@ export class OrdersService {
       table:    { select: { id: true, number: true, sectionId: true } },
       customer: { select: { id: true, name: true, phone: true } },
     };
+    // Pack lane = any non-terminal parcel order with at least one item
+    // the desk can still action (READY = blink-to-pack, PACKED = packed
+    // but waiting for siblings). Once every live item is PACKED, the
+    // rollup advances the order to READY_FOR_PICKUP and it drops off
+    // this lane into Handover.
+    const packableItemStatuses: OrderItemStatus[] = [
+      OrderItemStatus.READY,
+      OrderItemStatus.PACKED,
+    ];
+    const nonTerminalOrderStatuses: OrderStatus[] = [
+      OrderStatus.CREATED, OrderStatus.QUEUED, OrderStatus.PREPARING,
+      OrderStatus.READY, OrderStatus.OUT_FOR_SERVICE,
+    ];
     const [packRows, handoverRows] = await Promise.all([
       this.prisma.order.findMany({
-        where: { outletId, isParcel: true, status: OrderStatus.READY },
+        where: {
+          outletId, isParcel: true,
+          status: { in: nonTerminalOrderStatuses },
+          items: { some: { status: { in: packableItemStatuses } } },
+        },
         include,
         orderBy: { createdAt: 'asc' },
       }),
@@ -1828,7 +2167,15 @@ export class OrdersService {
     });
     if (!outlet) throw new NotFoundException('Outlet not found');
 
-    const [verifyRows, readyRows, outForServiceRows] = await Promise.all([
+    // Terminal / refund / dispute statuses — once an order lands here
+    // the service desk has nothing left to do regardless of item state.
+    const terminalOrderStatuses: OrderStatus[] = [
+      OrderStatus.SERVED, OrderStatus.CANCELLED,
+      OrderStatus.DISPUTED, OrderStatus.RESOLVED,
+      OrderStatus.FOR_REFUND, OrderStatus.REFUND_COMPLETE,
+    ];
+
+    const [verifyRows, partialReadyRows] = await Promise.all([
       this.prisma.order.findMany({
         where: {
           outletId,
@@ -1837,28 +2184,31 @@ export class OrdersService {
         include,
         orderBy: { createdAt: 'asc' },
       }),
-      // table-service "pickup" lane is fed by orders at READY whose
-      // shape resolves to table-service. We pull all READY orders and
-      // partition by shape below to keep the SQL simple.
+      // "Partial-ready" orders — any non-terminal order with at least
+      // one READY item. A 3-item order whose first dish lands READY
+      // while the other two are still PREPARING shows up in the
+      // appropriate lane immediately so the runner / counter staff
+      // can release the ready one. Order-level status stays where the
+      // rollup left it (typically PREPARING until every item lands).
       this.prisma.order.findMany({
-        where: { outletId, status: OrderStatus.READY, isParcel: false },
-        include,
-        orderBy: { createdAt: 'asc' },
-      }),
-      this.prisma.order.findMany({
-        where: { outletId, status: OrderStatus.OUT_FOR_SERVICE, isParcel: false },
+        where: {
+          outletId,
+          isParcel: false,
+          status: { notIn: terminalOrderStatuses },
+          items: { some: { status: OrderItemStatus.READY } },
+        },
         include,
         orderBy: { createdAt: 'asc' },
       }),
     ]);
 
-    const partition = (rows: typeof readyRows, want: 'self-service' | 'table-service') =>
+    const partition = (rows: typeof partialReadyRows, want: 'self-service' | 'table-service') =>
       rows.filter((o) => this.flowShape(outlet.outletType, o.tableId, o.isParcel) === want);
 
     return {
       verify: verifyRows,
-      pickup: partition(readyRows, 'table-service'),
-      release: partition(outForServiceRows, 'self-service'),
+      pickup: partition(partialReadyRows, 'table-service'),
+      release: partition(partialReadyRows, 'self-service'),
     };
   }
 }

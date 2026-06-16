@@ -310,24 +310,21 @@ export default function OutletsPage() {
               {/* Expanded section/table panel */}
               {selected?.id === outlet.id && (
                 <div className="border-t border-slate-100 bg-slate-50/50 p-4 space-y-3">
-                  {/* Operations defaults */}
+                  {/* Outlet type — structural, set by the business when
+                      provisioning the outlet. Prep time, parcel fee and
+                      Razorpay Route ID now live on the per-outlet profile
+                      so the outlet admin owns them. */}
                   <div className="bg-white rounded-xl border border-slate-100 p-3 space-y-2.5">
                     <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Operations</p>
                     <form
                       onSubmit={(e) => {
                         e.preventDefault();
                         const fd = new FormData(e.currentTarget);
-                        const prep = fd.get('defaultPrepTime');
-                        saveOps(outlet.id, {
-                          outletType: fd.get('outletType'),
-                          defaultPrepTime: prep ? Number(prep) : null,
-                          parcelChargeEnabled: fd.get('parcelChargeEnabled') === 'on',
-                          defaultParcelCharge: Number(fd.get('defaultParcelCharge') || 0),
-                        });
+                        saveOps(outlet.id, { outletType: fd.get('outletType') });
                       }}
-                      className="grid grid-cols-2 gap-3"
+                      className="grid grid-cols-1 gap-3"
                     >
-                      <div className="col-span-2">
+                      <div>
                         <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Outlet type</label>
                         <select
                           name="outletType"
@@ -337,78 +334,11 @@ export default function OutletsPage() {
                           {OUTLET_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                         </select>
                       </div>
-                      <div>
-                        <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Default prep time (min)</label>
-                        <input
-                          name="defaultPrepTime"
-                          type="number"
-                          min="1"
-                          defaultValue={selected.defaultPrepTime ?? ''}
-                          placeholder="optional"
-                          className="input text-xs"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Default parcel charge (₹)</label>
-                        <input
-                          name="defaultParcelCharge"
-                          type="number"
-                          min="0"
-                          step="0.50"
-                          defaultValue={Number(selected.defaultParcelCharge ?? 0)}
-                          className="input text-xs"
-                        />
-                      </div>
-                      <label className="col-span-2 flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          name="parcelChargeEnabled"
-                          defaultChecked={!!selected.parcelChargeEnabled}
-                          className="w-4 h-4 accent-brand-500 rounded"
-                        />
-                        Charge a parcel fee on parcel orders
-                        <span className="text-[10px] text-slate-400">(parcel is always available; this toggles the fee line)</span>
-                      </label>
-                      <button type="submit" disabled={saving} className="btn-secondary col-span-2 text-xs py-1.5">
-                        {saving ? 'Saving…' : 'Save operations'}
-                      </button>
-                    </form>
-                  </div>
-
-                  {/* Payments — Razorpay Route. When set, every Razorpay
-                      payment on this outlet is routed (full amount) to
-                      this Linked Account; gateway fees come out of the
-                      LA's settlement. Empty = customer PWA hides the
-                      Razorpay option entirely. */}
-                  <div className="bg-white rounded-xl border border-slate-100 p-3 space-y-2.5">
-                    <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Payments</p>
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        const fd = new FormData(e.currentTarget);
-                        const raw = String(fd.get('razorpayLinkedAccountId') || '').trim();
-                        saveOps(outlet.id, { razorpayLinkedAccountId: raw || null });
-                      }}
-                      className="space-y-2"
-                    >
-                      <div>
-                        <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">
-                          Razorpay Route ID
-                        </label>
-                        <input
-                          name="razorpayLinkedAccountId"
-                          defaultValue={selected.razorpayLinkedAccountId ?? ''}
-                          placeholder="acc_XXXXXXXXXXXXXX"
-                          className="input text-xs font-mono"
-                          autoComplete="off"
-                          spellCheck={false}
-                        />
-                        <p className="text-[10px] text-slate-400 mt-1">
-                          Linked Account ID from Razorpay (starts with <code>acc_</code>). Leave blank to hide the Razorpay option from customers.
-                        </p>
-                      </div>
-                      <button type="submit" disabled={saving} className="btn-secondary text-xs py-1.5 w-full">
-                        {saving ? 'Saving…' : 'Save payments'}
+                      <p className="text-[10px] text-slate-400 -mt-1">
+                        Prep time, parcel fee and Razorpay Route ID now live on the outlet's own profile.
+                      </p>
+                      <button type="submit" disabled={saving} className="btn-secondary text-xs py-1.5">
+                        {saving ? 'Saving…' : 'Save'}
                       </button>
                     </form>
                   </div>

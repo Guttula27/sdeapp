@@ -17,18 +17,19 @@ export class UsersController {
   ) {}
 
   @Post()
-  create(@Body() body: any) {
-    return this.service.create(body);
+  create(@CurrentUser() actor: any, @Body() body: any) {
+    return this.service.create(actor, body);
   }
 
   @Get()
   findAll(
+    @CurrentUser() actor: any,
     @Query('businessId') businessId?: string,
     @Query('outletId') outletId?: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    return this.service.findAll(businessId, outletId, page, limit);
+    return this.service.findAll(actor, businessId, outletId, page, limit);
   }
 
   @Get('me')

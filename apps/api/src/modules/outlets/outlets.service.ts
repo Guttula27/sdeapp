@@ -33,6 +33,7 @@ export class CreateOutletDto {
   @IsString() @IsOptional() description?: string;
   @IsString() @IsOptional() phone?: string;
   @IsString() @IsOptional() gstNumber?: string;
+  @IsString() @IsOptional() fssaiNumber?: string;
   @IsString() @IsOptional() upiId?: string;
   @IsString() @IsOptional() logoUrl?: string;
   @IsString() @IsOptional() primaryImageUrl?: string;
@@ -316,9 +317,17 @@ export class OutletsService {
       return { ...base, isOpen: false, isActive: false, reason: 'Outlet is currently closed' };
     }
 
+    // Hours are stored as IST wall-clock (openTime/closeTime are HH:MM
+    // strings the admin typed in their local timezone — and the product
+    // is India-only). The API container typically runs UTC, so using
+    // now.getHours() / getDay() directly would read 09:25 IST as 03:55
+    // UTC and show "Opens at 07:00" while the outlet is actually open.
+    // Round-trip through toLocaleString to coerce wall-clock to IST.
+    // India doesn't observe DST so the round-trip is unambiguous.
     const now = new Date();
-    const day = now.getDay();
-    const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const day = ist.getDay();
+    const hm = `${String(ist.getHours()).padStart(2, '0')}:${String(ist.getMinutes()).padStart(2, '0')}`;
     const todays = outlet.hours.filter((h) => h.dayOfWeek === day);
 
     if (todays.length === 0) {
@@ -399,23 +408,45 @@ export class OutletsService {
       }
       if (r.closeTime <= r.openTime) throw new BadRequestException('Close time must be after open time');
     }
-    return this.prisma.$transaction(async (tx) => {
-      await tx.outletHour.deleteMany({ where: { outletId } });
-      if (ranges.length) {
-        await tx.outletHour.createMany({
-          data: ranges.map(r => ({
-            outletId,
-            dayOfWeek: r.dayOfWeek,
-            openTime: r.openTime,
-            closeTime: r.closeTime,
-          })),
+    // deleteMany+createMany on OutletHour takes next-key locks on the
+    // outletId secondary index. The admin profile page auto-saves on
+    // every time-picker change, so two rapid PUTs can race and deadlock
+    // (Prisma P2034). Retry a small number of times with jitter before
+    // surfacing the failure — by then the contention has cleared.
+    let attempt = 0;
+    while (true) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          await tx.outletHour.deleteMany({ where: { outletId } });
+          if (ranges.length) {
+            await tx.outletHour.createMany({
+              data: ranges.map(r => ({
+                outletId,
+                dayOfWeek: r.dayOfWeek,
+                openTime: r.openTime,
+                closeTime: r.closeTime,
+              })),
+            });
+          }
+          return tx.outletHour.findMany({
+            where: { outletId },
+            orderBy: [{ dayOfWeek: 'asc' }, { openTime: 'asc' }],
+          });
         });
+      } catch (e: any) {
+        const code = e?.code;
+        // P2034 = "Transaction failed due to a write conflict or a deadlock".
+        // 1213 / 1205 are the raw InnoDB codes Prisma sometimes wraps as P2010.
+        const isDeadlock = code === 'P2034'
+          || (code === 'P2010' && [1213, 1205].includes(Number(e?.meta?.code)));
+        if (!isDeadlock || attempt >= 3) throw e;
+        attempt += 1;
+        // 50ms, 150ms, 350ms with jitter
+        const delay = 50 * 2 ** (attempt - 1) + Math.floor(Math.random() * 50);
+        await new Promise((r) => setTimeout(r, delay));
       }
-      return tx.outletHour.findMany({
-        where: { outletId },
-        orderBy: [{ dayOfWeek: 'asc' }, { openTime: 'asc' }],
-      });
-    });
+    }
+    // unreachable — exits via return or throw above
   }
 
   async createSection(outletId: string, data: CreateSectionDto) {

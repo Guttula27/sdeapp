@@ -1,12 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { TranslationsService } from '../translations/translations.service';
+import { DiscountsService } from '../discounts/discounts.service';
 
 @Injectable()
 export class MenuService {
   constructor(
     private prisma: PrismaService,
     private translations: TranslationsService,
+    private discounts: DiscountsService,
   ) {}
 
   // Translate every menu-bearing entity in a single getMenu response.
@@ -224,6 +226,40 @@ export class MenuService {
 
     await this.hydrateMenu(categories, lang);
 
+    // Active line-level auto-discounts (ITEM / SUBCATEGORY / CATEGORY).
+    // Surfaced on each item so the customer menu can render strikethrough
+    // pricing with the savings badge. Bill-level discounts apply to the
+    // whole cart and are computed at /cart/quote — they don't decorate
+    // individual menu items.
+    const activeAutoDiscounts = await this.discounts.activeAutoForOutlet(outletId);
+    const lineDiscounts = activeAutoDiscounts.filter(
+      (d: any) => d.targetType === 'ITEM'
+        || d.targetType === 'SUBCATEGORY'
+        || d.targetType === 'CATEGORY',
+    );
+    const computeLineDiscount = (
+      candidates: any[],
+      basePrice: number,
+    ): { name: string; discountedPrice: number; saveAmount: number } | null => {
+      if (!candidates.length || basePrice <= 0) return null;
+      let best: { d: any; save: number } | null = null;
+      for (const d of candidates) {
+        let amt = d.discountType === 'PERCENT'
+          ? (basePrice * Number(d.discountValue)) / 100
+          : Number(d.discountValue);
+        if (d.maxDiscountAmount) amt = Math.min(amt, Number(d.maxDiscountAmount));
+        amt = Math.min(amt, basePrice);
+        if (amt <= 0) continue;
+        if (!best || amt > best.save) best = { d, save: amt };
+      }
+      if (!best) return null;
+      return {
+        name: best.d.name,
+        discountedPrice: Math.round((basePrice - best.save) * 100) / 100,
+        saveAmount: Math.round(best.save * 100) / 100,
+      };
+    };
+
     // Aggregate review stats for every item on the menu in one query so the
     // customer can see the consolidated rating chip without an extra round-trip.
     const itemIds = categories.flatMap((c: any) =>
@@ -251,22 +287,39 @@ export class MenuService {
         ...sub,
         items: sub.items.map(item => {
           const itemOv = pickItemPrice(item);
+          const itemEffective = itemOv ? itemOv.price : Number(item.basePrice);
+          // Candidate discounts for this item — ITEM matches the row,
+          // SUBCATEGORY matches its parent sub, CATEGORY matches the
+          // sub's category. Same candidate set drives both the item-
+          // level price and each variant's price (PERCENT scales).
+          const candidates = lineDiscounts.filter((d: any) => {
+            if (d.targetType === 'ITEM') return d.itemId === item.id;
+            if (d.targetType === 'SUBCATEGORY') return d.subcategoryId === sub.id;
+            if (d.targetType === 'CATEGORY') return d.categoryId === cat.id;
+            return false;
+          });
           const variants = item.variants.map((v: any) => {
             const vOv = pickItemPrice(item, v.id);
+            const variantEffective = vOv ? vOv.price : Number(v.price);
             return {
               ...v,
-              effectivePrice: vOv ? vOv.price : Number(v.price),
+              effectivePrice: variantEffective,
               appliedTagId: vOv?.source === 'CUSTOMER_TAG' ? vOv.id : null,
               appliedTableTypeId: vOv?.source === 'TABLE_TYPE' ? vOv.id : null,
+              discountInfo: computeLineDiscount(candidates, variantEffective),
             };
           });
           const rating = ratingByItem.get(item.id) ?? { avg: 0, count: 0 };
           return {
             ...item,
             variants,
-            effectivePrice: itemOv ? itemOv.price : Number(item.basePrice),
+            effectivePrice: itemEffective,
             appliedTagId: itemOv?.source === 'CUSTOMER_TAG' ? itemOv.id : null,
             appliedTableTypeId: itemOv?.source === 'TABLE_TYPE' ? itemOv.id : null,
+            // Active line-level discount on the item's base price.
+            // The pricing engine applies the same rule at /cart/quote so
+            // the menu badge and the actual bill stay in sync.
+            discountInfo: computeLineDiscount(candidates, itemEffective),
             // Computed flags:
             isPopular: popularSet.has(item.id) || item.isPopular,
             isFavorite: favoriteSet.has(item.id),
@@ -345,6 +398,36 @@ export class MenuService {
       await this.translations.upsertAll('Subcategory', sub.id, { name: sub.name });
     }
     return sub;
+  }
+
+  // Sub deletion mirrors deleteCategory: hard-delete when no orders ever
+  // referenced an item beneath the sub; otherwise soft-deactivate the sub
+  // and its items so historical orders still resolve cleanly. Used for both
+  // outlet rows and business templates — the template path skips the order
+  // count entirely (template items can never be ordered).
+  async deleteSubcategory(id: string) {
+    const orderItemCount = await this.prisma.orderItem.count({
+      where: { item: { subcategoryId: id } },
+    });
+    if (orderItemCount > 0) {
+      return this.prisma.subcategory.update({
+        where: { id },
+        data: { isActive: false },
+      });
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const items = await tx.item.findMany({ where: { subcategoryId: id }, select: { id: true } });
+      const itemIds = items.map((i) => i.id);
+      if (itemIds.length) {
+        await tx.itemTag.deleteMany({ where: { itemId: { in: itemIds } } });
+        await tx.option.deleteMany({ where: { itemId: { in: itemIds } } });
+        await tx.variant.deleteMany({ where: { itemId: { in: itemIds } } });
+        await tx.translation.deleteMany({ where: { entityType: 'Item', entityId: { in: itemIds } } });
+        await tx.item.deleteMany({ where: { id: { in: itemIds } } });
+      }
+      await tx.translation.deleteMany({ where: { entityType: 'Subcategory', entityId: id } });
+      return tx.subcategory.delete({ where: { id } });
+    });
   }
 
   // ─── Items ────────────────────────────────────────────────
@@ -518,7 +601,7 @@ export class MenuService {
 
   // ─── Variants ─────────────────────────────────────────────
 
-  async createVariant(itemId: string, data: { name: string; price: number; shortDescription?: string }) {
+  async createVariant(itemId: string, data: { name: string; price: number; shortDescription?: string; unitQuantity?: number | null }) {
     const variant = await this.prisma.variant.create({ data: { ...data, itemId } });
     await this.translations.upsertAll('Variant', variant.id, {
       name: variant.name,
@@ -555,6 +638,67 @@ export class MenuService {
       where: { itemId },
       orderBy: { displayOrder: 'asc' },
     });
+  }
+
+  // ─── Reorder: categories / subcategories / items ──────────
+  // Same pattern as reorderItemImages: client sends the new order, server
+  // writes displayOrder = array index in one transaction. The scope filter
+  // (outletId / businessId / parent id) doubles as the cross-tenant guard so
+  // a caller cannot stamp displayOrder on a row that doesn't belong to its
+  // tier — bad ids simply fall out of the WHERE and the count mismatch trips
+  // a BadRequest.
+  private async assertOwnership(found: number, expected: number, label: string) {
+    if (found !== expected) {
+      throw new BadRequestException(`One or more ${label} do not belong to this scope`);
+    }
+  }
+
+  async reorderCategories(
+    scope: { outletId?: string; businessId?: string },
+    orderedIds: string[],
+  ) {
+    if (!orderedIds?.length) return { reordered: 0 };
+    const where: any = { id: { in: orderedIds } };
+    if (scope.outletId) where.outletId = scope.outletId;
+    if (scope.businessId) where.businessId = scope.businessId;
+    const owned = await this.prisma.category.findMany({ where, select: { id: true } });
+    await this.assertOwnership(owned.length, orderedIds.length, 'categories');
+    await this.prisma.$transaction(
+      orderedIds.map((id, idx) =>
+        this.prisma.category.update({ where: { id }, data: { displayOrder: idx } }),
+      ),
+    );
+    return { reordered: orderedIds.length };
+  }
+
+  async reorderSubcategories(categoryId: string, orderedIds: string[]) {
+    if (!orderedIds?.length) return { reordered: 0 };
+    const owned = await this.prisma.subcategory.findMany({
+      where: { id: { in: orderedIds }, categoryId },
+      select: { id: true },
+    });
+    await this.assertOwnership(owned.length, orderedIds.length, 'subcategories');
+    await this.prisma.$transaction(
+      orderedIds.map((id, idx) =>
+        this.prisma.subcategory.update({ where: { id }, data: { displayOrder: idx } }),
+      ),
+    );
+    return { reordered: orderedIds.length };
+  }
+
+  async reorderItems(subcategoryId: string, orderedIds: string[]) {
+    if (!orderedIds?.length) return { reordered: 0 };
+    const owned = await this.prisma.item.findMany({
+      where: { id: { in: orderedIds }, subcategoryId },
+      select: { id: true },
+    });
+    await this.assertOwnership(owned.length, orderedIds.length, 'items');
+    await this.prisma.$transaction(
+      orderedIds.map((id, idx) =>
+        this.prisma.item.update({ where: { id }, data: { displayOrder: idx } }),
+      ),
+    );
+    return { reordered: orderedIds.length };
   }
 
   async updateVariant(id: string, data: Partial<{ name: string; shortDescription: string | null; price: number; isAvailable: boolean }>) {
@@ -595,128 +739,8 @@ export class MenuService {
     });
   }
 
-  // ─── Import menu from sibling outlet ─────────────────────
-  async importFromOutlet(targetOutletId: string, sourceOutletId: string) {
-    if (targetOutletId === sourceOutletId) {
-      throw new BadRequestException('Source and target outlet must differ');
-    }
-
-    const [target, source] = await Promise.all([
-      this.prisma.outlet.findUnique({ where: { id: targetOutletId }, select: { id: true, businessId: true } }),
-      this.prisma.outlet.findUnique({ where: { id: sourceOutletId }, select: { id: true, businessId: true } }),
-    ]);
-    if (!target) throw new NotFoundException('Target outlet not found');
-    if (!source) throw new NotFoundException('Source outlet not found');
-    if (target.businessId !== source.businessId) {
-      throw new BadRequestException('Outlets must belong to the same business');
-    }
-
-    const existing = await this.prisma.category.count({
-      where: { outletId: targetOutletId, isActive: true },
-    });
-    if (existing > 0) {
-      throw new BadRequestException('Target menu is not empty — delete categories first or pick an empty outlet');
-    }
-
-    const sourceCategories = await this.prisma.category.findMany({
-      where: { outletId: sourceOutletId, isActive: true },
-      orderBy: { displayOrder: 'asc' },
-      include: {
-        subcategories: {
-          where: { isActive: true },
-          orderBy: { displayOrder: 'asc' },
-          include: {
-            items: {
-              where: { isDisplayed: true },
-              orderBy: { displayOrder: 'asc' },
-              include: { variants: true, options: true, tags: true },
-            },
-          },
-        },
-      },
-    });
-
-    let categoriesCount = 0;
-    let subcategoriesCount = 0;
-    let itemsCount = 0;
-
-    await this.prisma.$transaction(async (tx) => {
-      for (const cat of sourceCategories) {
-        const newCat = await tx.category.create({
-          data: {
-            outletId: targetOutletId,
-            name: cat.name,
-            imageUrl: cat.imageUrl,
-            displayOrder: cat.displayOrder,
-            // Preserve the menu mapping when copying: the imported category
-            // lands inside the same menu it had at the business level.
-            menuId: cat.menuId ?? undefined,
-          },
-        });
-        categoriesCount++;
-
-        for (const sub of cat.subcategories) {
-          const newSub = await tx.subcategory.create({
-            data: {
-              categoryId: newCat.id,
-              name: sub.name,
-              displayOrder: sub.displayOrder,
-            },
-          });
-          subcategoriesCount++;
-
-          for (const item of sub.items) {
-            const newItem = await tx.item.create({
-              data: {
-                subcategoryId: newSub.id,
-                name: item.name,
-                description: item.description,
-                basePrice: item.basePrice,
-                parcelCharge: item.parcelCharge,
-                preparationTime: item.preparationTime,
-                imageUrl: item.imageUrl,
-                isPopular: item.isPopular,
-                isAvailable: item.isAvailable,
-                isDisplayed: item.isDisplayed,
-                displayOrder: item.displayOrder,
-              },
-            });
-            itemsCount++;
-
-            if (item.variants.length) {
-              await tx.variant.createMany({
-                data: item.variants.map(v => ({
-                  itemId: newItem.id,
-                  name: v.name,
-                  price: v.price,
-                  isAvailable: v.isAvailable,
-                })),
-              });
-            }
-            if (item.options.length) {
-              await tx.option.createMany({
-                data: item.options.map(o => ({
-                  itemId: newItem.id,
-                  name: o.name,
-                  price: o.price,
-                })),
-              });
-            }
-            if (item.tags.length) {
-              await tx.itemTag.createMany({
-                data: item.tags.map(t => ({
-                  itemId: newItem.id,
-                  name: t.name,
-                })),
-              });
-            }
-          }
-        }
-      }
-    });
-
-    return { categories: categoriesCount, subcategories: subcategoriesCount, items: itemsCount };
-  }
+  // Outlet-to-outlet menu import has been removed by product decision —
+  // outlets may only import from the parent business template.
 
   /* ── Business-template menu ──────────────────────────────
    *
@@ -824,7 +848,27 @@ export class MenuService {
     return item;
   }
 
-  async importFromBusiness(targetOutletId: string, sourceBusinessId: string, itemIds?: string[]) {
+  // Import from the parent business template. The selection model is
+  // explicit at three levels:
+  //   • categoryIds    — bring the whole category (every sub, every item)
+  //   • subcategoryIds — bring the whole sub (every item)
+  //   • itemIds        — bring just these items
+  // At least one of the three must be non-empty. We deliberately do NOT
+  // wholesale-import the entire template any more; that surprised outlets.
+  // Touched menus are auto-linked + enabled on the outlet so the imported
+  // categories become visible immediately.
+  async importFromBusiness(
+    targetOutletId: string,
+    sourceBusinessId: string,
+    selection: { categoryIds?: string[]; subcategoryIds?: string[]; itemIds?: string[] } = {},
+  ) {
+    const catIds = selection.categoryIds ?? [];
+    const subIds = selection.subcategoryIds ?? [];
+    const itemIds = selection.itemIds ?? [];
+    if (catIds.length + subIds.length + itemIds.length === 0) {
+      throw new BadRequestException('Pick at least one category, subcategory, or item to import');
+    }
+
     const [target, source] = await Promise.all([
       this.prisma.outlet.findUnique({
         where: { id: targetOutletId },
@@ -841,10 +885,13 @@ export class MenuService {
     // the target outlet's default when copying so the new item is taxed correctly.
     const defaultGst = target.gstApplicable ? target.gstPercent : null;
 
-    // When a specific set of items is supplied, restrict the copied tree to
-    // just those — outlets pick items individually. Empty / undefined means
-    // "import the whole template".
-    const itemFilter = itemIds && itemIds.length ? { id: { in: itemIds } } : undefined;
+    const catSet = new Set(catIds);
+    const subSet = new Set(subIds);
+    const itemSet = new Set(itemIds);
+
+    // Pull the full tree once. Filtering happens in-memory below so the same
+    // category can be "wholly picked" (catSet) and partially picked (some
+    // items also in itemSet) without double-fetching.
     const sourceCategories = await this.prisma.category.findMany({
       where: { businessId: sourceBusinessId, isActive: true },
       orderBy: { displayOrder: 'asc' },
@@ -853,9 +900,7 @@ export class MenuService {
           where: { isActive: true },
           orderBy: { displayOrder: 'asc' },
           include: {
-            items: itemFilter
-              ? { where: itemFilter, orderBy: { displayOrder: 'asc' }, include: { variants: true } }
-              : { orderBy: { displayOrder: 'asc' }, include: { variants: true } },
+            items: { orderBy: { displayOrder: 'asc' }, include: { variants: true } },
           },
         },
       },
@@ -869,13 +914,23 @@ export class MenuService {
     // would otherwise blow the default Prisma 5-second transaction timeout.
     type TranslationJob = { entityType: string; entityId: string; fields: Record<string, string | null | undefined> };
     const translationJobs: TranslationJob[] = [];
+    // Menus touched by this import — we'll upsert OutletMenu links for each.
+    const touchedMenuIds = new Set<string>();
 
     await this.prisma.$transaction(async (tx) => {
       for (const cat of sourceCategories) {
-        // When filtering by item, skip whole categories whose subcategories
-        // contain none of the selected items — keeps the outlet menu tidy.
-        const hasItemsInScope = cat.subcategories.some((s) => s.items.length > 0);
-        if (itemFilter && !hasItemsInScope) continue;
+        const wholeCat = catSet.has(cat.id);
+        // Sub is in scope if the whole cat is picked, the sub is individually
+        // picked, or any of its items is in itemSet.
+        const subsInScope = cat.subcategories.filter((s) =>
+          wholeCat || subSet.has(s.id) || s.items.some((it) => itemSet.has(it.id)),
+        );
+        // Only skip when the cat itself isn't whole-picked. If wholeCat is
+        // true, we still want to create the empty category skeleton at the
+        // outlet — that's the explicit promise of category-level selection,
+        // and silently dropping it is exactly what was making the toast say
+        // "Imported 0 …" after a multi-menu pick.
+        if (!wholeCat && subsInScope.length === 0) continue;
 
         // Look for an existing same-name category at the outlet so re-import
         // is additive instead of duplicating top-level groups. Must scope by
@@ -906,9 +961,18 @@ export class MenuService {
           categoriesCount++;
           translationJobs.push({ entityType: 'Category', entityId: outletCat.id, fields: { name: outletCat.name } });
         }
+        if (cat.menuId) touchedMenuIds.add(cat.menuId);
 
-        for (const sub of cat.subcategories) {
-          if (itemFilter && sub.items.length === 0) continue;
+        for (const sub of subsInScope) {
+          const wholeSub = wholeCat || subSet.has(sub.id);
+          const itemsInScope = wholeSub
+            ? sub.items
+            : sub.items.filter((it) => itemSet.has(it.id));
+          // A sub with no items in scope (and not whole-selected) means the
+          // caller asked for an empty wrapper — usually because it's the sub
+          // of a wholly-selected category that is itself empty. Allow it.
+          if (!wholeSub && itemsInScope.length === 0) continue;
+
           let outletSub = await tx.subcategory.findFirst({
             where: { categoryId: outletCat.id, name: sub.name, isActive: true },
           });
@@ -920,7 +984,7 @@ export class MenuService {
             translationJobs.push({ entityType: 'Subcategory', entityId: outletSub.id, fields: { name: outletSub.name } });
           }
 
-          for (const item of sub.items) {
+          for (const item of itemsInScope) {
             const existingItem = await tx.item.findFirst({
               where: { subcategoryId: outletSub.id, name: item.name },
             });
@@ -970,6 +1034,19 @@ export class MenuService {
             }
           }
         }
+      }
+
+      // Auto-enable an OutletMenu link for each menu we just imported into.
+      // Importing is an explicit "I want this menu visible at my outlet"
+      // signal, so we force isEnabled=true even when a previous link existed
+      // in a disabled state (otherwise the outlet would import items into a
+      // menu customers still couldn't see).
+      for (const menuId of touchedMenuIds) {
+        await tx.outletMenu.upsert({
+          where: { outletId_menuId: { outletId: targetOutletId, menuId } },
+          update: { isEnabled: true },
+          create: { outletId: targetOutletId, menuId, isEnabled: true },
+        });
       }
     });
 

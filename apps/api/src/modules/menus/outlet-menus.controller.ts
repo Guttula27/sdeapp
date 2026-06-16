@@ -24,6 +24,18 @@ export class OutletMenusController {
     return this.service.createForOutlet(outletId, body);
   }
 
+  // MUST come before @Patch(':menuId') below — Express matches routes in
+  // declaration order, so a generic `:menuId` would otherwise swallow the
+  // literal `reorder` path. Writes OutletMenu.displayOrder, lazily creating
+  // link rows for any menus the outlet hasn't seen yet.
+  @Patch('reorder')
+  reorder(
+    @Param('outletId') outletId: string,
+    @Body() body: { orderedIds: string[] },
+  ) {
+    return this.service.reorderOutletMenus(outletId, body?.orderedIds ?? []);
+  }
+
   @Patch(':menuId')
   toggle(
     @Param('outletId') outletId: string,

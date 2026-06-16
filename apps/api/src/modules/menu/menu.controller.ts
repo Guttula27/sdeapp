@@ -44,6 +44,18 @@ export class MenuController {
     return this.menuService.createCategory(outletId, body);
   }
 
+  // MUST precede `categories/:id` — Express/Nest matches in declaration order
+  // and would otherwise capture the literal "reorder" as :id.
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Patch('categories/reorder')
+  reorderCategories(
+    @Param('outletId') outletId: string,
+    @Body() body: { orderedIds: string[] },
+  ) {
+    return this.menuService.reorderCategories({ outletId }, body?.orderedIds ?? []);
+  }
+
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @Patch('categories/:id')
@@ -70,6 +82,13 @@ export class MenuController {
   @Patch('subcategories/:id')
   updateSubcategory(@Param('id') id: string, @Body() body: any) {
     return this.menuService.updateSubcategory(id, body);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Delete('subcategories/:id')
+  deleteSubcategory(@Param('id') id: string) {
+    return this.menuService.deleteSubcategory(id);
   }
 
   @ApiBearerAuth()
@@ -138,15 +157,9 @@ export class MenuController {
     return this.menuService.deleteVariant(id);
   }
 
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @Post('import-from/:sourceOutletId')
-  importFromOutlet(
-    @Param('outletId') outletId: string,
-    @Param('sourceOutletId') sourceOutletId: string,
-  ) {
-    return this.menuService.importFromOutlet(outletId, sourceOutletId);
-  }
+  // Outlet-to-outlet menu import was removed by product decision — outlets
+  // import only from the parent business template. The corresponding service
+  // method is also gone.
 
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
@@ -155,7 +168,7 @@ export class MenuController {
     @Param('outletId') outletId: string,
     @Param('businessId') businessId: string,
     @CurrentUser() user: any,
-    @Body() body: { itemIds?: string[] } = {},
+    @Body() body: { categoryIds?: string[]; subcategoryIds?: string[]; itemIds?: string[] } = {},
   ) {
     // Authorization: outlet admins can only import to their own outlet.
     // Business owners can import to any outlet within their business.
@@ -166,7 +179,11 @@ export class MenuController {
     if (user?.businessId && user.businessId !== businessId) {
       throw new ForbiddenException('You can only import from your own business');
     }
-    return this.menuService.importFromBusiness(outletId, businessId, body?.itemIds);
+    return this.menuService.importFromBusiness(outletId, businessId, {
+      categoryIds: body?.categoryIds,
+      subcategoryIds: body?.subcategoryIds,
+      itemIds: body?.itemIds,
+    });
   }
 
   @ApiBearerAuth()
@@ -194,5 +211,29 @@ export class MenuController {
     @Body() body: { orderedIds: string[] },
   ) {
     return this.menuService.reorderItemImages(itemId, body.orderedIds);
+  }
+
+  // ── Reorder endpoints (outlet tier) ───────────────────────
+  // categories/reorder is declared higher up the file (above categories/:id)
+  // to win route matching. Subcategory and item reorder paths are deep
+  // enough that no shallower :id route can swallow them.
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Patch('categories/:categoryId/subcategories/reorder')
+  reorderSubcategories(
+    @Param('categoryId') categoryId: string,
+    @Body() body: { orderedIds: string[] },
+  ) {
+    return this.menuService.reorderSubcategories(categoryId, body?.orderedIds ?? []);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Patch('subcategories/:subcategoryId/items/reorder')
+  reorderItems(
+    @Param('subcategoryId') subcategoryId: string,
+    @Body() body: { orderedIds: string[] },
+  ) {
+    return this.menuService.reorderItems(subcategoryId, body?.orderedIds ?? []);
   }
 }

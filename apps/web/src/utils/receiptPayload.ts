@@ -11,13 +11,60 @@ import type { CustomerReceiptPayload, ReceiptDiscountLine, ReceiptItemLine } fro
  * Missing fields collapse gracefully.
  */
 export function buildReceiptPayload(order: any): CustomerReceiptPayload {
-  const items: ReceiptItemLine[] = (order.items ?? []).map((it: any) => ({
-    itemName: it.item?.name ?? 'Item',
-    variantName: it.variant?.name ?? null,
-    quantity: Number(it.quantity),
-    unitPrice: Number(it.unitPrice),
-    totalPrice: Number(it.totalPrice),
-  }));
+  // Collapse expanded combo children back under their parent so the
+  // printed bill mirrors the customer's mental model: one line per
+  // combo, with sub-items indented. Standalone items pass through.
+  const items: ReceiptItemLine[] = (() => {
+    const out: ReceiptItemLine[] = [];
+    const seen = new Map<string, ReceiptItemLine>();
+    for (const it of (order.items ?? [])) {
+      const itemName = it.itemNameSnapshot || it.item?.name || 'Item';
+      const variantName = it.variantNameSnapshot ?? it.variant?.name ?? null;
+      if (it.bundleId) {
+        let bundle = seen.get(it.bundleId);
+        if (!bundle) {
+          bundle = {
+            itemName: it.bundleParent?.name || 'Combo',
+            variantName: null,
+            quantity: 0,
+            unitPrice: 0,
+            totalPrice: 0,
+            bundleChildren: [],
+          };
+          seen.set(it.bundleId, bundle);
+          out.push(bundle);
+        }
+        bundle.totalPrice += Number(it.totalPrice ?? 0);
+        // Primary row carries the combo qty + price; siblings have
+        // totalPrice = 0 and we just track their names for display.
+        if (Number(it.totalPrice ?? 0) > 0) {
+          bundle.quantity += Number(it.quantity);
+          bundle.unitPrice = bundle.quantity > 0 ? bundle.totalPrice / bundle.quantity : Number(it.unitPrice);
+        }
+        bundle.bundleChildren!.push({
+          itemName,
+          variantName,
+          quantity: Number(it.quantity),
+        });
+      } else {
+        out.push({
+          itemName,
+          variantName,
+          quantity: Number(it.quantity),
+          unitPrice: Number(it.unitPrice),
+          totalPrice: Number(it.totalPrice),
+        });
+      }
+    }
+    // Fallback: free combos (every child totalPrice=0) — use the
+    // first child's qty so the line still prints something sensible.
+    for (const b of out) {
+      if (b.bundleChildren && b.quantity === 0 && b.bundleChildren.length > 0) {
+        b.quantity = b.bundleChildren[0].quantity;
+      }
+    }
+    return out;
+  })();
 
   // Discount lines: coupons first (named with their code), then reward
   // redemptions, then any leftover aggregate as a generic "Discount" so
@@ -70,6 +117,41 @@ export function buildReceiptPayload(order: any): CustomerReceiptPayload {
   const intraState = cgst > 0 || sgst > 0;
   const igst = !intraState && taxAmount > 0 ? taxAmount : 0;
 
+  // Multi-rate breakdown — group OrderItems by their snapshotted
+  // gstRate so a mixed cart (food at 5% + beverages at 18%, or items
+  // billed under an AC section's rate) prints one CGST/SGST line per
+  // slab. Same logic the digital ThermalReceipt uses; keeping it
+  // here means the printed bill and the PDF agree even before /
+  // after any auto-discount scaling.
+  const taxLines: NonNullable<CustomerReceiptPayload['taxLines']> = (() => {
+    const groups = new Map<string, { rate: number; baseSum: number; gstAmount: number }>();
+    for (const it of order.items ?? []) {
+      const rate = Math.round(Number(it.gstRate ?? 0) * 100) / 100;
+      if (rate <= 0) continue;
+      const itBase = Number(it.totalPrice ?? 0);
+      const itGst = Number(it.gstAmount ?? (itBase * rate) / 100);
+      const key = rate.toFixed(2);
+      const entry = groups.get(key) || { rate, baseSum: 0, gstAmount: 0 };
+      entry.baseSum += itBase;
+      entry.gstAmount += itGst;
+      groups.set(key, entry);
+    }
+    const rows = Array.from(groups.values()).sort((a, b) => a.rate - b.rate);
+    // Proportional scale to the Order's stored taxAmount when promotions
+    // have shifted it away from the sum of per-line tax (mirrors the
+    // ThermalReceipt logic). All-line bill / coupon / reward discounts
+    // are flat-proportional so a uniform ratio preserves per-rate accuracy.
+    const sumGst = rows.reduce((s, g) => s + g.gstAmount, 0);
+    if (sumGst > 0 && taxAmount > 0 && Math.abs(taxAmount - sumGst) > 0.01) {
+      const ratio = taxAmount / sumGst;
+      for (const g of rows) g.gstAmount = g.gstAmount * ratio;
+    }
+    return rows.map((g) => intraState
+      ? { rate: g.rate, cgst: g.gstAmount / 2, sgst: g.gstAmount / 2, gstAmount: g.gstAmount }
+      : { rate: g.rate, igst: g.gstAmount, gstAmount: g.gstAmount },
+    );
+  })();
+
   // Round-off absorbs any gap between stored grand total and the sum
   // of components we're about to print — usually 0 for new orders but
   // can be a few paise on legacy ones persisted under the old
@@ -114,6 +196,7 @@ export function buildReceiptPayload(order: any): CustomerReceiptPayload {
     sgst: intraState ? sgst : undefined,
     igst: igst > 0 ? igst : undefined,
     gstPct,
+    taxLines: taxLines.length > 0 ? taxLines : undefined,
     roundOff,
     total,
     paidVia,
