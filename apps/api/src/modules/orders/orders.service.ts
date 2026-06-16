@@ -12,6 +12,11 @@ import { LifecycleDispatcherService } from '../customer-alerts/lifecycle-dispatc
 import { PricingService } from '../pricing/pricing.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { ServiceStationsService } from '../service-stations/service-stations.service';
+import {
+  evaluateCascade,
+  nowInOutletTz,
+  TimingSlot,
+} from '../../common/timing/timing-slots';
 
 @Injectable()
 export class OrdersService {
@@ -1523,6 +1528,56 @@ export class OrdersService {
     return { offerNames };
   }
 
+  /**
+   * Build the schedule chain for an item — outlet → menu (with outlet
+   * override) → category → subcategory → item — for the order-time
+   * cascade check. Mirrors the same cascade menu.service.getMenu uses
+   * so a stale cart can't slip through after the customer's window
+   * closed.
+   */
+  private async buildItemScheduleChain(itemId: string): Promise<
+    Array<{ slots: TimingSlot[]; label?: string }>
+  > {
+    const item = await this.prisma.item.findUnique({
+      where: { id: itemId },
+      include: {
+        timingSlots: true,
+        subcategory: {
+          include: {
+            timingSlots: true,
+            category: {
+              include: {
+                timingSlots: true,
+                menu: {
+                  include: {
+                    timingSlots: true,
+                    outletLinks: { include: { timingSlots: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!item) return [];
+    const cat = item.subcategory?.category;
+    const menu = cat?.menu;
+    const outletLink = menu?.outletLinks?.[0];
+    const shape = (rows: any[]): TimingSlot[] => (rows ?? []).map((r) => ({
+      dayOfWeek: r.dayOfWeek, startMinute: r.startMinute, endMinute: r.endMinute,
+    }));
+    const menuSlots = outletLink?.overrideTimings && outletLink.timingSlots.length
+      ? shape(outletLink.timingSlots)
+      : shape(menu?.timingSlots ?? []);
+    return [
+      { slots: menuSlots, label: menu?.name || 'Menu' },
+      { slots: shape(cat?.timingSlots), label: cat?.name },
+      { slots: shape(item.subcategory?.timingSlots), label: item.subcategory?.name },
+      { slots: shape(item.timingSlots), label: item.name },
+    ];
+  }
+
   private async resolveOrderItems(
     items: CreateOrderDto['items'],
     ctx: {
@@ -1556,6 +1611,17 @@ export class OrdersService {
         });
         if (!item) throw new NotFoundException(`Item ${i.itemId} not found`);
         if (!item.isAvailable) throw new BadRequestException(`Item "${item.name}" is not available`);
+
+        // Schedule check — the same cascade the customer menu shows is
+        // re-evaluated server-side so a stale cart from earlier in the
+        // day can't slip an out-of-window item through. Outlet hours
+        // (open-status) are enforced separately by the caller.
+        const scheduleChain = await this.buildItemScheduleChain(item.id);
+        const scheduleEval = evaluateCascade(scheduleChain, nowInOutletTz());
+        if (!scheduleEval.inSchedule) {
+          const blocker = scheduleEval.blockedBy?.label || item.name;
+          throw new BadRequestException(`"${blocker}" is not available right now`);
+        }
 
         // Limited-stock check: reject up-front (before the order is created) so
         // the customer sees a clean error and we don't have to roll anything

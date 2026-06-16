@@ -2,6 +2,11 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { TranslationsService } from '../translations/translations.service';
 import { DiscountsService } from '../discounts/discounts.service';
+import {
+  evaluateCascade,
+  nowInOutletTz,
+  TimingSlot,
+} from '../../common/timing/timing-slots';
 
 @Injectable()
 export class MenuService {
@@ -125,14 +130,32 @@ export class MenuService {
       },
       orderBy: { displayOrder: 'asc' },
       include: {
+        // Per-day availability windows. Absent rows = no constraint at
+        // this level; cascade evaluation below combines outlet → menu →
+        // category → subcategory → item to set `inSchedule` per node.
+        timingSlots: true,
+        // Menu-level timing slots come along so we can resolve the
+        // outlet-override variant (OutletMenuTimingSlot) when present
+        // and fall back to MenuTimingSlot otherwise.
+        menu: {
+          include: {
+            timingSlots: true,
+            outletLinks: {
+              where: { outletId },
+              include: { timingSlots: true },
+            },
+          },
+        },
         subcategories: {
           where: { isActive: true },
           orderBy: { displayOrder: 'asc' },
           include: {
+            timingSlots: true,
             items: {
               ...(opts?.includeHidden ? {} : { where: { isDisplayed: true } }),
               orderBy: { displayOrder: 'asc' },
               include: {
+                timingSlots: true,
                 variants: true,
                 options: true,
                 tags: true,
@@ -281,55 +304,187 @@ export class MenuService {
       });
     }
 
-    return categories.map(cat => ({
-      ...cat,
-      subcategories: cat.subcategories.map(sub => ({
-        ...sub,
-        items: sub.items.map(item => {
-          const itemOv = pickItemPrice(item);
-          const itemEffective = itemOv ? itemOv.price : Number(item.basePrice);
-          // Candidate discounts for this item — ITEM matches the row,
-          // SUBCATEGORY matches its parent sub, CATEGORY matches the
-          // sub's category. Same candidate set drives both the item-
-          // level price and each variant's price (PERCENT scales).
-          const candidates = lineDiscounts.filter((d: any) => {
-            if (d.targetType === 'ITEM') return d.itemId === item.id;
-            if (d.targetType === 'SUBCATEGORY') return d.subcategoryId === sub.id;
-            if (d.targetType === 'CATEGORY') return d.categoryId === cat.id;
-            return false;
-          });
-          const variants = item.variants.map((v: any) => {
-            const vOv = pickItemPrice(item, v.id);
-            const variantEffective = vOv ? vOv.price : Number(v.price);
-            return {
-              ...v,
-              effectivePrice: variantEffective,
-              appliedTagId: vOv?.source === 'CUSTOMER_TAG' ? vOv.id : null,
-              appliedTableTypeId: vOv?.source === 'TABLE_TYPE' ? vOv.id : null,
-              discountInfo: computeLineDiscount(candidates, variantEffective),
-            };
-          });
-          const rating = ratingByItem.get(item.id) ?? { avg: 0, count: 0 };
+    // Cascading availability evaluation. Outlet hours and bot
+    // category/sub/item per-day slots all cascade — a node is in
+    // schedule only if its own slots pass AND every ancestor passes.
+    // The menu-level effective slots prefer the outlet override
+    // (OutletMenuTimingSlot) when set, falling back to MenuTimingSlot.
+    // Staff (includeHidden) callers see everything regardless of the
+    // current time so the admin can edit out-of-window items.
+    const now = nowInOutletTz();
+    const skipSchedule = !!opts?.includeHidden;
+    const slotShape = (rows: any[]): TimingSlot[] => (rows ?? []).map((r) => ({
+      dayOfWeek: r.dayOfWeek,
+      startMinute: r.startMinute,
+      endMinute: r.endMinute,
+    }));
+
+    return categories.map((cat: any) => {
+      const menuSlots: TimingSlot[] = (() => {
+        const link = cat.menu?.outletLinks?.[0];
+        const overrideSlots = link?.overrideTimings ? slotShape(link.timingSlots) : null;
+        if (overrideSlots && overrideSlots.length) return overrideSlots;
+        return slotShape(cat.menu?.timingSlots);
+      })();
+      const menuChain = [
+        { slots: menuSlots, label: cat.menu?.name || 'Menu' },
+      ];
+      const catSlots = slotShape(cat.timingSlots);
+      const catChain = [...menuChain, { slots: catSlots, label: cat.name }];
+      const catEval = skipSchedule ? { inSchedule: true } : evaluateCascade(catChain, now);
+      // Strip the internal menu join — clients only need the
+      // pre-existing menuId/menuName fields, not the slot rows.
+      const { menu: _menuJoin, timingSlots: catSlotRows, ...catRest } = cat;
+      void _menuJoin; void catSlotRows;
+      return {
+        ...catRest,
+        timingSlots: catSlots,
+        inSchedule: catEval.inSchedule,
+        nextOpen: skipSchedule ? null : (catEval as any).blockedBy?.nextOpen ?? null,
+        blockedBy: skipSchedule ? null : (catEval as any).blockedBy?.label ?? null,
+        subcategories: cat.subcategories.map((sub: any) => {
+          const subSlots = slotShape(sub.timingSlots);
+          const subChain = [...catChain, { slots: subSlots, label: sub.name }];
+          const subEval = skipSchedule ? { inSchedule: true } : evaluateCascade(subChain, now);
+          const { timingSlots: subSlotRows, ...subRest } = sub;
+          void subSlotRows;
           return {
-            ...item,
-            variants,
-            effectivePrice: itemEffective,
-            appliedTagId: itemOv?.source === 'CUSTOMER_TAG' ? itemOv.id : null,
-            appliedTableTypeId: itemOv?.source === 'TABLE_TYPE' ? itemOv.id : null,
-            // Active line-level discount on the item's base price.
-            // The pricing engine applies the same rule at /cart/quote so
-            // the menu badge and the actual bill stay in sync.
-            discountInfo: computeLineDiscount(candidates, itemEffective),
-            // Computed flags:
-            isPopular: popularSet.has(item.id) || item.isPopular,
-            isFavorite: favoriteSet.has(item.id),
-            // Review aggregates: avg rating (rounded to 1 decimal) + count.
-            ratingAvg: rating.avg,
-            ratingCount: rating.count,
+            ...subRest,
+            timingSlots: subSlots,
+            inSchedule: subEval.inSchedule,
+            nextOpen: skipSchedule ? null : (subEval as any).blockedBy?.nextOpen ?? null,
+            blockedBy: skipSchedule ? null : (subEval as any).blockedBy?.label ?? null,
+            items: sub.items.map((item: any) => {
+              const itemOv = pickItemPrice(item);
+              const itemEffective = itemOv ? itemOv.price : Number(item.basePrice);
+              // Candidate discounts for this item — ITEM matches the row,
+              // SUBCATEGORY matches its parent sub, CATEGORY matches the
+              // sub's category. Same candidate set drives both the item-
+              // level price and each variant's price (PERCENT scales).
+              const candidates = lineDiscounts.filter((d: any) => {
+                if (d.targetType === 'ITEM') return d.itemId === item.id;
+                if (d.targetType === 'SUBCATEGORY') return d.subcategoryId === sub.id;
+                if (d.targetType === 'CATEGORY') return d.categoryId === cat.id;
+                return false;
+              });
+              const variants = item.variants.map((v: any) => {
+                const vOv = pickItemPrice(item, v.id);
+                const variantEffective = vOv ? vOv.price : Number(v.price);
+                return {
+                  ...v,
+                  effectivePrice: variantEffective,
+                  appliedTagId: vOv?.source === 'CUSTOMER_TAG' ? vOv.id : null,
+                  appliedTableTypeId: vOv?.source === 'TABLE_TYPE' ? vOv.id : null,
+                  discountInfo: computeLineDiscount(candidates, variantEffective),
+                };
+              });
+              const rating = ratingByItem.get(item.id) ?? { avg: 0, count: 0 };
+              const itemSlots = slotShape(item.timingSlots);
+              const itemChain = [...subChain, { slots: itemSlots, label: item.name }];
+              const itemEval = skipSchedule ? { inSchedule: true } : evaluateCascade(itemChain, now);
+              const { timingSlots: itemSlotRows, ...itemRest } = item;
+              void itemSlotRows;
+              return {
+                ...itemRest,
+                variants,
+                effectivePrice: itemEffective,
+                appliedTagId: itemOv?.source === 'CUSTOMER_TAG' ? itemOv.id : null,
+                appliedTableTypeId: itemOv?.source === 'TABLE_TYPE' ? itemOv.id : null,
+                // Active line-level discount on the item's base price.
+                // The pricing engine applies the same rule at /cart/quote so
+                // the menu badge and the actual bill stay in sync.
+                discountInfo: computeLineDiscount(candidates, itemEffective),
+                // Computed flags:
+                isPopular: popularSet.has(item.id) || item.isPopular,
+                isFavorite: favoriteSet.has(item.id),
+                // Review aggregates: avg rating (rounded to 1 decimal) + count.
+                ratingAvg: rating.avg,
+                ratingCount: rating.count,
+                // Schedule flags. inSchedule=true means the item is
+                // orderable right now. When false, nextOpen + blockedBy
+                // tell the UI what to show as the "available from" hint
+                // and which ancestor closed the window (so a customer
+                // sees one badge, not three conflicting ones).
+                timingSlots: itemSlots,
+                inSchedule: itemEval.inSchedule,
+                nextOpen: skipSchedule ? null : (itemEval as any).blockedBy?.nextOpen ?? null,
+                blockedBy: skipSchedule ? null : (itemEval as any).blockedBy?.label ?? null,
+              };
+            }),
           };
         }),
-      })),
-    }));
+      };
+    });
+  }
+
+  // ─── Per-day availability slots: cat / sub / item ─────────
+  // Same shape as MenuService.replaceTimings — the client sends the
+  // full desired set and we replace in one transaction. Empty array
+  // clears the slots (level inherits from its ancestors via cascade).
+  private validateTimingSlots(slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }>) {
+    if (!Array.isArray(slots)) throw new BadRequestException('timings must be an array');
+    for (const s of slots) {
+      if (!Number.isInteger(s.dayOfWeek) || s.dayOfWeek < 1 || s.dayOfWeek > 7) {
+        throw new BadRequestException('dayOfWeek must be 1..7');
+      }
+      if (!Number.isInteger(s.startMinute) || !Number.isInteger(s.endMinute)) {
+        throw new BadRequestException('start/end minute must be integers');
+      }
+      if (s.startMinute < 0 || s.startMinute >= 1440 || s.endMinute < 0 || s.endMinute > 1440) {
+        throw new BadRequestException('start/end minute must be within 0..1440');
+      }
+      if (s.endMinute <= s.startMinute) {
+        throw new BadRequestException('endMinute must be greater than startMinute');
+      }
+    }
+  }
+
+  async replaceCategoryTimings(categoryId: string, slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }>) {
+    this.validateTimingSlots(slots);
+    const cat = await this.prisma.category.findUnique({ where: { id: categoryId } });
+    if (!cat) throw new NotFoundException('Category not found');
+    await this.prisma.$transaction([
+      this.prisma.categoryTimingSlot.deleteMany({ where: { categoryId } }),
+      this.prisma.categoryTimingSlot.createMany({
+        data: slots.map((s) => ({ categoryId, ...s })),
+      }),
+    ]);
+    return this.prisma.category.findUnique({
+      where: { id: categoryId },
+      include: { timingSlots: true },
+    });
+  }
+
+  async replaceSubcategoryTimings(subcategoryId: string, slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }>) {
+    this.validateTimingSlots(slots);
+    const sub = await this.prisma.subcategory.findUnique({ where: { id: subcategoryId } });
+    if (!sub) throw new NotFoundException('Subcategory not found');
+    await this.prisma.$transaction([
+      this.prisma.subcategoryTimingSlot.deleteMany({ where: { subcategoryId } }),
+      this.prisma.subcategoryTimingSlot.createMany({
+        data: slots.map((s) => ({ subcategoryId, ...s })),
+      }),
+    ]);
+    return this.prisma.subcategory.findUnique({
+      where: { id: subcategoryId },
+      include: { timingSlots: true },
+    });
+  }
+
+  async replaceItemTimings(itemId: string, slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }>) {
+    this.validateTimingSlots(slots);
+    const item = await this.prisma.item.findUnique({ where: { id: itemId } });
+    if (!item) throw new NotFoundException('Item not found');
+    await this.prisma.$transaction([
+      this.prisma.itemTimingSlot.deleteMany({ where: { itemId } }),
+      this.prisma.itemTimingSlot.createMany({
+        data: slots.map((s) => ({ itemId, ...s })),
+      }),
+    ]);
+    return this.prisma.item.findUnique({
+      where: { id: itemId },
+      include: { timingSlots: true },
+    });
   }
 
   async createCategory(outletId: string, data: { name: string; imageUrl?: string; menuId?: string }) {

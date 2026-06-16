@@ -1,4 +1,4 @@
-import { Controller, ForbiddenException, Get, Post, Patch, Delete, Param, Body, UseGuards, Req, Query } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Post, Put, Patch, Delete, Param, Body, UseGuards, Req, Query } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { MenuService } from './menu.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -235,5 +235,39 @@ export class MenuController {
     @Body() body: { orderedIds: string[] },
   ) {
     return this.menuService.reorderItems(subcategoryId, body?.orderedIds ?? []);
+  }
+
+  // ── Per-day availability slots ────────────────────────────
+  // PUT replaces the full slot set for the level. Empty array clears
+  // the override (level inherits from its ancestors). Shape per slot:
+  // { dayOfWeek: 1..7, startMinute: 0..1440, endMinute: 0..1440 }.
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Put('categories/:id/timings')
+  replaceCategoryTimings(
+    @Param('id') id: string,
+    @Body() body: { slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }> },
+  ) {
+    return this.menuService.replaceCategoryTimings(id, body?.slots ?? []);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Put('subcategories/:id/timings')
+  replaceSubcategoryTimings(
+    @Param('id') id: string,
+    @Body() body: { slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }> },
+  ) {
+    return this.menuService.replaceSubcategoryTimings(id, body?.slots ?? []);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Put('items/:id/timings')
+  replaceItemTimings(
+    @Param('id') id: string,
+    @Body() body: { slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }> },
+  ) {
+    return this.menuService.replaceItemTimings(id, body?.slots ?? []);
   }
 }

@@ -686,6 +686,10 @@ model Category {
   discounts     Discount[]
   // Offers that target this category as the freebie pool (scope=CATEGORY).
   offerGets     Offer[]       @relation("OfferGetCategory")
+  // Optional per-day availability windows. Absent = no constraint at this
+  // level; the outlet hours and any parent-level slots still apply
+  // (cascading semantics — see menu.service.getMenu).
+  timingSlots   CategoryTimingSlot[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -694,6 +698,21 @@ model Category {
   @@index([businessId])
   @@index([menuId])
   @@map("paynpik_categories")
+}
+
+// Per-day-of-week availability slot at the category level. Same shape as
+// MenuTimingSlot (dayOfWeek 1=Mon..7=Sun, minutes-since-midnight 0..1440).
+// Multiple rows per day are allowed for split shifts.
+model CategoryTimingSlot {
+  id          String   @id @default(cuid())
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int
+  startMinute Int
+  endMinute   Int
+
+  @@index([categoryId, dayOfWeek])
+  @@map("paynpik_category_timing_slots")
 }
 
 model Subcategory {
@@ -705,13 +724,27 @@ model Subcategory {
   categoryId   String
   category     Category @relation(fields: [categoryId], references: [id])
 
-  items     Item[]
-  discounts Discount[]
+  items       Item[]
+  discounts   Discount[]
+  // Optional per-day availability windows (see CategoryTimingSlot).
+  timingSlots SubcategoryTimingSlot[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("paynpik_subcategories")
+}
+
+model SubcategoryTimingSlot {
+  id            String      @id @default(cuid())
+  subcategoryId String
+  subcategory   Subcategory @relation(fields: [subcategoryId], references: [id], onDelete: Cascade)
+  dayOfWeek     Int
+  startMinute   Int
+  endMinute     Int
+
+  @@index([subcategoryId, dayOfWeek])
+  @@map("paynpik_subcategory_timing_slots")
 }
 
 // ─── Menus ─────────────────────────────────────────────────────
@@ -872,11 +905,25 @@ model Item {
   bundleParentLinks  ItemBundleChild[]  @relation("BundleChildItem")
   offerBuyFor        Offer[]            @relation("OfferBuyItem")
   offerGetFor        Offer[]            @relation("OfferGetItem")
+  // Optional per-day availability windows (see CategoryTimingSlot).
+  timingSlots        ItemTimingSlot[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("paynpik_items")
+}
+
+model ItemTimingSlot {
+  id          String @id @default(cuid())
+  itemId      String
+  item        Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int
+  startMinute Int
+  endMinute   Int
+
+  @@index([itemId, dayOfWeek])
+  @@map("paynpik_item_timing_slots")
 }
 
 model ItemImage {

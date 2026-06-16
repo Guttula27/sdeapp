@@ -33,6 +33,29 @@ interface CartItem {
   cartLineId: string;
 }
 
+// Format a nextOpen hint (server-stamped { dayOfWeek 1..7, minute 0..1439 })
+// into a short label like "9:00 AM" (today), "Tomorrow 9:00 AM", or
+// "Mon 9:00 AM" (further out). Used to populate the "Available from …"
+// badge on items / categories / subs whose schedule has them blocked.
+const DAY_LABELS = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+function formatNextOpen(
+  next: { dayOfWeek: number; minute: number } | null | undefined,
+  fallback = 'soon',
+): string {
+  if (!next) return fallback;
+  const h = Math.floor(next.minute / 60);
+  const m = next.minute % 60;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  const time = `${hour12}:${m.toString().padStart(2, '0')} ${period}`;
+  const now = new Date();
+  const todayDow = now.getDay() === 0 ? 7 : now.getDay(); // ISO Mon=1..Sun=7
+  if (next.dayOfWeek === todayDow) return time;
+  const tomorrow = (todayDow % 7) + 1;
+  if (next.dayOfWeek === tomorrow) return `Tomorrow ${time}`;
+  return `${DAY_LABELS[next.dayOfWeek]} ${time}`;
+}
+
 export default function OrderPage() {
   const [params, setParams] = useSearchParams();
   const navigate  = useNavigate();
@@ -743,13 +766,23 @@ export default function OrderPage() {
                 return <p className="text-sm text-slate-400 italic text-center py-12">No specials right now</p>;
               }
               const outletClosed = openStatus && !openStatus.isOpen;
-              return specialItems.map((item: any) => (
+              return specialItems.map((item: any) => {
+                const outOfSchedule = item.inSchedule === false;
+                const rowDisabled = outletClosed || !item.isAvailable || outOfSchedule;
+                const rowReason = outletClosed
+                  ? 'Outlet closed'
+                  : !item.isAvailable
+                    ? 'Currently not available'
+                    : outOfSchedule
+                      ? `Available ${formatNextOpen(item.nextOpen, 'later')}`
+                      : null;
+                return (
                 <MenuItemRow
                   key={item.id}
                   item={item}
                   qty={cart.filter(c => c.itemId === item.id).reduce((s, l) => s + l.quantity, 0)}
-                  disabled={outletClosed || !item.isAvailable}
-                  disabledReason={outletClosed ? 'Outlet closed' : !item.isAvailable ? 'Currently not available' : null}
+                  disabled={rowDisabled}
+                  disabledReason={rowReason}
                   onOpen={() => setDetailItem(item)}
                   onQuickAdd={(e) => {
                     e.stopPropagation();
@@ -770,7 +803,8 @@ export default function OrderPage() {
                   }}
                   onToggleFavorite={(e) => { e.stopPropagation(); toggleFavorite(item); }}
                 />
-              ));
+                );
+              });
             })()}
           </main>
         ) : (
@@ -834,13 +868,23 @@ export default function OrderPage() {
               );
             }
             const outletClosed = openStatus && !openStatus.isOpen;
-            return items.map((item: any) => (
+            return items.map((item: any) => {
+              const outOfSchedule = item.inSchedule === false;
+              const rowDisabled = outletClosed || !item.isAvailable || outOfSchedule;
+              const rowReason = outletClosed
+                ? 'Outlet closed'
+                : !item.isAvailable
+                  ? 'Currently not available'
+                  : outOfSchedule
+                    ? `Available ${formatNextOpen(item.nextOpen, 'later')}`
+                    : null;
+              return (
               <MenuItemRow
                 key={item.id}
                 item={item}
                 qty={cart.filter(c => c.itemId === item.id).reduce((s, l) => s + l.quantity, 0)}
-                disabled={outletClosed || !item.isAvailable}
-                disabledReason={outletClosed ? 'Outlet closed' : !item.isAvailable ? 'Currently not available' : null}
+                disabled={rowDisabled}
+                disabledReason={rowReason}
                 onOpen={() => setDetailItem(item)}
                 onQuickAdd={(e) => {
                   e.stopPropagation();
@@ -855,7 +899,8 @@ export default function OrderPage() {
                 }}
                 onToggleFavorite={(e) => { e.stopPropagation(); toggleFavorite(item); }}
               />
-            ));
+              );
+            });
           })()}
         </main>
         </>
