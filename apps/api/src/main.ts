@@ -3,6 +3,7 @@ import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { WinstonModule } from 'nest-winston';
+import * as compression from 'compression';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
@@ -25,6 +26,21 @@ async function bootstrap() {
   app.useBodyParser('urlencoded', { limit: '16mb', extended: true });
 
   app.getHttpAdapter().getInstance().disable('x-powered-by');
+
+  // gzip every response above the default ~1 KB threshold. The single
+  // biggest win is on the menu / reports / orders endpoints where the
+  // JSON structural overhead (names, descriptions, variants, prices,
+  // IDs) compresses 70-80 %. Inline base64 image bytes compress less
+  // (~25 %) since the underlying JPEG is already entropy-dense, but
+  // the gain still adds up when there are many small images. Filter
+  // skips responses that explicitly opt out via the `x-no-compression`
+  // header — useful for hooks that need byte-exact payloads.
+  app.use(compression({
+    filter: (req: any, res: any) => {
+      if (req.headers['x-no-compression']) return false;
+      return compression.filter(req, res);
+    },
+  }));
 
   app.enableCors({
     origin: [
