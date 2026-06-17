@@ -19,6 +19,7 @@
  */
 import { Capacitor } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import api from '../services/api';
 
 let registeredToken: string | null = null;
@@ -49,6 +50,31 @@ async function registerForFcm(): Promise<void> {
       return;
     }
 
+    // Ensure a dedicated notification channel for order alerts so
+    // both the FCM payload (which references channelId on Android
+    // priority high) and our LocalNotifications mirror land in the
+    // same per-channel sound / importance bucket. Creating the
+    // channel is idempotent — the OS dedupes by id.
+    try {
+      await LocalNotifications.createChannel({
+        id: 'paynpik-alerts',
+        name: 'Order alerts',
+        description: 'Order received, ready, served, parcel ready',
+        importance: 5, // IMPORTANCE_HIGH — heads-up + sound + vibration
+        visibility: 1, // VISIBILITY_PUBLIC
+        sound: undefined, // system default ringtone
+        vibration: true,
+        lights: true,
+      });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[push] createChannel failed', e);
+    }
+    // LocalNotifications needs its own permission grant (separate
+    // from PushNotifications on some Android API levels).
+    try { await LocalNotifications.requestPermissions(); }
+    catch { /* ignore */ }
+
     // Set up listeners *before* register() so we don't miss the first
     // token / notification events on cold boot.
     PushNotifications.addListener('registration', async (token) => {
@@ -74,14 +100,33 @@ async function registerForFcm(): Promise<void> {
       console.warn('[push] FCM registration error', err);
     });
 
-    PushNotifications.addListener('pushNotificationReceived', (notification) => {
-      // App is in the foreground — the OS does NOT show a notification
-      // tray entry in this state, so we surface it via the existing
-      // in-app alert path (the data payload carries alertId; the
-      // socket usually delivers a matching customerAlert event a
-      // beat later, so we mostly use this as a backup trigger).
-      // eslint-disable-next-line no-console
-      console.log('[push] foreground notification', notification);
+    PushNotifications.addListener('pushNotificationReceived', async (notification) => {
+      // Foreground: the OS suppresses its own tray entry and hands us
+      // the event so we can decide what to do. We mirror it into the
+      // notification list via LocalNotifications so the customer
+      // still sees the entry when they pull down the shade later
+      // (the in-app loud alert is already triggered by the Socket.IO
+      // customerAlert event, so no need to double-ring here).
+      try {
+        const data: any = notification.data || {};
+        // A stable hash of orderId / alertId so re-delivery of the
+        // same alert doesn't stack duplicates in the tray.
+        const idSource = (data.alertId || data.orderId || `${Date.now()}`) as string;
+        const trayId = idSource.split('').reduce((acc, ch) => ((acc * 31 + ch.charCodeAt(0)) | 0), 7) & 0x7fffffff;
+        await LocalNotifications.schedule({
+          notifications: [{
+            id: trayId || Math.floor(Math.random() * 1_000_000),
+            title: notification.title || 'Order update',
+            body: notification.body || '',
+            channelId: 'paynpik-alerts',
+            smallIcon: 'ic_stat_icon_config_sample',
+            extra: data,
+          }],
+        });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[push] LocalNotifications.schedule failed', e);
+      }
     });
 
     PushNotifications.addListener('pushNotificationActionPerformed', (action) => {

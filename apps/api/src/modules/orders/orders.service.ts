@@ -1209,19 +1209,14 @@ export class OrdersService {
         itemName: item.item?.name,
       }).catch(() => {});
 
-      // Order-level READY rollup fires its own event so customers also see a
-      // distinct "your full order is ready" alert.
-      if (rolledUp && updated.status === OrderStatus.READY) {
-        this.dispatcher.fire('ORDER_READY', {
-          customerId: updated.customerId,
-          customerName: updated.customer?.name,
-          businessId: outletForBiz?.businessId ?? null,
-          outletId: updated.outletId,
-          outletName: outletForBiz?.name,
-          orderId: updated.id,
-          orderNumber: updated.orderNumber,
-        }).catch(() => {});
-      }
+      // The order-level rollup ORDER_READY used to fire here too, which
+      // meant the customer got two loud alerts back-to-back when the
+      // last item flipped (one for the item, one for the order). The
+      // per-item alert already conveys "everything's ready" because
+      // it's the last unready item turning. ORDER_READY from this path
+      // is intentionally suppressed; ORDER_READY still fires from
+      // updateStatus() (line ~936) when the kitchen marks the whole
+      // order ready in one shot without going item-by-item.
     }
 
     // Parcel: when the rollup advances the order to READY_FOR_PICKUP
