@@ -1015,16 +1015,16 @@ export default function PlaceOrderPage() {
                 <span className="text-xs font-semibold text-slate-700">Parcel / takeaway</span>
               </label>
             ) : (
-              <div className="space-y-2.5 bg-slate-50 rounded-xl px-3 py-2.5">
-                {/* Section pills — sections are typically just a handful
-                    (Indoor, AC, Outdoor, ...) so a button row reads faster
-                    than a dropdown. Active = outlined brand pill. */}
-                <div>
+              <div className="grid grid-cols-2 gap-2 bg-slate-50 rounded-xl px-3 py-2.5">
+                {/* Section pills + table dropdown share a row. Each
+                    column holds its own label so the pair stays
+                    readable inside the narrow cart sidebar. */}
+                <div className="min-w-0">
                   <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Section</label>
                   {visibleTableTypes.length === 0 ? (
-                    <p className="text-[11px] text-slate-400 italic">No sections configured</p>
+                    <p className="text-[11px] text-slate-400 italic">No sections</p>
                   ) : (
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-1">
                       {visibleTableTypes.map((tt) => {
                         const active = tt.id === tableTypeId;
                         return (
@@ -1033,7 +1033,7 @@ export default function PlaceOrderPage() {
                             type="button"
                             onClick={() => { setTableTypeId(tt.id); setTableId(''); }}
                             className={clsx(
-                              'px-3 py-1.5 rounded-full text-xs font-bold transition-all border-[1.5px]',
+                              'px-2.5 py-1 rounded-full text-[11px] font-bold transition-all border-[1.5px]',
                               active
                                 ? 'border-brand-500 bg-brand-50 text-brand-700'
                                 : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
@@ -1046,22 +1046,19 @@ export default function PlaceOrderPage() {
                     </div>
                   )}
                 </div>
-                {/* Tables — kept as a dropdown because a section can hold
-                    many tables (15–30 in a typical restaurant); a button
-                    grid would crowd the cart sidebar. */}
-                <div>
+                <div className="min-w-0">
                   <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Table</label>
                   <select
                     value={tableId}
                     onChange={(e) => setTableId(e.target.value)}
                     disabled={!tableTypeId}
-                    className="input text-xs"
+                    className="input text-xs w-full"
                   >
                     <option value="">
-                      {!tableTypeId ? 'Pick a section first' : tablesForType.length ? 'Select a table…' : 'No tables in this section yet'}
+                      {!tableTypeId ? 'Pick section' : tablesForType.length ? 'Select…' : 'No tables'}
                     </option>
                     {tablesForType.map((t: any) => (
-                      <option key={t.id} value={t.id}>Table {t.number} · {t.capacity} pax</option>
+                      <option key={t.id} value={t.id}>Table {t.number} · {t.capacity}p</option>
                     ))}
                   </select>
                 </div>
@@ -1075,20 +1072,27 @@ export default function PlaceOrderPage() {
                 number. */}
             {isPostpaidTableFlow && tableId && (
               <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-2">
-                <div className="flex items-center justify-between mb-1.5">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
                     Open tabs at this table
+                    <span className="text-[10px] font-semibold text-slate-400">
+                      · {tableOpenTabs.length}
+                    </span>
                   </p>
-                  <span className="text-[10px] font-semibold text-slate-400">
-                    {tableOpenTabs.length}
-                  </span>
+                  <button
+                    onClick={startNewTab}
+                    title="New tab (different customer)"
+                    className="inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-500 hover:text-brand-700 hover:bg-brand-50 border border-slate-200 transition-colors"
+                  >
+                    <Plus size={12} />
+                  </button>
                 </div>
                 {tableOpenTabs.length === 0 ? (
                   <p className="text-[11px] text-slate-400 italic py-2 text-center">
-                    No open tabs yet. Enter a phone + items below to start one.
+                    No open tabs yet. Add items below to start one.
                   </p>
                 ) : (
-                  <ul className="space-y-1 mb-1.5">
+                  <ul className="space-y-1">
                     {tableOpenTabs.map((tab: any) => {
                       const billed = !!tab.billRequestedAt;
                       const active = openOrder?.id === tab.id;
@@ -1126,26 +1130,26 @@ export default function PlaceOrderPage() {
                     })}
                   </ul>
                 )}
-                <button
-                  onClick={startNewTab}
-                  className="w-full text-[11px] font-bold border border-dashed border-slate-300 hover:border-brand-400 hover:text-brand-700 text-slate-600 rounded-lg py-1.5 inline-flex items-center justify-center gap-1"
-                >
-                  <Plus size={11} /> New tab (different customer)
-                </button>
               </div>
             )}
 
-            <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 flex items-center gap-1">
-                <Phone size={10} /> Customer phone <span className="text-slate-400 font-normal">(optional)</span>
+            {/* Customer phone — label + input on the same line so the
+                postpaid sidebar doesn't sprawl. Hint below in a
+                single inline line. */}
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="customer-phone-input"
+                className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1 shrink-0"
+              >
+                <Phone size={10} /> Phone
               </label>
               <input
+                id="customer-phone-input"
                 value={customerPhone}
                 onChange={e => setCustomerPhone(e.target.value)}
-                placeholder="+91 ..."
-                className="input text-xs"
+                placeholder="+91 ... (optional)"
+                className="input text-xs flex-1 min-w-0"
               />
-              <p className="text-[10px] text-slate-400 mt-1">For SMS updates if provided.</p>
             </div>
 
             <div className="flex flex-col gap-2">
