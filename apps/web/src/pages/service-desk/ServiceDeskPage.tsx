@@ -271,6 +271,28 @@ export default function ServiceDeskPage() {
       toast.error(e?.response?.data?.message || 'Could not update');
     }
   };
+
+  // Serve every currently-READY item on an order. Used by the pickup
+  // and release lanes — order-level OUT_FOR_SERVICE / SERVED can't be
+  // taken when only some items are ready (the kitchen is still
+  // cooking the rest), but per-item READY → SERVED is always valid.
+  // The order rollup auto-advances to SERVED once every live item is
+  // SERVED, so the order disappears from the lane when truly done.
+  const serveReadyItems = async (order: OrderRow) => {
+    const ready = order.items.filter((i) => i.status === 'READY');
+    if (ready.length === 0) return;
+    try {
+      // Run in parallel since each PATCH is independent (different
+      // itemIds) and the rollup is computed off the final state.
+      await Promise.all(ready.map((it) =>
+        api.patch(`/outlets/${outletId}/orders/${order.id}/items/${it.id}/status`, { status: 'SERVED' }),
+      ));
+      toast.success(`Served ${ready.length} item${ready.length === 1 ? '' : 's'}`);
+      fetchQueue();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Could not mark served');
+    }
+  };
   const requestBill = async (orderId: string) => {
     if (!window.confirm('Request the bill? No more items can be added after this.')) return;
     try {
@@ -845,22 +867,24 @@ export default function ServiceDeskPage() {
                                 <Bell size={13} /> Release for pickup
                               </button>
                             )}
-                            {lane === 'pickup' && (
-                              <>
+                            {lane === 'pickup' && (() => {
+                              const readyCount = items.filter((i) => i.status === 'READY').length;
+                              // Single "Serve N ready" works whether 1 of 5
+                              // items is ready or all 5 are — per-item READY
+                              // → SERVED is always valid even when the order
+                              // status is still PREPARING, and the rollup
+                              // closes the order once every item is SERVED.
+                              return (
                                 <button
-                                  onClick={() => advanceStatus(o.id, 'OUT_FOR_SERVICE')}
-                                  className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
+                                  onClick={() => serveReadyItems(o)}
+                                  disabled={readyCount === 0}
+                                  title={readyCount === 0 ? 'Waiting for the kitchen — nothing is ready yet' : undefined}
+                                  className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
                                 >
-                                  <Truck size={13} /> On its way
+                                  <Utensils size={13} /> Serve {readyCount > 0 ? `${readyCount} ready` : 'ready'}
                                 </button>
-                                <button
-                                  onClick={() => advanceStatus(o.id, 'SERVED')}
-                                  className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
-                                >
-                                  <Utensils size={13} /> Served
-                                </button>
-                              </>
-                            )}
+                              );
+                            })()}
                           </div>
                         </>
                       )}
