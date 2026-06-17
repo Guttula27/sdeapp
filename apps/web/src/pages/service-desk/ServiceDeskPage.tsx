@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 import { Navigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
-import { CheckCircle2, XCircle, ChefHat, Bell, Truck, Utensils, Clock, ChevronDown, Maximize2 } from 'lucide-react';
+import { CheckCircle2, XCircle, ChefHat, Bell, Truck, Utensils, Clock, ChevronDown, Maximize2, Minus, Plus, Armchair } from 'lucide-react';
 import { RootState } from '../../store';
 import { getSocket } from '../../services/socket';
 import { useUserRole } from '../../hooks/useUserRole';
@@ -186,6 +186,35 @@ export default function ServiceDeskPage() {
       fetchQueue();
     } catch (e: any) {
       toast.error(e?.response?.data?.message || 'Could not cancel');
+    }
+  };
+  // Per-line edit handlers — used in the verify lane when the customer
+  // tweaks the order ("drop the lassi", "make it two not one") at the
+  // point of confirmation. Both paths re-fetch the queue afterwards so
+  // the totals and line list stay in sync with the socket update.
+  const strikeOneLine = async (orderId: string, itemId: string, label: string) => {
+    if (!window.confirm(`Remove "${label}" from this order?`)) return;
+    try {
+      await api.patch(`/outlets/${outletId}/orders/${orderId}/verify-items`, {
+        action: 'strike',
+        itemIds: [itemId],
+      });
+      toast.success('Line removed');
+      fetchQueue();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Could not remove line');
+    }
+  };
+  const setLineQty = async (orderId: string, itemId: string, quantity: number) => {
+    if (!Number.isInteger(quantity) || quantity < 1) return;
+    try {
+      await api.patch(
+        `/outlets/${outletId}/orders/${orderId}/items/${itemId}/quantity`,
+        { quantity },
+      );
+      fetchQueue();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Could not update quantity');
     }
   };
   const advanceStatus = async (orderId: string, next: string) => {
@@ -378,9 +407,20 @@ export default function ServiceDeskPage() {
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                           <span className="font-bold text-slate-900 text-sm">#{o.orderNumber}</span>
-                          {o.table?.number && (
-                            <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
-                              T{o.table.number}
+                          {o.table?.number ? (
+                            // Table numbers are stored as already-formatted
+                            // strings (e.g. "T01", "5", "Patio 3"). Show as
+                            // received with a chair icon so it reads "Table"
+                            // without the old hard-coded T prefix (which
+                            // double-stamped values like "T01" → "TT01").
+                            <span className="text-[11px] font-bold bg-brand-50 text-brand-800 px-2 py-0.5 rounded inline-flex items-center gap-1 border border-brand-100">
+                              <Armchair size={11} /> {o.table.number}
+                            </span>
+                          ) : (
+                            // No table = walk-in counter order. Surface that
+                            // explicitly so service desk doesn't go hunting.
+                            <span className="text-[10px] font-semibold bg-slate-50 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">
+                              Counter
                             </span>
                           )}
                           {o.isPostpaid && (
@@ -420,10 +460,46 @@ export default function ServiceDeskPage() {
                       {/* Expanded body — items + actions. */}
                       {isCardOpen && (
                         <>
-                          <ul className="mt-2 space-y-0.5 text-sm text-slate-700">
-                            {items.map((it) => (
-                              <li key={it.id} className="flex items-start gap-2">
-                                <span className="font-semibold text-slate-900 min-w-[1.5rem]">×{it.quantity}</span>
+                          <ul className="mt-2 space-y-1 text-sm text-slate-700">
+                            {items.map((it) => {
+                              // Verify-lane lines get editable controls:
+                              // a +/- qty stepper + a remove button so the
+                              // service desk can edit the order while
+                              // talking the customer through it.
+                              const isVerifyLine = lane === 'verify' && it.status === 'PENDING_VERIFICATION';
+                              return (
+                              <li
+                                key={it.id}
+                                className={clsx(
+                                  'flex items-center gap-2',
+                                  isVerifyLine && 'bg-amber-50/60 border border-amber-100 rounded-lg px-2 py-1.5',
+                                )}
+                                onClick={(e) => isVerifyLine && e.stopPropagation()}
+                              >
+                                {isVerifyLine ? (
+                                  <div className="flex items-center gap-0.5 border border-slate-300 rounded-md bg-white shrink-0">
+                                    <button
+                                      onClick={() => setLineQty(o.id, it.id, Math.max(1, it.quantity - 1))}
+                                      disabled={it.quantity <= 1}
+                                      className="w-6 h-6 flex items-center justify-center text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:cursor-not-allowed"
+                                      title="Decrease"
+                                    >
+                                      <Minus size={11} />
+                                    </button>
+                                    <span className="text-xs font-bold text-slate-900 w-5 text-center">
+                                      {it.quantity}
+                                    </span>
+                                    <button
+                                      onClick={() => setLineQty(o.id, it.id, it.quantity + 1)}
+                                      className="w-6 h-6 flex items-center justify-center text-slate-500 hover:text-slate-800"
+                                      title="Increase"
+                                    >
+                                      <Plus size={11} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="font-semibold text-slate-900 min-w-[1.5rem]">×{it.quantity}</span>
+                                )}
                                 <span className="truncate flex-1">
                                   {it.item?.name || 'Item'}
                                   {it.variant?.name ? ` — ${it.variant.name}` : ''}
@@ -439,8 +515,18 @@ export default function ServiceDeskPage() {
                                     <ChefHat size={9} /> cooking
                                   </span>
                                 )}
+                                {isVerifyLine && (
+                                  <button
+                                    onClick={() => strikeOneLine(o.id, it.id, it.item?.name || 'this line')}
+                                    className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md text-rose-500 hover:bg-rose-100"
+                                    title="Remove this line"
+                                  >
+                                    <XCircle size={13} />
+                                  </button>
+                                )}
                               </li>
-                            ))}
+                              );
+                            })}
                             {items.length === 0 && (
                               <li className="text-xs italic text-slate-400">No items in this lane.</li>
                             )}

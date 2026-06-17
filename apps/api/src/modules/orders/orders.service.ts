@@ -2167,6 +2167,115 @@ export class OrdersService {
     return { order: updated, verifiedCount: eligible.length, action };
   }
 
+  /**
+   * Adjust the quantity of a single line *while the service desk is
+   * verifying the order*. Only allowed while the line is in
+   * PENDING_VERIFICATION — once a line has gone to the kitchen, quantity
+   * changes go through the normal item-level cancel + re-add path so
+   * stock decrements and KOT history stay correct.
+   *
+   * Recomputes line total and rolls the change up into the order's
+   * subtotal / taxAmount / totalAmount so the customer's tracking
+   * page sees the new total immediately. GST-inclusive vs exclusive
+   * pricing on the outlet is respected.
+   */
+  async updateItemQuantityAtVerify(
+    orderId: string,
+    itemId: string,
+    quantity: number,
+    userId?: string,
+  ) {
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      throw new BadRequestException('Quantity must be a positive integer');
+    }
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        outlet: { select: { priceIncludesGst: true } },
+        items: true,
+      },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    const item = order.items.find((i) => i.id === itemId);
+    if (!item) throw new NotFoundException('Order item not found');
+    if (item.status !== OrderItemStatus.PENDING_VERIFICATION) {
+      throw new BadRequestException(
+        'Quantity can only be adjusted while the line is awaiting service-desk verification',
+      );
+    }
+
+    const unit = Number(item.unitPrice);
+    const gstRate = Number(item.gstRate ?? 0);
+    const inclusive = order.outlet?.priceIncludesGst ?? false;
+    // Mirror what pricing.service produces at order time: when prices
+    // include GST, totalPrice is the *net* (pre-tax) value and
+    // gstAmount the portion baked out; when exclusive, totalPrice is
+    // unit*qty and gstAmount is added on top.
+    let nextTotal: number;
+    let nextGst: number;
+    if (inclusive) {
+      const gross = unit * quantity;
+      const net = gross / (1 + gstRate / 100);
+      nextTotal = Math.round(net * 100) / 100;
+      nextGst = Math.round((gross - net) * 100) / 100;
+    } else {
+      nextTotal = Math.round(unit * quantity * 100) / 100;
+      nextGst = Math.round(nextTotal * (gstRate / 100) * 100) / 100;
+    }
+
+    // Recompute the order roll-up from every non-cancelled line, with
+    // the edited one's new figures patched in. Mirrors how
+    // pricing.service sums lines so the totals stay consistent.
+    const liveLines = order.items
+      .filter((i) => i.status !== OrderItemStatus.CANCELLED)
+      .map((i) => i.id === itemId
+        ? { totalPrice: nextTotal, gstAmount: nextGst }
+        : { totalPrice: Number(i.totalPrice), gstAmount: Number(i.gstAmount ?? 0) },
+      );
+    const subtotal = liveLines.reduce((s, l) => s + l.totalPrice, 0);
+    const taxAmount = liveLines.reduce((s, l) => s + l.gstAmount, 0);
+    const half = Math.round((taxAmount / 2) * 100) / 100;
+    // discount, parcelCharge, etc. stay as-is — we're not changing
+    // those here. totalAmount = subtotal + tax + parcel - discount.
+    const orderDiscount = Number(order.discountAmount ?? 0);
+    const orderParcel = Number((order as any).parcelCharge ?? 0);
+    const totalAmount = Math.round((subtotal + taxAmount + orderParcel - orderDiscount) * 100) / 100;
+
+    await this.prisma.$transaction([
+      this.prisma.orderItem.update({
+        where: { id: itemId },
+        data: { quantity, totalPrice: nextTotal, gstAmount: nextGst },
+      }),
+      this.prisma.order.update({
+        where: { id: orderId },
+        data: {
+          subtotal,
+          taxAmount,
+          sgstAmount: half,
+          cgstAmount: half,
+          totalAmount,
+        },
+      }),
+    ]);
+
+    const updated = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        items: { include: { item: true, variant: true } },
+        table: true,
+        outlet: { select: { id: true, name: true, outletType: true } },
+      },
+    });
+    if (updated) this.ordersGateway.emitOrderStatusUpdated(updated.outletId, updated);
+    this.audit.postpaidVerification({
+      actorId: userId ?? null,
+      orderId,
+      action: `qty:${quantity}`,
+      itemCount: 1,
+    });
+    return updated;
+  }
+
   // ─── Parcel desk: queue read for the parcel dashboard ──────────────────
   // Two lanes:
   //   pack     — parcel orders at READY (kitchen done, awaiting packaging)
