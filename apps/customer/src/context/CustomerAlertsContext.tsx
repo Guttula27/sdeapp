@@ -5,10 +5,16 @@ import { useCustomerAuth } from './CustomerAuthContext';
 import api from '../services/api';
 import { playRingtone, setupAudioUnlock, isVibrateEnabled, startLoudAlert } from '../utils/ringtones';
 
-// Triggers that warrant the "loud" modal — the customer needs to act
-// (food is ready, parcel is packed, individual item is up). Anything
-// else stays a quiet toast.
-const LOUD_TRIGGERS = new Set(['ORDER_READY', 'PICKUP_READY', 'ITEM_READY']);
+// Triggers that *could* warrant the loud modal — the customer needs
+// to act (food is ready, parcel is packed, individual item is up).
+// Whether a specific alert actually rings is now driven by
+// alert.isLoud which the server stamps from the order kind:
+//   self-service / pickup / parcel  → loud (ringtone + popup + push)
+//   dine-in with a table             → quiet (waiter walks it over)
+// We still gate the loud-replay logic on this trigger set so a
+// missed *informational* alert (e.g. ORDER_PLACED) doesn't pop a
+// modal on next open.
+const READY_TRIGGERS = new Set(['ORDER_READY', 'PICKUP_READY', 'ITEM_READY']);
 
 // Don't blink for alerts older than this — protects against stale
 // unread alerts when the customer ignored the popup hours ago.
@@ -47,6 +53,12 @@ export type CustomerAlert = {
   sentVia: 'IN_APP' | 'WHATSAPP' | 'BOTH';
   whatsappError?: string | null;
   isRead: boolean;
+  // Server stamps this from the order kind. true = ring + popup + push
+  // (self-service / parcel / pickup). false = silent toast + bell-list
+  // entry only (dine-in table service — waiter brings the food).
+  // Older rows without the column fall back to true via the
+  // `?? true` guards below, matching prior behaviour.
+  isLoud?: boolean;
   createdAt: string;
 };
 
@@ -184,7 +196,8 @@ export function CustomerAlertsProvider({ children }: { children: ReactNode }) {
     const now = Date.now();
     const candidate = alerts.find((a) =>
       !a.isRead
-      && LOUD_TRIGGERS.has(a.trigger)
+      && READY_TRIGGERS.has(a.trigger)
+      && (a.isLoud ?? true)
       && (now - new Date(a.createdAt).getTime()) < POPUP_REPLAY_MAX_AGE_MS,
     );
     if (!candidate) return;
@@ -208,7 +221,12 @@ export function CustomerAlertsProvider({ children }: { children: ReactNode }) {
       setAlerts((prev) => [alert, ...prev.filter((a) => a.id !== alert.id)].slice(0, 50));
       setUnreadCount((c) => c + 1);
 
-      const isLoud = LOUD_TRIGGERS.has(alert.trigger);
+      // Loud branch triggers only when the server marked the alert
+      // loud AND it's a ready-class trigger that the UX is designed
+      // around. The quiet branch covers dine-in waiter delivery
+      // (server stamped isLoud=false) and the informational alerts
+      // (ORDER_PLACED, PAYMENT_RECEIVED, ORDER_SERVED).
+      const isLoud = READY_TRIGGERS.has(alert.trigger) && (alert.isLoud ?? true);
       if (isLoud) {
         // Order ready / pickup ready — escalate to the loud modal. The
         // loop runs until the customer taps OK in the modal. We stop any
@@ -261,10 +279,14 @@ export function CustomerAlertsProvider({ children }: { children: ReactNode }) {
       // immediately regardless of alert state.
       if (orderStatus && !BLINKABLE_ORDER_STATUSES.has(orderStatus)) return false;
       const now = Date.now();
+      // We DO blink for quiet alerts too — a dine-in customer still
+      // benefits from the card flashing when their food is ready,
+      // even though we deliberately don't ring them. Loud/quiet is
+      // about audio + push, not about visual feedback inside the app.
       return alerts.some((a) => {
         if (a.isRead) return false;
         if (a.orderId !== orderId) return false;
-        if (!LOUD_TRIGGERS.has(a.trigger)) return false;
+        if (!READY_TRIGGERS.has(a.trigger)) return false;
         const ageMs = now - new Date(a.createdAt).getTime();
         return ageMs >= 0 && ageMs < BLINK_MAX_AGE_MS;
       });

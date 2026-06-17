@@ -1935,6 +1935,14 @@ model CustomerAlert {
   sentVia       String   @default("IN_APP") // IN_APP | WHATSAPP | BOTH
   whatsappError String?
   isRead        Boolean  @default(false)
+  // Whether this alert should ring + vibrate + push.
+  //   true  → full loud-alert UX (modal + ringtone + FCM push)
+  //   false → quiet — toast + bell-list entry only, no sound / push
+  // Set false for table-service ready events where a waiter is
+  // walking the food over and the customer doesn't need to be
+  // hailed. Set true for self-service / pickup / parcel where the
+  // customer has to act.
+  isLoud        Boolean  @default(true)
   createdAt     DateTime @default(now())
 
   @@index([customerId])
