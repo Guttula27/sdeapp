@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Patch, Param, Body, UseGuards, Delete, Put } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import { OutletsService, CreateOutletDto, CreateSectionDto, CreateTableDto } from './outlets.service';
+import { OutletsService, CreateOutletDto, CreateSectionDto, CreateTableDto, UpdateTableDto } from './outlets.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
 import { PreferredLanguage } from '../../common/language/preferred-language';
@@ -80,6 +80,19 @@ export class OutletsController {
   @Post(':outletId/tables')
   createTable(@Param('outletId') outletId: string, @Body() dto: CreateTableDto) {
     return this.service.createTable(outletId, dto);
+  }
+
+  @Patch(':outletId/tables/:tableId')
+  updateTable(
+    @Param('tableId') tableId: string,
+    @Body() dto: UpdateTableDto,
+  ) {
+    return this.service.updateTable(tableId, dto);
+  }
+
+  @Delete(':outletId/tables/:tableId')
+  deleteTable(@Param('tableId') tableId: string) {
+    return this.service.deleteTable(tableId);
   }
 
   @Get(':id/admin')
