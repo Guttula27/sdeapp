@@ -50,28 +50,18 @@ async function registerForFcm(): Promise<void> {
       return;
     }
 
-    // Ensure a dedicated notification channel for order alerts so
-    // both the FCM payload (which references channelId on Android
-    // priority high) and our LocalNotifications mirror land in the
-    // same per-channel sound / importance bucket. Creating the
-    // channel is idempotent — the OS dedupes by id.
-    try {
-      await LocalNotifications.createChannel({
-        id: 'paynpik-alerts',
-        name: 'Order alerts',
-        description: 'Order received, ready, served, parcel ready',
-        importance: 5, // IMPORTANCE_HIGH — heads-up + sound + vibration
-        visibility: 1, // VISIBILITY_PUBLIC
-        sound: undefined, // system default ringtone
-        vibration: true,
-        lights: true,
-      });
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.warn('[push] createChannel failed', e);
-    }
-    // LocalNotifications needs its own permission grant (separate
-    // from PushNotifications on some Android API levels).
+    // We deliberately do NOT call LocalNotifications.createChannel
+    // here. An earlier attempt created a custom 'paynpik-alerts'
+    // channel which Android then routed every FCM message into — but
+    // the channel ended up silent on some devices (the JS createChannel
+    // sound argument doesn't reliably resolve to the system default).
+    // Letting FCM use the default high-priority channel that
+    // Capacitor's PushNotifications plugin auto-registers gives us
+    // sound + tray entry reliably. The cost is no per-channel user
+    // customisation in OS settings, which we can revisit later via
+    // a native-side channel registration in MainActivity.
+    // LocalNotifications still needs a one-time permission grant on
+    // Android 13+ so the schedule() mirror below works.
     try { await LocalNotifications.requestPermissions(); }
     catch { /* ignore */ }
 
@@ -118,8 +108,11 @@ async function registerForFcm(): Promise<void> {
             id: trayId || Math.floor(Math.random() * 1_000_000),
             title: notification.title || 'Order update',
             body: notification.body || '',
-            channelId: 'paynpik-alerts',
-            smallIcon: 'ic_stat_icon_config_sample',
+            // No channelId / smallIcon — defaults to the same
+            // high-priority channel FCM uses (auto-registered by
+            // Capacitor PushNotifications) so the foreground mirror
+            // rings and shows in the tray just like a backgrounded
+            // delivery would.
             extra: data,
           }],
         });

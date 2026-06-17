@@ -124,10 +124,17 @@ export class PushService implements OnModuleDestroy {
         notification: { title: payload.title, body: payload.body },
         data,
         android: {
+          // Priority high → heads-up display, full-screen ringtone,
+          // wake from doze. Omitting channelId on purpose so the
+          // message lands on Capacitor PushNotifications' auto-
+          // registered default channel (always at IMPORTANCE_HIGH
+          // with system sound + vibration). An earlier attempt to
+          // pin to a custom 'paynpik-alerts' channel silenced the
+          // delivery on some Android builds because the channel was
+          // created with an undefined sound resource. The OS-default
+          // channel sidesteps that whole class of bug.
           priority: 'high',
           notification: {
-            // Ensure heads-up display + bell sound on Android.
-            channelId: 'paynpik-alerts',
             sound: 'default',
             defaultVibrateTimings: true,
             visibility: 'public',
