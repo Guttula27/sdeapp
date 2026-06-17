@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 import { Navigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
-import { CheckCircle2, XCircle, ChefHat, Bell, Truck, Utensils, Clock, ChevronDown, Maximize2, Minus, Plus, Armchair } from 'lucide-react';
+import { CheckCircle2, XCircle, ChefHat, Bell, Truck, Utensils, Clock, ChevronDown, Maximize2, Minus, Plus, Armchair, Edit2, Banknote, Smartphone } from 'lucide-react';
 import { RootState } from '../../store';
 import { getSocket } from '../../services/socket';
 import { useUserRole } from '../../hooks/useUserRole';
@@ -114,8 +114,37 @@ export default function ServiceDeskPage() {
   // lanes below stay for the task-focused views.
   const [openTabs, setOpenTabs] = useState<OrderRow[]>([]);
   // Add-item modal target. When non-null, the AddItemModal renders for
-  // this specific order. Set from each tab card's "Add item" button.
-  const [addItemTarget, setAddItemTarget] = useState<{ orderId: string; orderNumber: string; tableNumber?: string } | null>(null);
+  // this specific order. Set from each tab card's "Add item" button —
+  // also from the per-line "Replace" affordance, in which case
+  // prefocusItemId carries the base Item id so the modal opens the
+  // config sheet for that item immediately. Replace strikes the
+  // existing line first, so the new one is what gets verified.
+  const [addItemTarget, setAddItemTarget] = useState<{
+    orderId: string;
+    orderNumber: string;
+    tableNumber?: string;
+    prefocusItemId?: string;
+  } | null>(null);
+  const replaceLine = async (
+    orderId: string,
+    orderNumber: string,
+    tableNumber: string | undefined,
+    itemRowId: string,
+    baseItemId: string,
+    label: string,
+  ) => {
+    try {
+      await api.patch(`/outlets/${outletId}/orders/${orderId}/verify-items`, {
+        action: 'strike',
+        itemIds: [itemRowId],
+      });
+      toast.success(`Replaced "${label}" — pick the new config`, { duration: 2500 });
+      setAddItemTarget({ orderId, orderNumber, tableNumber, prefocusItemId: baseItemId });
+      fetchQueue();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Could not replace line');
+    }
+  };
   const [loading, setLoading] = useState(true);
   // Order ids that just changed — used to trigger the brief blink animation.
   const [flash, setFlash] = useState<Set<string>>(new Set());
@@ -250,6 +279,28 @@ export default function ServiceDeskPage() {
       fetchQueue();
     } catch (e: any) {
       toast.error(e?.response?.data?.message || 'Could not request bill');
+    }
+  };
+  // Capture payment at the service desk — used when the customer pays
+  // outside the customer PWA (cash, or UPI / online where the staff
+  // verifies the gateway transfer in person). Mirrors PlaceOrderPage's
+  // payBill but operates against any open tab. CASH auto-confirms
+  // server-side; UPI returns a PENDING payment row we immediately
+  // confirm because staff already saw the money land.
+  const [payingId, setPayingId] = useState<string | null>(null);
+  const capturePayment = async (orderId: string, mode: 'CASH' | 'UPI', amount: number) => {
+    setPayingId(orderId);
+    try {
+      const { data } = await api.post('/payments/initiate', { orderId, mode, amount });
+      if (mode === 'UPI' && data?.data?.paymentId) {
+        await api.post(`/payments/${data.data.paymentId}/confirm`, { gatewayRef: '' });
+      }
+      toast.success(`Payment recorded · ₹${amount.toFixed(2)}`);
+      fetchQueue();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Failed to record payment');
+    } finally {
+      setPayingId(null);
     }
   };
 
@@ -439,7 +490,9 @@ export default function ServiceDeskPage() {
                               {live.length === 0 && (
                                 <li className="text-[11px] italic text-slate-400">No active lines.</li>
                               )}
-                              {live.map((it) => (
+                              {live.map((it) => {
+                                const isUnverified = it.status === 'PENDING_VERIFICATION';
+                                return (
                                 <li
                                   key={it.id}
                                   className={clsx('flex items-center gap-1.5 text-[11px] rounded border px-1.5 py-1', itemLineCls(it.status))}
@@ -449,8 +502,33 @@ export default function ServiceDeskPage() {
                                     {it.item?.name || 'Item'}
                                     {it.variant?.name ? ` — ${it.variant.name}` : ''}
                                   </span>
+                                  {isUnverified && it.item?.id && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        replaceLine(o.id, o.orderNumber, tg.tableNumber, it.id, it.item!.id, it.item?.name || 'this line');
+                                      }}
+                                      title="Replace — change variant or toppings"
+                                      className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded text-amber-700 hover:bg-amber-100"
+                                    >
+                                      <Edit2 size={10} />
+                                    </button>
+                                  )}
+                                  {isUnverified && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        strikeOneLine(o.id, it.id, it.item?.name || 'this line');
+                                      }}
+                                      title="Remove this line"
+                                      className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded text-rose-500 hover:bg-rose-100"
+                                    >
+                                      <XCircle size={10} />
+                                    </button>
+                                  )}
                                 </li>
-                              ))}
+                                );
+                              })}
                             </ul>
                             <div className="flex gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
                               {!billed && (
@@ -470,9 +548,25 @@ export default function ServiceDeskPage() {
                                 </button>
                               )}
                               {billed && (
-                                <span className="text-[10px] text-slate-500 italic">
-                                  Awaiting payment
-                                </span>
+                                <>
+                                  <span className="text-[10px] text-slate-500 font-semibold mr-1 inline-flex items-center">
+                                    Pay
+                                  </span>
+                                  <button
+                                    onClick={() => capturePayment(o.id, 'CASH', Number(o.totalAmount ?? 0))}
+                                    disabled={payingId === o.id}
+                                    className="text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded px-2 py-1 inline-flex items-center gap-1 disabled:opacity-50"
+                                  >
+                                    <Banknote size={10} /> Cash
+                                  </button>
+                                  <button
+                                    onClick={() => capturePayment(o.id, 'UPI', Number(o.totalAmount ?? 0))}
+                                    disabled={payingId === o.id}
+                                    className="text-[10px] font-bold bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded px-2 py-1 inline-flex items-center gap-1 disabled:opacity-50"
+                                  >
+                                    <Smartphone size={10} /> Online
+                                  </button>
+                                </>
                               )}
                             </div>
                           </div>
@@ -785,6 +879,7 @@ export default function ServiceDeskPage() {
           orderId={addItemTarget.orderId}
           orderNumber={addItemTarget.orderNumber}
           tableNumber={addItemTarget.tableNumber}
+          prefocusItemId={addItemTarget.prefocusItemId}
           onClose={() => setAddItemTarget(null)}
           onSaved={() => {
             setAddItemTarget(null);
@@ -807,32 +902,66 @@ export default function ServiceDeskPage() {
    present; toppings / bundles are out of scope for the first cut.
 */
 function AddItemModal({
-  outletId, orderId, orderNumber, tableNumber, onClose, onSaved,
+  outletId, orderId, orderNumber, tableNumber, prefocusItemId, onClose, onSaved,
 }: {
   outletId: string;
   orderId: string;
   orderNumber: string;
   tableNumber?: string;
+  // When set, the modal opens the config sheet for this item as soon
+  // as the menu loads. Used by the "Replace" flow on a struck line so
+  // the staff lands directly in the variant/topping picker.
+  prefocusItemId?: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
+  type Variant = { id: string; name: string; price: string | number; isAvailable: boolean };
+  type ToppingOption = { id: string; name: string; priceAdd: string | number };
+  type ItemTopping = {
+    toppingId: string;
+    priceAdd?: string | number | null;
+    isRequired: boolean;
+    topping: { id: string; name: string; basePriceAdd?: string | number; options: ToppingOption[] };
+  };
   type MenuItem = {
     id: string;
     name: string;
     basePrice: string | number;
-    variants?: Array<{ id: string; name: string; price: string | number; isAvailable: boolean }>;
+    variants?: Variant[];
+    itemToppings?: ItemTopping[];
     isAvailable: boolean;
     isDisplayed: boolean;
   };
   type Category = { id: string; name: string; subcategories?: Array<{ id: string; name: string; items?: MenuItem[] }> };
-  type Cart = Array<{ key: string; itemId: string; variantId?: string; name: string; qty: number; unit: number }>;
+  type CartTopping = { toppingId: string; optionId?: string; label: string; priceAdd: number };
+  type Cart = Array<{
+    key: string;
+    itemId: string;
+    variantId?: string;
+    name: string;
+    qty: number;
+    unit: number;
+    toppings?: CartTopping[];
+    toppingsLabel?: string;
+  }>;
 
   const [menu, setMenu] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [cart, setCart] = useState<Cart>([]);
   const [saving, setSaving] = useState(false);
-  const [variantPickFor, setVariantPickFor] = useState<MenuItem | null>(null);
+  // Config sheet — opens when the tapped item needs variant / topping
+  // input from staff. Plain items (no variants AND no toppings) skip
+  // straight to addToCart.
+  type ConfigDraft = {
+    item: MenuItem;
+    variantId: string;
+    // toppings draft keyed by toppingId so the UI can flip required
+    // toppings on by default and let staff toggle the optional ones.
+    toppings: Record<string, { selected: boolean; optionId?: string }>;
+    qty: number;
+  };
+  const [configFor, setConfigFor] = useState<ConfigDraft | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -848,6 +977,29 @@ function AddItemModal({
     })();
     return () => { cancelled = true; };
   }, [outletId]);
+
+  // Auto-tap the prefocus item once the menu loads — the "Replace" flow
+  // on the open-tab card opens the modal with this id set so the staff
+  // lands straight in the config sheet for the same item they just
+  // struck.
+  const prefocusedRef = useRef(false);
+  useEffect(() => {
+    if (!prefocusItemId || prefocusedRef.current || loading || menu.length === 0) return;
+    for (const cat of menu) {
+      for (const sub of cat.subcategories || []) {
+        for (const it of sub.items || []) {
+          if (it.id === prefocusItemId) {
+            prefocusedRef.current = true;
+            tap(it);
+            return;
+          }
+        }
+      }
+    }
+    // No match — silent. Modal still works as a normal picker.
+    prefocusedRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefocusItemId, loading, menu]);
 
   // Flatten + filter for the picker view. Staff almost always need
   // search rather than category drill-down when they're standing at a
@@ -868,31 +1020,94 @@ function AddItemModal({
     return out;
   }, [menu, query]);
 
-  const addToCart = (item: MenuItem, variant?: { id: string; name: string; price: string | number }) => {
-    const key = variant ? `${item.id}:${variant.id}` : item.id;
-    const unit = Number(variant?.price ?? item.basePrice);
+  // Plain add — no variant, no toppings, qty 1. Used by `tap` for the
+  // simple-item path; the config-sheet "Add to cart" routes through
+  // `addConfigured` instead.
+  const addPlainItem = (item: MenuItem) => {
+    const key = item.id;
     setCart((prev) => {
       const existing = prev.find((l) => l.key === key);
-      if (existing) {
-        return prev.map((l) => l.key === key ? { ...l, qty: l.qty + 1 } : l);
-      }
+      if (existing) return prev.map((l) => l.key === key ? { ...l, qty: l.qty + 1 } : l);
       return [...prev, {
         key,
         itemId: item.id,
-        variantId: variant?.id,
-        name: variant ? `${item.name} — ${variant.name}` : item.name,
+        name: item.name,
         qty: 1,
-        unit,
+        unit: Number(item.basePrice),
       }];
     });
   };
 
+  // Composite add — used by the config sheet. Variant + topping picks
+  // get baked into the line's unit price + a readable summary so the
+  // pending-cart view shows what's being sent.
+  const addConfigured = (draft: ConfigDraft) => {
+    const item = draft.item;
+    const variant = (item.variants || []).find((v) => v.id === draft.variantId);
+    let unit = Number(variant?.price ?? item.basePrice);
+    const toppings: CartTopping[] = [];
+    for (const link of item.itemToppings || []) {
+      const sel = draft.toppings[link.toppingId];
+      if (!sel?.selected && !link.isRequired) continue;
+      const basePriceAdd = link.priceAdd != null
+        ? Number(link.priceAdd)
+        : Number(link.topping.basePriceAdd ?? 0);
+      const hasOptions = (link.topping.options || []).length > 0;
+      const optId = hasOptions ? (sel?.optionId || link.topping.options[0].id) : undefined;
+      const opt = optId ? link.topping.options.find((o) => o.id === optId) : undefined;
+      const optAdd = opt ? Number(opt.priceAdd) : 0;
+      const label = opt
+        ? `${link.topping.name}: ${opt.name}`
+        : link.topping.name;
+      unit += basePriceAdd + optAdd;
+      toppings.push({ toppingId: link.toppingId, optionId: opt?.id, label, priceAdd: basePriceAdd + optAdd });
+    }
+    const toppingsLabel = toppings.length ? toppings.map((t) => t.label).join(', ') : undefined;
+    // Cart key includes variant + toppings so the same item with
+    // different configs sits as separate lines instead of stacking.
+    const toppingKey = toppings.map((t) => `${t.toppingId}:${t.optionId ?? ''}`).sort().join('|');
+    const key = `${item.id}:${draft.variantId || ''}:${toppingKey}`;
+    setCart((prev) => {
+      const existing = prev.find((l) => l.key === key);
+      if (existing) return prev.map((l) => l.key === key ? { ...l, qty: l.qty + draft.qty } : l);
+      return [...prev, {
+        key,
+        itemId: item.id,
+        variantId: draft.variantId || undefined,
+        name: variant ? `${item.name} — ${variant.name}` : item.name,
+        qty: draft.qty,
+        unit,
+        toppings,
+        toppingsLabel,
+      }];
+    });
+    setConfigFor(null);
+  };
+
   const tap = (item: MenuItem) => {
     const variants = (item.variants || []).filter((v) => v.isAvailable);
-    if (variants.length === 0) return addToCart(item);
-    // Single variant → just add. Multiple → ask.
-    if (variants.length === 1) return addToCart(item, variants[0]);
-    setVariantPickFor(item);
+    const toppingLinks = item.itemToppings || [];
+    // Simple item: no variants AND no toppings → instant add.
+    if (variants.length === 0 && toppingLinks.length === 0) {
+      return addPlainItem(item);
+    }
+    // Otherwise open the config sheet. Default variant = first
+    // available; required toppings start selected with their first
+    // option as the default; optional toppings start unselected so
+    // staff actively chooses to add them.
+    const toppings: ConfigDraft['toppings'] = {};
+    for (const link of toppingLinks) {
+      const firstOpt = link.topping.options?.[0]?.id;
+      toppings[link.toppingId] = link.isRequired
+        ? { selected: true, optionId: firstOpt }
+        : { selected: false, optionId: firstOpt };
+    }
+    setConfigFor({
+      item,
+      variantId: variants[0]?.id || '',
+      toppings,
+      qty: 1,
+    });
   };
 
   const updateQty = (key: string, delta: number) => {
@@ -909,7 +1124,14 @@ function AddItemModal({
     setSaving(true);
     try {
       await api.post(`/outlets/${outletId}/orders/${orderId}/items`, {
-        items: cart.map((l) => ({ itemId: l.itemId, variantId: l.variantId, quantity: l.qty })),
+        items: cart.map((l) => ({
+          itemId: l.itemId,
+          variantId: l.variantId,
+          quantity: l.qty,
+          toppings: l.toppings?.length
+            ? l.toppings.map((t) => ({ toppingId: t.toppingId, optionId: t.optionId }))
+            : undefined,
+        })),
       });
       toast.success(`Added ${cart.length} line${cart.length === 1 ? '' : 's'} — verify in the Verify lane`);
       onSaved();
@@ -1001,7 +1223,12 @@ function AddItemModal({
                       <Plus size={11} />
                     </button>
                   </div>
-                  <span className="flex-1 truncate text-slate-700">{l.name}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate text-slate-700">{l.name}</p>
+                    {l.toppingsLabel && (
+                      <p className="text-[10px] text-indigo-600 truncate">+ {l.toppingsLabel}</p>
+                    )}
+                  </div>
                   <span className="text-slate-500 shrink-0">₹{(l.unit * l.qty).toFixed(2)}</span>
                 </li>
               ))}
@@ -1022,29 +1249,190 @@ function AddItemModal({
           </button>
         </footer>
 
-        {variantPickFor && (
-          <div className="absolute inset-0 z-10 bg-black/30 flex items-end sm:items-center justify-center p-2 sm:p-6" onClick={() => setVariantPickFor(null)}>
-            <div className="bg-white rounded-xl w-full max-w-sm p-3" onClick={(e) => e.stopPropagation()}>
-              <p className="text-sm font-bold text-slate-900 mb-2">Pick a size — {variantPickFor.name}</p>
+        {configFor && (
+          <ItemConfigSheet
+            draft={configFor}
+            onChange={(next) => setConfigFor(next as ConfigDraft)}
+            onCancel={() => setConfigFor(null)}
+            onConfirm={() => addConfigured(configFor)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Variant + topping config sheet ─────────────────────────────────
+// Renders over the AddItemModal when staff taps an item that needs
+// configuration (variants or any topping). Sits in its own component
+// so the parent's state stays simple; the parent owns the draft and
+// just receives draft updates back through `onChange`.
+function ItemConfigSheet({
+  draft, onChange, onCancel, onConfirm,
+}: {
+  draft: {
+    item: {
+      id: string; name: string; basePrice: string | number;
+      variants?: Array<{ id: string; name: string; price: string | number; isAvailable: boolean }>;
+      itemToppings?: Array<{
+        toppingId: string;
+        priceAdd?: string | number | null;
+        isRequired: boolean;
+        topping: { id: string; name: string; basePriceAdd?: string | number; options: Array<{ id: string; name: string; priceAdd: string | number }> };
+      }>;
+    };
+    variantId: string;
+    toppings: Record<string, { selected: boolean; optionId?: string }>;
+    qty: number;
+  };
+  onChange: (next: typeof draft) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { item } = draft;
+  const variants = (item.variants || []).filter((v) => v.isAvailable);
+  const variant = variants.find((v) => v.id === draft.variantId);
+
+  // Running unit price — same math addConfigured uses, surfaced live
+  // so the staff sees what they're committing to before tapping Add.
+  let unit = Number(variant?.price ?? item.basePrice);
+  for (const link of item.itemToppings || []) {
+    const sel = draft.toppings[link.toppingId];
+    if (!sel?.selected && !link.isRequired) continue;
+    const basePriceAdd = link.priceAdd != null ? Number(link.priceAdd) : Number(link.topping.basePriceAdd ?? 0);
+    const hasOptions = (link.topping.options || []).length > 0;
+    const optId = hasOptions ? (sel?.optionId || link.topping.options[0].id) : undefined;
+    const opt = optId ? link.topping.options.find((o) => o.id === optId) : undefined;
+    unit += basePriceAdd + (opt ? Number(opt.priceAdd) : 0);
+  }
+
+  return (
+    <div className="absolute inset-0 z-10 bg-black/30 flex items-end sm:items-center justify-center p-2 sm:p-6" onClick={onCancel}>
+      <div className="bg-white rounded-xl w-full max-w-md max-h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <header className="px-4 py-3 border-b border-slate-100">
+          <p className="text-sm font-bold text-slate-900">{item.name}</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">Pick variant &amp; toppings — runs at ₹{unit.toFixed(2)} per piece</p>
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          {variants.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1.5">Variant</p>
               <ul className="space-y-1">
-                {(variantPickFor.variants || []).filter((v) => v.isAvailable).map((v) => (
+                {variants.map((v) => (
                   <li key={v.id}>
-                    <button
-                      onClick={() => { addToCart(variantPickFor, v); setVariantPickFor(null); }}
-                      className="w-full text-left bg-slate-50 hover:bg-brand-50 border border-slate-100 hover:border-brand-200 rounded-lg px-2 py-1.5 flex items-center justify-between text-xs"
-                    >
-                      <span className="text-slate-800 font-semibold">{v.name}</span>
+                    <label className={clsx(
+                      'flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer text-xs',
+                      draft.variantId === v.id
+                        ? 'bg-brand-50 border-brand-200 text-brand-900'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50',
+                    )}>
+                      <input
+                        type="radio"
+                        name="variant"
+                        checked={draft.variantId === v.id}
+                        onChange={() => onChange({ ...draft, variantId: v.id })}
+                        className="accent-brand-600"
+                      />
+                      <span className="font-semibold flex-1">{v.name}</span>
                       <span className="text-slate-500">₹{Number(v.price).toFixed(0)}</span>
-                    </button>
+                    </label>
                   </li>
                 ))}
               </ul>
-              <button onClick={() => setVariantPickFor(null)} className="mt-2 w-full text-xs font-semibold text-slate-500 hover:text-slate-800 py-1">
-                Cancel
+            </div>
+          )}
+
+          {(item.itemToppings || []).length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1.5">Toppings</p>
+              <ul className="space-y-1.5">
+                {(item.itemToppings || []).map((link) => {
+                  const sel = draft.toppings[link.toppingId] || { selected: false };
+                  const hasOptions = (link.topping.options || []).length > 0;
+                  const basePriceAdd = link.priceAdd != null ? Number(link.priceAdd) : Number(link.topping.basePriceAdd ?? 0);
+                  return (
+                    <li key={link.toppingId} className="bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1.5">
+                      <label className="flex items-center gap-2 text-xs cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={sel.selected}
+                          disabled={link.isRequired}
+                          onChange={(e) => onChange({
+                            ...draft,
+                            toppings: {
+                              ...draft.toppings,
+                              [link.toppingId]: { ...sel, selected: e.target.checked },
+                            },
+                          })}
+                          className="accent-brand-600"
+                        />
+                        <span className="font-semibold flex-1 text-slate-800">
+                          {link.topping.name}
+                          {link.isRequired && <span className="ml-1 text-[9px] font-bold text-amber-700">required</span>}
+                        </span>
+                        {!hasOptions && basePriceAdd > 0 && (
+                          <span className="text-[10px] text-slate-500">+ ₹{basePriceAdd.toFixed(0)}</span>
+                        )}
+                      </label>
+                      {hasOptions && sel.selected && (
+                        <select
+                          value={sel.optionId || ''}
+                          onChange={(e) => onChange({
+                            ...draft,
+                            toppings: {
+                              ...draft.toppings,
+                              [link.toppingId]: { ...sel, optionId: e.target.value },
+                            },
+                          })}
+                          className="mt-1.5 w-full text-xs rounded border border-slate-300 px-2 py-1"
+                        >
+                          {link.topping.options.map((opt) => (
+                            <option key={opt.id} value={opt.id}>
+                              {opt.name}{Number(opt.priceAdd) > 0 ? ` · +₹${Number(opt.priceAdd).toFixed(0)}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          <div>
+            <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1.5">Quantity</p>
+            <div className="inline-flex items-center gap-0.5 border border-slate-300 rounded-md bg-white">
+              <button
+                onClick={() => onChange({ ...draft, qty: Math.max(1, draft.qty - 1) })}
+                disabled={draft.qty <= 1}
+                className="w-7 h-7 flex items-center justify-center text-slate-500 hover:text-slate-800 disabled:opacity-30"
+              >
+                <Minus size={12} />
+              </button>
+              <span className="text-sm font-bold text-slate-900 w-7 text-center">{draft.qty}</span>
+              <button
+                onClick={() => onChange({ ...draft, qty: draft.qty + 1 })}
+                className="w-7 h-7 flex items-center justify-center text-slate-500 hover:text-slate-800"
+              >
+                <Plus size={12} />
               </button>
             </div>
           </div>
-        )}
+        </div>
+
+        <footer className="px-3 py-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
+          <button onClick={onCancel} className="text-xs font-semibold text-slate-500 hover:text-slate-800">
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="text-xs font-bold bg-brand-600 hover:bg-brand-700 text-white rounded-lg px-3 py-2"
+          >
+            Add · ₹{(unit * draft.qty).toFixed(2)}
+          </button>
+        </footer>
       </div>
     </div>
   );
