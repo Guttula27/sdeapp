@@ -4,9 +4,10 @@ import { CustomerAlertsService } from './customer-alerts.service';
 import { LifecycleDispatcherService } from './lifecycle-dispatcher.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersModule } from '../orders/orders.module';
+import { PushModule } from '../push/push.module';
 
 @Module({
-  imports: [NotificationsModule, forwardRef(() => OrdersModule)],
+  imports: [NotificationsModule, forwardRef(() => OrdersModule), PushModule],
   controllers: [CustomerAlertsController],
   providers: [CustomerAlertsService, LifecycleDispatcherService],
   exports: [CustomerAlertsService, LifecycleDispatcherService],

@@ -197,6 +197,7 @@ model User {
   customerClusterOrders  ClusterOrder[]          @relation("CustomerClusterOrders")
   customerAlerts         CustomerAlert[]
   sessions               Session[]
+  pushSubscriptions      PushSubscription[]
   auditLogs              AuditLog[]
   kitchenStations        KitchenStation[]        @relation("StationWorker")
   serviceStationWorkers  ServiceStationWorker[]
@@ -335,6 +336,37 @@ model Session {
   createdAt DateTime @default(now())
 
   @@map("paynpik_sessions")
+}
+
+// One row per (user, device) so the push fan-out hits every installed
+// PWA / Capacitor APK the customer has signed in on. token is the
+// FCM registration id for Android; for browser Web Push (added later)
+// we'll either reuse this column with kind=WEBPUSH + a separate JSON
+// blob for the keys, or add a dedicated WebPushSubscription model.
+//
+// platform is a free-text tag (`android`, `ios`, `web`) so analytics
+// can later answer "what % of our customers are on the APK." The
+// composite unique on (userId, token) makes re-registration cheap —
+// the same device reuses the same row.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      PushKind @default(FCM)
+  token     String   @db.VarChar(500)
+  platform  String?  @db.VarChar(32)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, token])
+  @@index([userId])
+  @@map("paynpik_push_subscriptions")
+}
+
+enum PushKind {
+  FCM     // Firebase Cloud Messaging (Capacitor Android, iOS, web Chrome via FCM gateway)
+  WEBPUSH // VAPID Web Push (browser PWAs that opted out of FCM gateway)
 }
 
 model AuditLog {

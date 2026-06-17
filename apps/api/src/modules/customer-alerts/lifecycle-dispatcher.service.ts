@@ -3,6 +3,7 @@ import { TemplateChannel } from '@prisma/client';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OrdersGateway } from '../orders/orders.gateway';
+import { PushService } from '../push/push.service';
 
 /**
  * Lifecycle triggers — keep in sync with the seeded platform template names.
@@ -80,6 +81,7 @@ export class LifecycleDispatcherService {
     private prisma: PrismaService,
     private notifications: NotificationsService,
     private ordersGateway: OrdersGateway,
+    private push: PushService,
   ) {}
 
   /**
@@ -197,6 +199,28 @@ export class LifecycleDispatcherService {
     // Push to the customer's socket room and the order's room so the customer
     // app can ring the ringtone + flash a toast in real time.
     this.ordersGateway.emitCustomerAlert(alert);
+
+    // Fan out to every push subscription this customer has registered
+    // (FCM tokens on Capacitor APKs today; Web Push subscriptions for
+    // browser PWAs once the SW handler lands). Fire-and-forget — the
+    // socket emit + in-app retry path above is already best-effort,
+    // and a push failure shouldn't fail the calling order flow.
+    void this.push.sendToUser(ctx.customerId, {
+      title: alert.title,
+      body: alert.body,
+      ringtone: alert.ringtone,
+      data: {
+        // Keep the keys short and primitive — FCM data payload is a
+        // flat string→string map. The customer client uses these to
+        // deep-link into the right page when the user taps the
+        // notification.
+        alertId: alert.id,
+        trigger: alert.trigger,
+        ...(alert.orderId ? { orderId: alert.orderId } : {}),
+        ...(alert.orderItemId ? { orderItemId: alert.orderItemId } : {}),
+      },
+    }).catch((e) => this.logger.warn(`Push fan-out failed for ${ctx.customerId}: ${e?.message}`));
+
     return alert;
   }
 }
