@@ -34,7 +34,17 @@ const STATUS_MSG: Record<string, { title: string; sub: string; emoji: string; cl
   RESOLVED:        { title: 'Dispute resolved',       sub: 'Thanks for your patience.',         emoji: '✅', cls: 'bg-sky-50 border-sky-200 text-sky-800' },
   FOR_REFUND:      { title: 'Refund pending',         sub: 'Your refund is being processed.',   emoji: '💸', cls: 'bg-pink-50 border-pink-200 text-pink-800' },
   REFUND_COMPLETE: { title: 'Refund complete',        sub: 'Money returned to your account.',   emoji: '✅', cls: 'bg-purple-50 border-purple-200 text-purple-800' },
+  // Parcel-path counterpart to OUT_FOR_SERVICE — kitchen is done,
+  // parcel station is staging it. Customer sees a "ready for pickup"
+  // line. Missing this map entry was crashing the whole tracking
+  // page when a parcel order hit this state.
+  READY_FOR_PICKUP: { title: 'Ready for pickup',      sub: 'Collect it at the parcel desk.',    emoji: '🛍️', cls: 'bg-emerald-50 border-emerald-200 text-emerald-800' },
 };
+
+// Last-line fallback for any future status the server adds before
+// the client catches up. The render would otherwise crash on the
+// next `msg.cls` / `msg.emoji` dereference.
+const FALLBACK_STATUS_MSG = { title: 'Order in progress', sub: 'Hang tight — we\'ll update you shortly.', emoji: '⏳', cls: 'bg-slate-50 border-slate-200 text-slate-700' };
 
 const DISPUTE_STATUS_STYLE: Record<string, { cls: string; label: string }> = {
   OPEN:      { cls: 'bg-red-100 text-red-700 border-red-200',    label: 'Open' },
@@ -222,7 +232,7 @@ export default function OrderTrackingPage() {
   const isDone      = ['SERVED', 'CANCELLED', 'DISPUTED', 'RESOLVED', 'REFUND_COMPLETE'].includes(order.status);
   const canDispute  = order.status === 'SERVED' && disputes.every(d => ['RESOLVED', 'CLOSED'].includes(d.status));
   const activeDispute = disputes.find(d => !['RESOLVED', 'CLOSED'].includes(d.status));
-  const msg         = STATUS_MSG[order.status];
+  const msg         = STATUS_MSG[order.status] || FALLBACK_STATUS_MSG;
 
   return (
     <div className="min-h-dvh bg-slate-50 flex flex-col">
@@ -712,7 +722,7 @@ function DisputeStatusCard({ dispute }: { dispute: any }) {
 }
 
 /* ── Per-item progress row ───────────────────────────────── */
-type ItemStatus = 'PENDING' | 'PREPARING' | 'READY' | 'SERVED' | 'CANCELLED';
+type ItemStatus = 'PENDING_VERIFICATION' | 'PENDING' | 'PREPARING' | 'READY' | 'SERVED' | 'CANCELLED';
 
 const ITEM_STEPS: { key: ItemStatus; label: string; color: string }[] = [
   { key: 'PENDING',   label: 'Queued',    color: '#94a3b8' },
@@ -721,7 +731,14 @@ const ITEM_STEPS: { key: ItemStatus; label: string; color: string }[] = [
   { key: 'SERVED',    label: 'Served',    color: '#14b8a6' },
 ];
 
+// Neutral fallback used both as the explicit PENDING_VERIFICATION
+// badge (postpaid adds where the service desk hasn't confirmed yet)
+// AND as a safety net for any future status the server adds before
+// the client catches up — better than crashing the whole page render.
+const FALLBACK_BADGE = { bg: '#fefce8', text: '#854d0e', border: '#fde68a', label: 'Awaiting confirmation', emoji: '🕒' };
+
 const ITEM_BADGE: Record<ItemStatus, { bg: string; text: string; border: string; label: string; emoji: string }> = {
+  PENDING_VERIFICATION: FALLBACK_BADGE,
   PENDING:   { bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', label: 'Queued',    emoji: '⏳' },
   PREPARING: { bg: '#e8efef', text: '#04181a', border: '#D2E5DF', label: 'Cooking',   emoji: '🍳' },
   READY:     { bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', label: 'Ready',     emoji: '🔔' },
@@ -731,9 +748,17 @@ const ITEM_BADGE: Record<ItemStatus, { bg: string; text: string; border: string;
 
 function ItemProgressRow({ item, onReviewSaved }: { item: any; onReviewSaved?: (review: any) => void }) {
   const status = (item.status || 'PENDING') as ItemStatus;
-  const badge = ITEM_BADGE[status];
+  // Always have a valid badge object so a server-added status the
+  // client doesn't know yet doesn't blow up the whole page render
+  // (which is what made the tracking page go blank on postpaid
+  // table orders before service desk confirmation).
+  const badge = ITEM_BADGE[status] || FALLBACK_BADGE;
   const idx = ITEM_STEPS.findIndex(s => s.key === status);
   const canReview = status === 'SERVED';
+  // PENDING_VERIFICATION sits *before* the four-step bar — leave the
+  // progress strip empty so the customer sees "Awaiting confirmation"
+  // without a misleading partial-progress line.
+  const isPreConfirmation = status === 'PENDING_VERIFICATION';
   // Blink the row while this specific item has a fresh unread
   // ITEM_READY alert AND the item itself is still in an active state.
   // Once status moves to SERVED or CANCELLED, blinking stops regardless
@@ -760,7 +785,7 @@ function ItemProgressRow({ item, onReviewSaved }: { item: any; onReviewSaved?: (
         </span>
       </div>
 
-      {status !== 'CANCELLED' && (
+      {status !== 'CANCELLED' && !isPreConfirmation && (
         <div className="flex items-center gap-1 mt-3">
           {ITEM_STEPS.map((step, i) => (
             <div key={step.key} className="flex-1 flex items-center gap-1">
@@ -770,7 +795,7 @@ function ItemProgressRow({ item, onReviewSaved }: { item: any; onReviewSaved?: (
           ))}
         </div>
       )}
-      {status !== 'CANCELLED' && (
+      {status !== 'CANCELLED' && !isPreConfirmation && (
         <div className="flex justify-between mt-1.5">
           {ITEM_STEPS.map((step, i) => (
             <span key={step.key} className="text-[9px] font-semibold"
@@ -779,6 +804,11 @@ function ItemProgressRow({ item, onReviewSaved }: { item: any; onReviewSaved?: (
             </span>
           ))}
         </div>
+      )}
+      {isPreConfirmation && (
+        <p className="text-[11px] text-amber-700 mt-2 leading-snug">
+          Service desk hasn't confirmed this line yet. It'll move to the kitchen as soon as they do.
+        </p>
       )}
 
       {/* Inline rating form — appears once this individual item is served. */}
