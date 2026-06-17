@@ -2331,7 +2331,7 @@ export class OrdersService {
    * served → bill requested → payment), only disappearing once the
    * payment lands. Returns flat — client groups by section / table.
    */
-  async getOpenServiceTabs(outletId: string) {
+  async getOpenServiceTabs(outletId: string, tableId?: string) {
     // "Paid" means at least one Payment row exists with status=SUCCESS
     // and isRefund=false. Anything else is an open tab — including
     // orders where the bill was requested but payment hasn't settled
@@ -2341,6 +2341,7 @@ export class OrdersService {
         outletId,
         isPostpaid: true,
         status: { notIn: [OrderStatus.CANCELLED, OrderStatus.REFUND_COMPLETE] },
+        ...(tableId ? { tableId } : {}),
         NOT: {
           payments: {
             some: { status: PaymentStatus.SUCCESS, isRefund: false },

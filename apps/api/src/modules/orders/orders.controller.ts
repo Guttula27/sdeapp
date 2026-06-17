@@ -203,9 +203,13 @@ export class OrdersController {
   // Client groups by section / table for the working surface.
   @UseGuards(JwtAuthGuard)
   @Get('service-desk/open-tabs')
-  openServiceTabs(@Param('outletId') outletId: string, @CurrentUser() user: any) {
+  openServiceTabs(
+    @Param('outletId') outletId: string,
+    @CurrentUser() user: any,
+    @Query('tableId') tableId?: string,
+  ) {
     assertResponsibility(user, 'VIEW_SERVICE_DESK');
-    return this.ordersService.getOpenServiceTabs(outletId);
+    return this.ordersService.getOpenServiceTabs(outletId, tableId);
   }
 
   // Parcel desk dashboard: two lanes — pack (kitchen done, awaiting

@@ -257,6 +257,11 @@ export default function PlaceOrderPage() {
   // Dine-in Postpaid is the only outlet type that gets the open-tab UX.
   const isPostpaidTableFlow = bookingMode === 'table' && outlet?.outletType === 'DINE_IN_POSTPAID';
   const [openOrder, setOpenOrder] = useState<any | null>(null);
+  // Every open (unpaid postpaid) tab at the currently-selected table.
+  // Drives the picker so the service desk can see all of "what's
+  // running" on this table without having to type each customer's
+  // phone number to find it.
+  const [tableOpenTabs, setTableOpenTabs] = useState<any[]>([]);
   // 'idle' = adding items / placing; 'billing' = Bill Now pressed, show Cash/UPI.
   const [billingState, setBillingState] = useState<'idle' | 'billing'>('idle');
 
@@ -280,6 +285,40 @@ export default function PlaceOrderPage() {
     }
   }, [isPostpaidTableFlow, tableId, outletId, customerPhone]);
   useEffect(() => { refreshOpenOrder(); setBillingState('idle'); }, [refreshOpenOrder]);
+
+  // Whenever the table changes (or one of the table's tabs gets billed
+  // / paid / cancelled), refresh the list of open tabs at this table so
+  // the picker stays current. The endpoint is the same one the service
+  // desk uses, scoped by tableId.
+  const refreshTableTabs = useCallback(async () => {
+    if (!isPostpaidTableFlow || !tableId) { setTableOpenTabs([]); return; }
+    try {
+      const { data } = await api.get(`/outlets/${outletId}/orders/service-desk/open-tabs`, {
+        params: { tableId },
+      });
+      setTableOpenTabs((data.data as any[]) || []);
+    } catch {
+      setTableOpenTabs([]);
+    }
+  }, [isPostpaidTableFlow, tableId, outletId]);
+  useEffect(() => { refreshTableTabs(); }, [refreshTableTabs]);
+
+  // Pick one of the listed tabs → make it the active order for further
+  // edits. Pulls phone + customer name into the form so the staff
+  // doesn't have to retype, and clears the cart so the next add lands
+  // on the correct line.
+  const selectTab = (tab: any) => {
+    setOpenOrder(tab);
+    if (tab?.customer?.phone) setCustomerPhone(tab.customer.phone);
+    setBillingState('idle');
+  };
+  // Start a fresh tab on the same table — clears openOrder and the
+  // phone field so staff can enter a new customer.
+  const startNewTab = () => {
+    setOpenOrder(null);
+    setCustomerPhone('');
+    setBillingState('idle');
+  };
 
   // If the outlet type later changes such that seating is no longer allowed
   // (or types/tables vanish), keep the booking mode coherent.
@@ -581,6 +620,9 @@ export default function PlaceOrderPage() {
       setCart([]);
       try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
       await refreshOpenOrder();
+      // Tab list also needs to refresh — a new tab just joined it,
+      // or an existing tab's total just changed.
+      await refreshTableTabs();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to place order');
     } finally {
@@ -595,6 +637,7 @@ export default function PlaceOrderPage() {
       const { data } = await api.patch(`/outlets/${outletId}/orders/${openOrder.id}/bill-request`);
       setOpenOrder(data.data);
       setBillingState('billing');
+      await refreshTableTabs();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to request bill');
     } finally {
@@ -1022,6 +1065,73 @@ export default function PlaceOrderPage() {
                     ))}
                   </select>
                 </div>
+              </div>
+            )}
+
+            {/* Open tabs at this table — only visible on the postpaid
+                table flow once a table is picked. Lets the staff pick
+                an existing tab to add items / bill, or start a new
+                tab without having to remember each customer's phone
+                number. */}
+            {isPostpaidTableFlow && tableId && (
+              <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-2">
+                <div className="flex items-center justify-between mb-1.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                    Open tabs at this table
+                  </p>
+                  <span className="text-[10px] font-semibold text-slate-400">
+                    {tableOpenTabs.length}
+                  </span>
+                </div>
+                {tableOpenTabs.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 italic py-2 text-center">
+                    No open tabs yet. Enter a phone + items below to start one.
+                  </p>
+                ) : (
+                  <ul className="space-y-1 mb-1.5">
+                    {tableOpenTabs.map((tab: any) => {
+                      const billed = !!tab.billRequestedAt;
+                      const active = openOrder?.id === tab.id;
+                      return (
+                        <li key={tab.id}>
+                          <button
+                            onClick={() => selectTab(tab)}
+                            className={clsx(
+                              'w-full text-left px-2 py-1.5 rounded-lg border transition-colors flex items-center justify-between gap-2',
+                              active
+                                ? 'bg-brand-50 border-brand-200 text-brand-900'
+                                : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700',
+                            )}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-bold flex items-center gap-1.5">
+                                <span>#{tab.orderNumber}</span>
+                                {billed && (
+                                  <span className="text-[9px] font-bold bg-violet-100 text-violet-800 border border-violet-200 px-1 py-0.5 rounded">
+                                    Bill requested
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-[10px] text-slate-500 truncate">
+                                {tab.customer?.name || '—'}
+                                {tab.customer?.phone ? ` · ${tab.customer.phone}` : ''}
+                              </p>
+                            </div>
+                            <span className="text-xs font-bold text-slate-700 shrink-0">
+                              ₹{Number(tab.totalAmount ?? 0).toFixed(0)}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                <button
+                  onClick={startNewTab}
+                  className="w-full text-[11px] font-bold border border-dashed border-slate-300 hover:border-brand-400 hover:text-brand-700 text-slate-600 rounded-lg py-1.5 inline-flex items-center justify-center gap-1"
+                >
+                  <Plus size={11} /> New tab (different customer)
+                </button>
               </div>
             )}
 
