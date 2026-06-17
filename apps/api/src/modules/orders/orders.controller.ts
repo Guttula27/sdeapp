@@ -197,6 +197,17 @@ export class OrdersController {
     return this.ordersService.getServiceDeskQueue(outletId);
   }
 
+  // Open tabs view: every postpaid order on this outlet whose payment
+  // hasn't completed yet. Stays visible across verify → preparing →
+  // ready → served → bill → payment, only disappearing once paid.
+  // Client groups by section / table for the working surface.
+  @UseGuards(JwtAuthGuard)
+  @Get('service-desk/open-tabs')
+  openServiceTabs(@Param('outletId') outletId: string, @CurrentUser() user: any) {
+    assertResponsibility(user, 'VIEW_SERVICE_DESK');
+    return this.ordersService.getOpenServiceTabs(outletId);
+  }
+
   // Parcel desk dashboard: two lanes — pack (kitchen done, awaiting
   // packaging) and handover (packed, customer collecting). Returns
   // 403 if the caller lacks VIEW_PARCEL_DESK.

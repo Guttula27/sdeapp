@@ -20,9 +20,12 @@ type OrderRow = {
   tableId: string | null;
   status: string;
   isPostpaid: boolean;
+  billRequestedAt?: string | null;
+  totalAmount?: string | number | null;
   createdAt: string;
-  table?: { id: string; number: string } | null;
+  table?: { id: string; number: string; sectionId?: string | null; section?: { id: string; name: string } | null } | null;
   customer?: { id: string; name?: string | null; phone?: string | null } | null;
+  payments?: Array<{ id: string; status: string; isRefund?: boolean; mode?: string }>;
   items: Array<{
     id: string;
     quantity: number;
@@ -104,6 +107,15 @@ export default function ServiceDeskPage() {
 
   const outletId = user?.outletId || '';
   const [queue, setQueue] = useState<Queue>(EMPTY_QUEUE);
+  // Open tabs — every unpaid postpaid order at this outlet, kept around
+  // across verify → preparing → ready → served → bill → payment, only
+  // disappearing once the payment lands. The service desk works
+  // primarily from this surface; the original verify/release/pickup
+  // lanes below stay for the task-focused views.
+  const [openTabs, setOpenTabs] = useState<OrderRow[]>([]);
+  // Add-item modal target. When non-null, the AddItemModal renders for
+  // this specific order. Set from each tab card's "Add item" button.
+  const [addItemTarget, setAddItemTarget] = useState<{ orderId: string; orderNumber: string; tableNumber?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   // Order ids that just changed — used to trigger the brief blink animation.
   const [flash, setFlash] = useState<Set<string>>(new Set());
@@ -117,8 +129,12 @@ export default function ServiceDeskPage() {
   const fetchQueue = useCallback(async () => {
     if (!outletId) return;
     try {
-      const { data } = await api.get(`/outlets/${outletId}/orders/service-desk/queue`);
-      setQueue((data.data as Queue) || EMPTY_QUEUE);
+      const [qRes, tabsRes] = await Promise.all([
+        api.get(`/outlets/${outletId}/orders/service-desk/queue`),
+        api.get(`/outlets/${outletId}/orders/service-desk/open-tabs`),
+      ]);
+      setQueue((qRes.data.data as Queue) || EMPTY_QUEUE);
+      setOpenTabs((tabsRes.data.data as OrderRow[]) || []);
     } catch {
       // best-effort; the socket-driven path will pick up the next nudge
     } finally {
@@ -226,6 +242,63 @@ export default function ServiceDeskPage() {
       toast.error(e?.response?.data?.message || 'Could not update');
     }
   };
+  const requestBill = async (orderId: string) => {
+    if (!window.confirm('Request the bill? No more items can be added after this.')) return;
+    try {
+      await api.patch(`/outlets/${outletId}/orders/${orderId}/bill-request`);
+      toast.success('Bill requested — awaiting payment');
+      fetchQueue();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Could not request bill');
+    }
+  };
+
+  // Section → table → orders. Service desk staff walk the room; this
+  // grouping mirrors the physical layout so they find the right tab
+  // by walking to the table. Unsectioned tables and counter orders
+  // (no table) land in their own buckets.
+  const sectionGroups = useMemo(() => {
+    type TableGroup = { tableId: string; tableNumber: string; orders: OrderRow[] };
+    type Section = { id: string; name: string; tables: TableGroup[] };
+    const map = new Map<string, Section>();
+    const COUNTER = '__counter__';
+    const UNSECTIONED = '__unsectioned__';
+    for (const o of openTabs) {
+      const sectionId = o.table?.section?.id ?? (o.table ? UNSECTIONED : COUNTER);
+      const sectionName = o.table?.section?.name
+        ?? (o.table ? 'Unsectioned tables' : 'Counter / no table');
+      if (!map.has(sectionId)) map.set(sectionId, { id: sectionId, name: sectionName, tables: [] });
+      const section = map.get(sectionId)!;
+      const tableKey = o.table?.id ?? '__counter__';
+      const tableNumber = o.table?.number ?? 'Counter';
+      let group = section.tables.find((t) => t.tableId === tableKey);
+      if (!group) {
+        group = { tableId: tableKey, tableNumber, orders: [] };
+        section.tables.push(group);
+      }
+      group.orders.push(o);
+    }
+    // Stable order: counter last; tables sorted by number.
+    const sections = Array.from(map.values()).sort((a, b) => {
+      if (a.id === COUNTER) return 1;
+      if (b.id === COUNTER) return -1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const s of sections) {
+      s.tables.sort((a, b) => a.tableNumber.localeCompare(b.tableNumber, undefined, { numeric: true }));
+    }
+    return sections;
+  }, [openTabs]);
+
+  // Visual treatment for an item line based on its lifecycle state.
+  const itemLineCls = (status: string): string => {
+    if (status === 'PENDING_VERIFICATION') return 'bg-amber-50 text-amber-900 border-amber-100';
+    if (status === 'CANCELLED') return 'bg-slate-50 text-slate-400 line-through border-slate-100';
+    if (status === 'READY') return 'bg-emerald-50 text-emerald-800 border-emerald-100';
+    if (status === 'SERVED') return 'bg-slate-50 text-slate-500 border-slate-100';
+    if (status === 'PREPARING') return 'bg-brand-50/40 text-brand-900 border-brand-100';
+    return 'bg-white text-slate-700 border-slate-100';
+  };
 
   // Verify-lane items are a subset of order.items (only PENDING_VERIFICATION
   // lines should render in this lane's preview). Other lanes show every
@@ -291,6 +364,128 @@ export default function ServiceDeskPage() {
           <FullscreenToggle active={isFullscreen} onClick={toggleFullscreen} />
         </div>
       </header>
+
+      {/* ── Open tabs (primary working surface) ─────────────────
+          Grouped by section → table. Stays visible across the whole
+          tab lifecycle until payment lands. Each table card shows
+          the order and surfaces the actions a server would take
+          (add an item, request the bill). The lanes below remain
+          for task-focused views. */}
+      <section className="mb-4">
+        <div className="flex items-end justify-between mb-2 px-1">
+          <div>
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700">Open tabs</h2>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              All un-paid postpaid orders for this outlet, by table.
+            </p>
+          </div>
+          <span className="text-[11px] font-semibold text-slate-500">
+            {openTabs.length} open · {sectionGroups.reduce((s, g) => s + g.tables.length, 0)} tables
+          </span>
+        </div>
+        {openTabs.length === 0 ? (
+          <p className="text-xs text-slate-400 italic px-2 py-6 text-center bg-white border border-slate-100 rounded-xl">
+            No open tabs right now.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {sectionGroups.map((sec) => (
+              <div key={sec.id} className="bg-slate-50/80 border border-slate-200 rounded-xl p-2.5">
+                <div className="flex items-center gap-2 mb-2 px-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    {sec.name}
+                  </span>
+                  <span className="text-[10px] font-semibold text-slate-400">
+                    · {sec.tables.length} {sec.tables.length === 1 ? 'table' : 'tables'}
+                  </span>
+                </div>
+                <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
+                  {sec.tables.map((tg) => (
+                    <article key={tg.tableId} className="bg-white rounded-xl border border-slate-200 p-2.5 flex flex-col gap-2">
+                      <header className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-brand-50 text-brand-800 border border-brand-100 rounded px-2 py-0.5">
+                            <Armchair size={11} /> {tg.tableNumber}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-semibold">
+                            {tg.orders.length} order{tg.orders.length === 1 ? '' : 's'}
+                          </span>
+                        </div>
+                      </header>
+                      {tg.orders.map((o) => {
+                        const live = o.items.filter((i) => i.status !== 'CANCELLED');
+                        const billed = !!o.billRequestedAt;
+                        return (
+                          <div key={o.id} className="border border-slate-100 rounded-lg p-2">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-bold text-slate-900">#{o.orderNumber}</span>
+                                {billed && (
+                                  <span className="text-[10px] font-bold bg-violet-100 text-violet-800 border border-violet-200 px-1.5 py-0.5 rounded">
+                                    Bill requested
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[11px] font-bold text-slate-700">
+                                ₹{Number(o.totalAmount ?? 0).toFixed(2)}
+                              </span>
+                            </div>
+                            {(o.customer?.name || o.customer?.phone) && (
+                              <p className="text-[10px] text-slate-500 mb-1.5 truncate">
+                                {o.customer?.name}{o.customer?.phone ? ` · ${o.customer.phone}` : ''}
+                              </p>
+                            )}
+                            <ul className="space-y-1 mb-2">
+                              {live.length === 0 && (
+                                <li className="text-[11px] italic text-slate-400">No active lines.</li>
+                              )}
+                              {live.map((it) => (
+                                <li
+                                  key={it.id}
+                                  className={clsx('flex items-center gap-1.5 text-[11px] rounded border px-1.5 py-1', itemLineCls(it.status))}
+                                >
+                                  <span className="font-bold min-w-[1.25rem]">×{it.quantity}</span>
+                                  <span className="flex-1 truncate">
+                                    {it.item?.name || 'Item'}
+                                    {it.variant?.name ? ` — ${it.variant.name}` : ''}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                            <div className="flex gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                              {!billed && (
+                                <button
+                                  onClick={() => setAddItemTarget({ orderId: o.id, orderNumber: o.orderNumber, tableNumber: tg.tableNumber })}
+                                  className="text-[10px] font-bold bg-brand-600 hover:bg-brand-700 text-white rounded px-2 py-1 inline-flex items-center gap-1"
+                                >
+                                  <Plus size={10} /> Add item
+                                </button>
+                              )}
+                              {!billed && live.length > 0 && (
+                                <button
+                                  onClick={() => requestBill(o.id)}
+                                  className="text-[10px] font-bold bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded px-2 py-1 inline-flex items-center gap-1"
+                                >
+                                  <Bell size={10} /> Bill Now
+                                </button>
+                              )}
+                              {billed && (
+                                <span className="text-[10px] text-slate-500 italic">
+                                  Awaiting payment
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Flex row: each lane is a flex child whose `flex` value swings
           when one lane is expanded. Default = equal columns; expanded
@@ -582,6 +777,274 @@ export default function ServiceDeskPage() {
             </section>
           );
         })}
+      </div>
+
+      {addItemTarget && (
+        <AddItemModal
+          outletId={outletId}
+          orderId={addItemTarget.orderId}
+          orderNumber={addItemTarget.orderNumber}
+          tableNumber={addItemTarget.tableNumber}
+          onClose={() => setAddItemTarget(null)}
+          onSaved={() => {
+            setAddItemTarget(null);
+            fetchQueue();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Add item modal ─────────────────────────────────────────────────
+   Opens from each open tab card. Fetches the outlet menu once, then
+   lets the staff search + click items to fill a small per-modal cart.
+   Submit appends to the existing order via the appendItems endpoint
+   — new lines arrive in PENDING_VERIFICATION so they show up in the
+   Verify lane until the staff confirms with the customer.
+
+   Intentionally a thin picker: variants get a quick dropdown when
+   present; toppings / bundles are out of scope for the first cut.
+*/
+function AddItemModal({
+  outletId, orderId, orderNumber, tableNumber, onClose, onSaved,
+}: {
+  outletId: string;
+  orderId: string;
+  orderNumber: string;
+  tableNumber?: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  type MenuItem = {
+    id: string;
+    name: string;
+    basePrice: string | number;
+    variants?: Array<{ id: string; name: string; price: string | number; isAvailable: boolean }>;
+    isAvailable: boolean;
+    isDisplayed: boolean;
+  };
+  type Category = { id: string; name: string; subcategories?: Array<{ id: string; name: string; items?: MenuItem[] }> };
+  type Cart = Array<{ key: string; itemId: string; variantId?: string; name: string; qty: number; unit: number }>;
+
+  const [menu, setMenu] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [cart, setCart] = useState<Cart>([]);
+  const [saving, setSaving] = useState(false);
+  const [variantPickFor, setVariantPickFor] = useState<MenuItem | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/outlets/${outletId}/menu`, { params: { includeHidden: 'true' } });
+        if (!cancelled) setMenu((data?.data as Category[]) || []);
+      } catch {
+        if (!cancelled) toast.error('Could not load menu');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [outletId]);
+
+  // Flatten + filter for the picker view. Staff almost always need
+  // search rather than category drill-down when they're standing at a
+  // table; we keep category headers so the result list stays scannable.
+  const filteredCats = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const out: Array<{ category: string; subcategory: string; items: MenuItem[] }> = [];
+    for (const cat of menu) {
+      for (const sub of cat.subcategories || []) {
+        const items = (sub.items || []).filter((it) =>
+          it.isAvailable
+          && it.isDisplayed
+          && (!q || it.name.toLowerCase().includes(q)),
+        );
+        if (items.length) out.push({ category: cat.name, subcategory: sub.name, items });
+      }
+    }
+    return out;
+  }, [menu, query]);
+
+  const addToCart = (item: MenuItem, variant?: { id: string; name: string; price: string | number }) => {
+    const key = variant ? `${item.id}:${variant.id}` : item.id;
+    const unit = Number(variant?.price ?? item.basePrice);
+    setCart((prev) => {
+      const existing = prev.find((l) => l.key === key);
+      if (existing) {
+        return prev.map((l) => l.key === key ? { ...l, qty: l.qty + 1 } : l);
+      }
+      return [...prev, {
+        key,
+        itemId: item.id,
+        variantId: variant?.id,
+        name: variant ? `${item.name} — ${variant.name}` : item.name,
+        qty: 1,
+        unit,
+      }];
+    });
+  };
+
+  const tap = (item: MenuItem) => {
+    const variants = (item.variants || []).filter((v) => v.isAvailable);
+    if (variants.length === 0) return addToCart(item);
+    // Single variant → just add. Multiple → ask.
+    if (variants.length === 1) return addToCart(item, variants[0]);
+    setVariantPickFor(item);
+  };
+
+  const updateQty = (key: string, delta: number) => {
+    setCart((prev) => prev
+      .map((l) => l.key === key ? { ...l, qty: l.qty + delta } : l)
+      .filter((l) => l.qty > 0),
+    );
+  };
+
+  const cartTotal = useMemo(() => cart.reduce((s, l) => s + l.unit * l.qty, 0), [cart]);
+
+  const submit = async () => {
+    if (cart.length === 0) return;
+    setSaving(true);
+    try {
+      await api.post(`/outlets/${outletId}/orders/${orderId}/items`, {
+        items: cart.map((l) => ({ itemId: l.itemId, variantId: l.variantId, quantity: l.qty })),
+      });
+      toast.success(`Added ${cart.length} line${cart.length === 1 ? '' : 's'} — verify in the Verify lane`);
+      onSaved();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Could not add items');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-2 sm:p-6">
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+        <header className="flex items-center justify-between gap-2 px-4 py-3 border-b border-slate-100">
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold text-slate-900">Add item to #{orderNumber}</h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {tableNumber ? `Table ${tableNumber}` : 'Counter'} · new lines arrive in Verify until you confirm
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700">
+            <XCircle size={18} />
+          </button>
+        </header>
+
+        <div className="px-3 py-2 border-b border-slate-100">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search items…"
+            className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-200"
+            autoFocus
+          />
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <p className="text-xs text-slate-400 italic px-3 py-6 text-center">Loading menu…</p>
+          ) : filteredCats.length === 0 ? (
+            <p className="text-xs text-slate-400 italic px-3 py-6 text-center">
+              {query ? 'No items match that search.' : 'No items available.'}
+            </p>
+          ) : (
+            filteredCats.map((group) => (
+              <div key={`${group.category}|${group.subcategory}`} className="px-3 py-1.5">
+                <p className="text-[10px] uppercase tracking-wider font-bold text-slate-400 mb-1">
+                  {group.category} · {group.subcategory}
+                </p>
+                <ul className="grid sm:grid-cols-2 gap-1.5">
+                  {group.items.map((it) => (
+                    <li key={it.id}>
+                      <button
+                        onClick={() => tap(it)}
+                        className="w-full text-left bg-slate-50 hover:bg-brand-50 border border-slate-100 hover:border-brand-200 rounded-lg px-2 py-1.5 flex items-center justify-between gap-2 text-xs transition-colors"
+                      >
+                        <span className="truncate text-slate-800 font-semibold">{it.name}</span>
+                        <span className="shrink-0 text-slate-500">₹{Number(it.basePrice).toFixed(0)}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          )}
+        </div>
+
+        {cart.length > 0 && (
+          <div className="border-t border-slate-100 px-3 py-2 bg-slate-50/60 max-h-44 overflow-y-auto">
+            <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">
+              To add — {cart.length} line{cart.length === 1 ? '' : 's'} · ₹{cartTotal.toFixed(2)}
+            </p>
+            <ul className="space-y-1">
+              {cart.map((l) => (
+                <li key={l.key} className="flex items-center gap-2 text-xs">
+                  <div className="flex items-center gap-0.5 border border-slate-300 rounded-md bg-white shrink-0">
+                    <button
+                      onClick={() => updateQty(l.key, -1)}
+                      className="w-6 h-6 flex items-center justify-center text-slate-500 hover:text-slate-800"
+                      title="Decrease"
+                    >
+                      <Minus size={11} />
+                    </button>
+                    <span className="text-xs font-bold text-slate-900 w-5 text-center">{l.qty}</span>
+                    <button
+                      onClick={() => updateQty(l.key, 1)}
+                      className="w-6 h-6 flex items-center justify-center text-slate-500 hover:text-slate-800"
+                      title="Increase"
+                    >
+                      <Plus size={11} />
+                    </button>
+                  </div>
+                  <span className="flex-1 truncate text-slate-700">{l.name}</span>
+                  <span className="text-slate-500 shrink-0">₹{(l.unit * l.qty).toFixed(2)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <footer className="px-3 py-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
+          <button onClick={onClose} className="text-xs font-semibold text-slate-500 hover:text-slate-800">
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={saving || cart.length === 0}
+            className="text-xs font-bold bg-brand-600 hover:bg-brand-700 text-white rounded-lg px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {saving ? 'Adding…' : `Add ${cart.length || ''} ${cart.length === 1 ? 'line' : 'lines'}`}
+          </button>
+        </footer>
+
+        {variantPickFor && (
+          <div className="absolute inset-0 z-10 bg-black/30 flex items-end sm:items-center justify-center p-2 sm:p-6" onClick={() => setVariantPickFor(null)}>
+            <div className="bg-white rounded-xl w-full max-w-sm p-3" onClick={(e) => e.stopPropagation()}>
+              <p className="text-sm font-bold text-slate-900 mb-2">Pick a size — {variantPickFor.name}</p>
+              <ul className="space-y-1">
+                {(variantPickFor.variants || []).filter((v) => v.isAvailable).map((v) => (
+                  <li key={v.id}>
+                    <button
+                      onClick={() => { addToCart(variantPickFor, v); setVariantPickFor(null); }}
+                      className="w-full text-left bg-slate-50 hover:bg-brand-50 border border-slate-100 hover:border-brand-200 rounded-lg px-2 py-1.5 flex items-center justify-between text-xs"
+                    >
+                      <span className="text-slate-800 font-semibold">{v.name}</span>
+                      <span className="text-slate-500">₹{Number(v.price).toFixed(0)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button onClick={() => setVariantPickFor(null)} className="mt-2 w-full text-xs font-semibold text-slate-500 hover:text-slate-800 py-1">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

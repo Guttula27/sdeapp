@@ -3,7 +3,7 @@ import { PrismaService } from '../../config/prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersGateway } from './orders.gateway';
-import { OrderStatus, OrderItemStatus, OutletType } from '@prisma/client';
+import { OrderStatus, OrderItemStatus, OutletType, PaymentStatus } from '@prisma/client';
 import { AuditLogService } from '../../config/logger/audit-log.service';
 import { EncryptionService } from '../../config/crypto/encryption.service';
 import { UserLookupService } from '../../config/crypto/user-lookup.service';
@@ -2324,6 +2324,46 @@ export class OrdersService {
   //   release — self-service orders sitting at OUT_FOR_SERVICE
   //   pickup  — table-service orders sitting at READY
   // Parcel orders ride in their own UI (parcel station), not this queue.
+  /**
+   * "Open tabs" view for the service desk — every postpaid order at
+   * this outlet whose payment hasn't completed yet. Stays visible
+   * across the whole table lifecycle (verify → preparing → ready →
+   * served → bill requested → payment), only disappearing once the
+   * payment lands. Returns flat — client groups by section / table.
+   */
+  async getOpenServiceTabs(outletId: string) {
+    // "Paid" means at least one Payment row exists with status=SUCCESS
+    // and isRefund=false. Anything else is an open tab — including
+    // orders where the bill was requested but payment hasn't settled
+    // and orders that are still verifying / cooking.
+    return this.prisma.order.findMany({
+      where: {
+        outletId,
+        isPostpaid: true,
+        status: { notIn: [OrderStatus.CANCELLED, OrderStatus.REFUND_COMPLETE] },
+        NOT: {
+          payments: {
+            some: { status: PaymentStatus.SUCCESS, isRefund: false },
+          },
+        },
+      },
+      include: {
+        items: { include: { item: true, variant: true } },
+        table: {
+          select: {
+            id: true,
+            number: true,
+            sectionId: true,
+            section: { select: { id: true, name: true } },
+          },
+        },
+        customer: { select: { id: true, name: true, phone: true } },
+        payments: { select: { id: true, status: true, isRefund: true, mode: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
   async getServiceDeskQueue(outletId: string) {
     const include = {
       items:    { include: { item: true, variant: true } },
