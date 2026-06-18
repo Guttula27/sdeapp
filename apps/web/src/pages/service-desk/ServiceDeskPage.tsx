@@ -10,6 +10,7 @@ import { useUserRole } from '../../hooks/useUserRole';
 import { useFullscreen } from '../../hooks/useFullscreen';
 import FullscreenToggle from '../../components/common/FullscreenToggle';
 import api from '../../services/api';
+import CoursePlanner from '../../components/orders/CoursePlanner';
 
 type Lane = 'verify' | 'release' | 'pickup';
 
@@ -23,6 +24,8 @@ type OrderRow = {
   billRequestedAt?: string | null;
   totalAmount?: string | number | null;
   createdAt: string;
+  activeSequence?: number | null;
+  sequenceLabels?: Record<string, string> | null;
   table?: { id: string; number: string; sectionId?: string | null; section?: { id: string; name: string } | null } | null;
   customer?: { id: string; name?: string | null; phone?: string | null } | null;
   payments?: Array<{ id: string; status: string; isRefund?: boolean; mode?: string }>;
@@ -31,6 +34,7 @@ type OrderRow = {
     quantity: number;
     status: string;
     notes?: string | null;
+    sequenceNumber?: number | null;
     item?: { id: string; name: string } | null;
     variant?: { id: string; name: string } | null;
   }>;
@@ -552,6 +556,19 @@ export default function ServiceDeskPage() {
                                 );
                               })}
                             </ul>
+                            {!billed && live.length > 0 && (
+                              <div className="mb-2" onClick={(e) => e.stopPropagation()}>
+                                <CoursePlanner
+                                  order={o as any}
+                                  compact
+                                  onSaved={(updated: any) => {
+                                    setOpenTabs((prev) =>
+                                      prev.map((t) => (t.id === updated.id ? { ...t, ...updated } as OrderRow : t)),
+                                    );
+                                  }}
+                                />
+                              </div>
+                            )}
                             <div className="flex gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
                               {!billed && (
                                 <button
@@ -842,6 +859,15 @@ export default function ServiceDeskPage() {
                               <li className="text-xs italic text-slate-400">No items in this lane.</li>
                             )}
                           </ul>
+                          {lane === 'verify' && items.length > 0 && (
+                            <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                              <CoursePlanner
+                                order={o as any}
+                                compact
+                                onSaved={() => fetchQueue()}
+                              />
+                            </div>
+                          )}
                           <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                             {lane === 'verify' && (
                               <>
