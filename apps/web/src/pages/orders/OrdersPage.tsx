@@ -1109,26 +1109,32 @@ export default function OrdersPage() {
               <span className="text-sm font-semibold" style={{ color: STATUS[detail.status]?.text }}>{STATUS[detail.status]?.label}</span>
             </div>
 
-            {/* Customer + tag */}
+            {/* Customer + tag + recognition insights */}
             {detail.customer && (() => {
               const tag = detail.customer.customerTagAssignments?.find((a: any) => a.outletId === detail.outletId)?.customerTag;
               return (
-                <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-100">
-                  <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-slate-500 shrink-0 border border-slate-200">
-                    <User size={14} />
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-100">
+                    <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-slate-500 shrink-0 border border-slate-200">
+                      <User size={14} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">{detail.customer.name || 'Customer'}</p>
+                      <p className="text-xs text-slate-500">{detail.customer.phone}</p>
+                    </div>
+                    {tag && (
+                      <span
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-white px-2.5 py-1 rounded-full shrink-0"
+                        style={{ background: tag.color }}
+                      >
+                        <TagIcon size={10} /> {tag.name}
+                      </span>
+                    )}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-slate-800 truncate">{detail.customer.name || 'Customer'}</p>
-                    <p className="text-xs text-slate-500">{detail.customer.phone}</p>
-                  </div>
-                  {tag && (
-                    <span
-                      className="inline-flex items-center gap-1 text-[11px] font-bold text-white px-2.5 py-1 rounded-full shrink-0"
-                      style={{ background: tag.color }}
-                    >
-                      <TagIcon size={10} /> {tag.name}
-                    </span>
-                  )}
+                  <CustomerInsightsPill
+                    outletId={detail.outletId || outletId}
+                    userId={detail.customer.id}
+                  />
                 </div>
               );
             })()}
@@ -1583,6 +1589,79 @@ const PANEL_TABS: { id: 'PENDING' | 'PREPARING' | 'READY'; label: string }[] = [
   { id: 'PREPARING', label: 'Preparing' },
   { id: 'READY',     label: 'Ready' },
 ];
+
+/**
+ * Customer-recognition pill on the order detail. Fetches per-outlet
+ * aggregate stats (visit count, lifetime spend, avg ticket, last
+ * visit, top 3 items, preferred payment mode) and renders a compact
+ * info card so staff can greet a regular customer informedly.
+ *
+ * Best-effort — fetch failures hide the pill silently instead of
+ * cluttering the modal with errors. Re-fires when the customer id
+ * changes (different order opens).
+ */
+function CustomerInsightsPill({ outletId, userId }: { outletId: string; userId: string }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.get(`/outlets/${outletId}/customers/${userId}/insights`)
+      .then((r) => { if (!cancelled) setData(r.data?.data ?? null); })
+      .catch(() => { if (!cancelled) setData(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [outletId, userId]);
+
+  if (loading || !data || data.visits === 0) return null;
+
+  const lastVisit = data.lastVisitAt ? new Date(data.lastVisitAt) : null;
+  const daysSince = lastVisit ? Math.floor((Date.now() - lastVisit.getTime()) / (1000 * 60 * 60 * 24)) : null;
+  const lastVisitText = daysSince == null
+    ? null
+    : daysSince === 0
+      ? 'first time today'
+      : daysSince < 7
+        ? `last visited ${daysSince}d ago`
+        : daysSince < 30
+          ? `last visited ${Math.floor(daysSince / 7)}w ago`
+          : `last visited ${Math.floor(daysSince / 30)}mo ago`;
+
+  const favs = (data.favourites || []).slice(0, 2).map((f: any) => f.name).join(' · ');
+
+  return (
+    <div className="px-4 py-2.5 rounded-xl border border-amber-100 bg-gradient-to-br from-amber-50 to-rose-50/30 text-[12px] text-slate-700">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-amber-800 bg-white/70 border border-amber-200 px-2 py-0.5 rounded-full">
+          <Bell size={10} /> Regular
+        </span>
+        <span className="font-bold text-slate-900 tabular-nums">{data.visits}{ordinalSuffix(data.visits)} visit</span>
+        {lastVisitText && <span className="text-slate-500">· {lastVisitText}</span>}
+      </div>
+      <div className="mt-1 flex items-center gap-3 flex-wrap text-[11px] text-slate-600">
+        {favs && (
+          <span><span className="text-slate-400">Usual:</span> <span className="font-semibold text-slate-800">{favs}</span></span>
+        )}
+        {data.avgTicket > 0 && (
+          <span><span className="text-slate-400">Avg ticket:</span> <span className="font-semibold tabular-nums text-slate-800">₹{Number(data.avgTicket).toFixed(0)}</span></span>
+        )}
+        {data.preferredMode && (
+          <span><span className="text-slate-400">Pays:</span> <span className="font-semibold text-slate-800">{data.preferredMode}</span></span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ordinalSuffix(n: number): string {
+  if (n % 100 >= 11 && n % 100 <= 13) return 'th';
+  switch (n % 10) {
+    case 1: return 'st';
+    case 2: return 'nd';
+    case 3: return 'rd';
+    default: return 'th';
+  }
+}
 
 function ItemStatusPanel({ orders, visibleItemsFn }: { orders: any[]; visibleItemsFn: (items: any[]) => any[] }) {
   const [tab, setTab] = useState<'PENDING' | 'PREPARING' | 'READY'>('PENDING');

@@ -23,6 +23,15 @@ export class CustomersController {
     return this.service.listOrders(outletId, userId);
   }
 
+  // Per-outlet aggregate stats for the order-detail recognition pill.
+  @Get(':userId/insights')
+  insights(
+    @Param('outletId') outletId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.service.insights(outletId, userId);
+  }
+
   @Post()
   add(
     @Param('outletId') outletId: string,

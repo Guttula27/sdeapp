@@ -106,6 +106,97 @@ export class CustomersService {
     });
   }
 
+  /**
+   * Customer-recognition surface: per-outlet aggregate stats for a
+   * known customer, plus their most-frequent items. Powers the small
+   * "Naren · 14th visit · usual: Manchurian + Coke · ~₹420/visit" pill
+   * on order detail. Cheap enough to compute on every detail open —
+   * the queries are all indexed (customerId, outletId) and capped to
+   * the last 90 days so reads stay tight as history grows.
+   */
+  async insights(outletId: string, userId: string) {
+    const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, phone: true },
+    });
+    if (!user) throw new NotFoundException('Customer not found');
+
+    // Aggregates over the customer's non-cancelled orders at this
+    // outlet. Lifetime totals (no time bound) so the "14th visit"
+    // counter reflects history, not just the 90-day rolling window.
+    const lifetime = await this.prisma.order.aggregate({
+      where: {
+        outletId,
+        customerId: userId,
+        status: { notIn: ['CANCELLED'] },
+      },
+      _count: true,
+      _sum: { totalAmount: true },
+      _max: { createdAt: true },
+    });
+
+    // Favourite items — top 3 by quantity ordered in the last 90 days.
+    // 90-day window keeps the suggestion fresh (regulars whose taste
+    // shifted three years ago don't anchor the pill).
+    const topItems = await this.prisma.orderItem.groupBy({
+      by: ['itemId'],
+      where: {
+        order: {
+          outletId,
+          customerId: userId,
+          createdAt: { gte: since },
+          status: { notIn: ['CANCELLED'] },
+        },
+        status: { notIn: ['CANCELLED'] },
+      },
+      _sum: { quantity: true },
+      orderBy: { _sum: { quantity: 'desc' } },
+      take: 3,
+    });
+    const itemMeta = topItems.length
+      ? await this.prisma.item.findMany({
+          where: { id: { in: topItems.map((g) => g.itemId) } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const metaById = new Map(itemMeta.map((i) => [i.id, i.name]));
+    const favourites = topItems.map((g) => ({
+      itemId: g.itemId,
+      name: metaById.get(g.itemId) ?? 'Item',
+      quantity: g._sum.quantity ?? 0,
+    }));
+
+    // Most-used payment mode across this customer's orders at this
+    // outlet (SUCCESS only). Single-mode customers see "Always
+    // pays UPI" — useful nudge for the staff to default the right
+    // tab.
+    const modesAgg = await this.prisma.payment.groupBy({
+      by: ['mode'],
+      where: {
+        order: { outletId, customerId: userId },
+        status: 'SUCCESS',
+        isRefund: false,
+      },
+      _count: true,
+      orderBy: { _count: { mode: 'desc' } },
+      take: 1,
+    });
+    const preferredMode = modesAgg[0]?.mode ?? null;
+
+    const visits = lifetime._count ?? 0;
+    const spend = Number(lifetime._sum.totalAmount ?? 0);
+    return {
+      customer: { id: user.id, name: user.name, phone: user.phone },
+      visits,
+      lifetimeSpend: spend,
+      avgTicket: visits > 0 ? spend / visits : 0,
+      lastVisitAt: lifetime._max.createdAt ?? null,
+      favourites,
+      preferredMode,
+    };
+  }
+
   async setTag(outletId: string, userId: string, customerTagId: string | null) {
     if (customerTagId === null) {
       await this.prisma.customerTagAssignment.deleteMany({
