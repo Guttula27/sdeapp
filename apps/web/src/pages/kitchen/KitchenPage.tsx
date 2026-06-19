@@ -73,7 +73,23 @@ export default function KitchenPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [pendingItem, setPendingItem] = useState<string | null>(null);
   const [, setTick] = useState(0);
-  const [myStation, setMyStation] = useState<{ id: string; name: string; isMaster?: boolean; printerId?: string | null; printer?: { id: string; name: string } | null } | null>(null);
+  // Plural — a staff member can be the currentWorker on multiple
+  // kitchen stations (e.g. covering tandoor + curry). The filter rules
+  // below show items routed to ANY of them, and treat the user as
+  // master if ANY assigned station is master.
+  type AssignedStation = { id: string; name: string; isMaster?: boolean; printerId?: string | null; printer?: { id: string; name: string } | null };
+  const [myStations, setMyStations] = useState<AssignedStation[]>([]);
+  // Convenience computed flags for the rest of the component. The
+  // viewer is a master if any of their assigned stations is a master
+  // (master sees everything). stationIdSet is the lookup used by the
+  // visibility filter.
+  const isMaster = myStations.some((s) => s.isMaster);
+  const stationIdSet = new Set(myStations.map((s) => s.id));
+  const myStationName = myStations.length === 0
+    ? null
+    : myStations.length === 1
+      ? myStations[0].name
+      : myStations.map((s) => s.name).join(' + ');
   const [outletPrintCfg, setOutletPrintCfg] = useState<{ auto: boolean; allowManual: boolean }>({ auto: false, allowManual: false });
   // Force-rerender after a successful Connect printer call so the
   // header pill flips from "Connect" to "Printer ready" without us
@@ -139,8 +155,17 @@ export default function KitchenPage() {
 
   useEffect(() => {
     api.get(`/outlets/${outletId}/kitchen-stations/mine`)
-      .then(r => setMyStation(r.data.data || null))
-      .catch(() => setMyStation(null));
+      .then(r => {
+        // Backend now returns an array of every station the user
+        // currently works at. Older deploys returned a single object
+        // (or null) — coerce both shapes into the array model so the
+        // page degrades gracefully during rollout.
+        const data = r.data?.data;
+        if (Array.isArray(data)) setMyStations(data);
+        else if (data && typeof data === 'object') setMyStations([data]);
+        else setMyStations([]);
+      })
+      .catch(() => setMyStations([]));
     api.get(`/outlets/${outletId}`)
       .then(r => setOutletPrintCfg({
         auto: !!r.data.data?.kitchenAutoPrint,
@@ -149,8 +174,14 @@ export default function KitchenPage() {
       .catch(() => {});
   }, [outletId]);
 
-  const printerId = myStation?.printer?.id || myStation?.printerId || null;
-  const printerName = myStation?.printer?.name || null;
+  // Printer resolution across multiple assigned stations: pick the
+  // first station that actually has a printer. The kitchen-receipt
+  // path can be enhanced later to route per-station — for now a
+  // shared printer is the common physical setup (multiple stations,
+  // one Bluetooth printer) so a single chosen pill is enough.
+  const stationWithPrinter = myStations.find((s) => (s.printer?.id || s.printerId));
+  const printerId = stationWithPrinter?.printer?.id || stationWithPrinter?.printerId || null;
+  const printerName = stationWithPrinter?.printer?.name || null;
   const printerReady = !!printerId && isPrinterConnected(printerId);
 
   const connectStationPrinter = async () => {
@@ -177,8 +208,18 @@ export default function KitchenPage() {
       return;
     }
     try {
-      const res = await api.get(`/kitchen-receipts/order/${orderId}`, { params: { stationId: myStation?.id } });
-      const receipts = res.data.data || [];
+      // When the user covers multiple stations, fetch a receipt per
+      // station and print them in sequence. Falls back to the unfiltered
+      // (no stationId) endpoint behaviour if no stations are assigned —
+      // the backend already handles that case.
+      const stationsToPrint = myStations.length > 0 ? myStations : [{ id: undefined as any }];
+      const receipts: any[] = [];
+      for (const s of stationsToPrint) {
+        const res = await api.get(`/kitchen-receipts/order/${orderId}`, {
+          params: s.id ? { stationId: s.id } : {},
+        });
+        for (const r of (res.data.data || [])) receipts.push(r);
+      }
       for (const r of receipts) {
         await printReceipt(printerId, r);
       }
@@ -186,7 +227,7 @@ export default function KitchenPage() {
     } catch (e: any) {
       if (!silent) toast.error(e?.message || e?.response?.data?.message || 'Print failed');
     }
-  }, [printerId, myStation?.id]);
+  }, [printerId, myStations]);
 
   useEffect(() => { fetchForFilter(filter).catch(() => {}); }, [filter, fetchForFilter]);
 
@@ -310,12 +351,17 @@ export default function KitchenPage() {
     return it.sequenceNumber <= (order.activeSequence ?? 1);
   };
 
-  const visibleOrders = (!myStation || myStation.isMaster
+  const visibleOrders = (myStations.length === 0 || isMaster
     ? orders
     : orders
         .map((o) => ({
           ...o,
-          items: (o.items || []).filter((it: any) => it.item?.kitchenStationId === myStation.id),
+          // Item belongs to ANY of my assigned stations → keep. Items
+          // with no kitchenStationId (legacy / unrouted) are dropped
+          // for non-master workers — same as before.
+          items: (o.items || []).filter((it: any) =>
+            it.item?.kitchenStationId && stationIdSet.has(it.item.kitchenStationId),
+          ),
         }))
   ).map((o) => ({
     ...o,
@@ -369,16 +415,18 @@ export default function KitchenPage() {
           <div>
             <h1 className="page-title">Kitchen Display</h1>
             <p className="page-subtitle">
-              {myStation
-                ? myStation.isMaster
-                  ? `${myStation.name} (master) — all items`
-                  : `${myStation.name} station only`
+              {myStations.length > 0
+                ? isMaster
+                  ? `${myStationName} (master) — all items`
+                  : myStations.length === 1
+                    ? `${myStationName} station only`
+                    : `${myStationName} stations`
                 : readOnly ? 'Per-item live tracking (view-only)' : 'Per-item live tracking'}
             </p>
           </div>
-          {myStation && (
+          {myStations.length > 0 && (
             <span className="ml-1 text-[10px] font-bold px-2 py-1 rounded-full bg-brand-100 text-brand-900 border border-brand-200">
-              {myStation.name.toUpperCase()}
+              {(myStationName ?? '').toUpperCase()}
             </span>
           )}
           {readOnly && (
@@ -616,7 +664,7 @@ export default function KitchenPage() {
             <CheckCircle2 size={26} className="text-emerald-600" />
           </div>
           <p className="text-lg font-bold text-emerald-800">
-            {myStation ? `No ${myStation.name} items pending` : filter === 'ACTIVE' ? 'Kitchen is clear!' : `No ${FILTER_LABEL[filter].toLowerCase()} orders`}
+            {myStations.length > 0 ? `No ${myStationName} items pending` : filter === 'ACTIVE' ? 'Kitchen is clear!' : `No ${FILTER_LABEL[filter].toLowerCase()} orders`}
           </p>
           <p className="text-sm text-emerald-600 mt-1">
             {filter === 'ACTIVE' ? 'No pending orders — great job! 🎉' : 'Try a different status.'}

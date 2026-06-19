@@ -239,17 +239,31 @@ export default function OrdersPage() {
   useNetworkStatus();
 
   // Station scope: kitchen + counter (service desk) users only see items routed to their station
-  const [myStation, setMyStation] = useState<{ id: string; name: string; isMaster?: boolean } | null>(null);
+  // Plural — a staff member can be assigned as currentWorker to
+  // multiple kitchen stations (e.g. covering tandoor + curry). All
+  // assigned stations contribute to what they can see + act on.
+  const [myStations, setMyStations] = useState<Array<{ id: string; name: string; isMaster?: boolean }>>([]);
+  const stationIsMaster = myStations.some((s) => s.isMaster);
+  const stationIdSet = new Set(myStations.map((s) => s.id));
   useEffect(() => {
     if (tier !== 'kitchen' && tier !== 'counter') return;
     api.get(`/outlets/${user?.outletId || 'demo-outlet'}/kitchen-stations/mine`)
-      .then(r => setMyStation(r.data.data || null))
-      .catch(() => setMyStation(null));
+      .then(r => {
+        // Backend now returns an array (multi-station support). Older
+        // deploys returned a single object — coerce both shapes.
+        const data = r.data?.data;
+        if (Array.isArray(data)) setMyStations(data);
+        else if (data && typeof data === 'object') setMyStations([data]);
+        else setMyStations([]);
+      })
+      .catch(() => setMyStations([]));
   }, [tier, user?.outletId]);
   const visibleItems = (items: any[]) =>
-    !myStation || myStation.isMaster
+    myStations.length === 0 || stationIsMaster
       ? items
-      : items.filter((it: any) => it.item?.kitchenStationId === myStation.id);
+      : items.filter((it: any) =>
+          it.item?.kitchenStationId && stationIdSet.has(it.item.kitchenStationId),
+        );
   const outletId    = user?.outletId  || 'demo-outlet';
   const businessId  = user?.businessId;
 
@@ -550,7 +564,7 @@ export default function OrdersPage() {
       || order.status === 'OUT_FOR_SERVICE';
     const cardItems = visibleItems(order.items || []);
     // Hide cards that have no items relevant to my station
-    if ((tier === 'kitchen' || tier === 'counter') && myStation && !myStation.isMaster && cardItems.length === 0) {
+    if ((tier === 'kitchen' || tier === 'counter') && myStations.length > 0 && !stationIsMaster && cardItems.length === 0) {
       return null;
     }
 
