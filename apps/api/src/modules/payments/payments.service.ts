@@ -28,8 +28,22 @@ export class PaymentsService {
   async initiatePayment(orderId: string, mode: PaymentMode, amount: number) {
     const order = await this.prisma.order.findUnique({ where: { id: orderId } });
     if (!order) throw new NotFoundException('Order not found');
-    if (['SERVED', 'CANCELLED', 'RESOLVED', 'REFUND_COMPLETE'].includes(order.status)) {
+    // Truly terminal states — payment makes no sense once the order
+    // was cancelled or fully refunded.
+    if (['CANCELLED', 'RESOLVED', 'REFUND_COMPLETE'].includes(order.status)) {
       throw new BadRequestException('Order is in a terminal state and cannot accept payment');
+    }
+    // SERVED used to be in the terminal list too, but postpaid table
+    // orders legitimately reach SERVED before the customer asks for
+    // the bill (every item physically delivered → rollup to SERVED).
+    // Guard against double-payment by checking whether a SUCCESS
+    // payment already exists — that's the real "this is done" signal,
+    // not the order's status.
+    const paidAlready = await this.prisma.payment.count({
+      where: { orderId, status: 'SUCCESS' },
+    });
+    if (paidAlready > 0) {
+      throw new BadRequestException('Order has already been paid');
     }
 
     const payment = await this.prisma.payment.create({
