@@ -13,7 +13,7 @@ import api from '../../services/api';
 import { allowsSeating } from '../../utils/outletType';
 import { isPrinterConnected, printCustomerReceipt, isBluetoothSupported } from '../../utils/bluetoothPrinter';
 import { buildReceiptPayload } from '../../utils/receiptPayload';
-import { getCachedMenu, setCachedMenu, saveOfflineOrder, type OfflineOrder } from '../../utils/idb';
+import { getCachedMenu, setCachedMenu, saveOfflineOrder, findOpenOfflineTab, appendToOfflineTab, type OfflineOrder, type OfflineOrderBatch } from '../../utils/idb';
 
 type BookingMode = 'counter' | 'table';
 
@@ -633,6 +633,50 @@ export default function PlaceOrderPage() {
           ? c.toppings.map((t) => ({ toppingId: t.toppingId, optionId: t.optionId }))
           : undefined,
       }));
+      const phone = customerPhone.trim() || null;
+      const staffId = user?.id ?? null;
+
+      // ── Sticky offline tab routing ─────────────────────────
+      // If an open offline tab already exists for this (table, phone,
+      // staff) combination, append to it regardless of current network
+      // state. The user-defined rule: once an order is in progress
+      // offline, every subsequent addition stays on the offline path
+      // until the table is billed — that way the order on the server
+      // is one consistent record at the end, not split across an
+      // offline open + an online append that race the network.
+      const existingTab = await findOpenOfflineTab({
+        outletId, tableId, customerPhone: phone, staffId,
+      });
+      if (existingTab) {
+        const batch: OfflineOrderBatch = {
+          items: itemsPayload,
+          addedAt: new Date().toISOString(),
+          payload: {
+            tableId,
+            isPostpaid: true,
+            items: itemsPayload,
+            customerPhone: phone || undefined,
+          },
+        };
+        const consolidated = buildConsolidatedOfflineSnapshot(existingTab, batch);
+        await appendToOfflineTab(existingTab.id, batch, consolidated);
+        // Print the running customer receipt — staff usually want to
+        // see the cumulative bill after each round, and Bluetooth is
+        // local so this works offline + online identically.
+        if (outlet?.receiptAutoPrint && outlet?.receiptPrinterId && isBluetoothSupported() && isPrinterConnected(outlet.receiptPrinterId)) {
+          try {
+            await printCustomerReceipt(outlet.receiptPrinterId, buildReceiptPayload(consolidated));
+          } catch (err: any) {
+            toast.error(`Receipt print failed: ${err?.message ?? err}`);
+          }
+        }
+        setCart([]);
+        try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
+        toast.success(`Added to offline tab ${existingTab.id}`);
+        return;
+      }
+
+      // No offline tab yet — try the live server path.
       if (openOrder) {
         // Append to the open order — no new order number, no payment.
         await api.post(`/outlets/${outletId}/orders/${openOrder.id}/items`, { items: itemsPayload });
@@ -642,7 +686,7 @@ export default function PlaceOrderPage() {
           tableId,
           isPostpaid: true,
           items: itemsPayload,
-          customerPhone: customerPhone.trim() || undefined,
+          customerPhone: phone || undefined,
         });
         toast.success('Order placed — bill stays open');
       }
@@ -653,9 +697,145 @@ export default function PlaceOrderPage() {
       // or an existing tab's total just changed.
       await refreshTableTabs();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to place order');
+      // Infra-transient = the API didn't actually receive the items.
+      // Open a fresh offline tab so the staff can keep going; the
+      // sticky routing above will append to it on subsequent clicks.
+      const httpStatus = e?.response?.status ?? 0;
+      const isInfraTransient = !e?.response || httpStatus === 502 || httpStatus === 503 || httpStatus === 504;
+      if (isInfraTransient) {
+        await openNewOfflineTabFromCart(cart, customerPhone.trim() || null, user?.id ?? null);
+        setCart([]);
+        try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
+      } else {
+        toast.error(e.response?.data?.message || 'Failed to place order');
+      }
     } finally {
       setPlacing(false);
+    }
+  };
+
+  // Builds an order-detail-shaped snapshot from an existing tab plus
+  // an incoming batch. Sum of every batch's items + the new batch's
+  // items. Reused for both the running customer receipt (after append)
+  // and the final bill at sync time. Tax / GST recomputed from the
+  // outlet's gstPercent so the receipt stays accurate even when the
+  // first batch was placed before the outlet's GST config changed.
+  const buildConsolidatedOfflineSnapshot = (
+    tab: OfflineOrder,
+    newBatch: OfflineOrderBatch,
+  ) => {
+    const allBatches = [...(tab.batches ?? []), newBatch];
+    const itemMeta = new Map<string, any>();
+    for (const cat of menu) {
+      for (const sub of cat.subcategories || []) {
+        for (const it of sub.items || []) itemMeta.set(it.id, it);
+      }
+    }
+    const items: any[] = [];
+    let runningSubtotal = 0;
+    for (const b of allBatches) {
+      for (const ln of b.items) {
+        const meta = itemMeta.get(ln.itemId);
+        const variant = meta?.variants?.find((v: any) => v.id === ln.variantId);
+        const unitPrice = variant
+          ? Number(variant.effectivePrice ?? variant.price)
+          : Number(meta?.effectivePrice ?? meta?.basePrice ?? 0);
+        const lineTotal = unitPrice * ln.quantity;
+        runningSubtotal += lineTotal;
+        items.push({
+          id: `${tab.id}-${b.addedAt}-${items.length}`,
+          quantity: ln.quantity,
+          unitPrice,
+          totalPrice: lineTotal,
+          item: { name: meta?.name ?? 'Item', foodGrade: meta?.foodGrade },
+          variant: variant ? { name: variant.name } : null,
+        });
+      }
+    }
+    const gstPct = Number(outlet?.gstPercent ?? 0);
+    const taxAmount = outlet?.gstApplicable ? (runningSubtotal * gstPct) / 100 : 0;
+    const totalAmount = runningSubtotal + taxAmount;
+    const tableRef = tableTypes.flatMap((t: any) => t.tables || []).find((t: any) => t.id === tab.tableId);
+    return {
+      orderNumber: tab.id,
+      createdAt: new Date(tab.createdAt).toISOString(),
+      outlet: outlet ? {
+        name: outlet.name,
+        gstApplicable: outlet.gstApplicable,
+        gstPercent: outlet.gstPercent,
+        receiptPrinterId: outlet.receiptPrinterId,
+        receiptAutoPrint: outlet.receiptAutoPrint,
+        address: outlet.address,
+        phone: outlet.phone,
+      } : null,
+      table: tableRef ? { number: tableRef.number ?? null } : null,
+      customer: tab.customerPhone ? { name: null, phone: tab.customerPhone } : null,
+      items,
+      subtotal: runningSubtotal,
+      taxAmount,
+      sgstAmount: taxAmount / 2,
+      cgstAmount: taxAmount / 2,
+      parcelAmount: 0,
+      discountAmount: 0,
+      totalAmount,
+      payments: [],
+      couponUsages: [],
+      rewardTransactions: [],
+    };
+  };
+
+  // Creates a brand-new offline tab from the current cart when the
+  // server placement failed infra-transient. Used by placePostpaid's
+  // catch path. Mirrors placeOfflineOrder's shape so receipt printing
+  // and reprints work identically.
+  const openNewOfflineTabFromCart = async (
+    sourceCart: typeof cart,
+    phone: string | null,
+    staffId: string | null,
+  ) => {
+    const provisional = `OFF-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(-3).toUpperCase()}`;
+    const itemsPayload = sourceCart.map((c) => ({
+      itemId: c.itemId,
+      variantId: c.variantId,
+      quantity: c.quantity,
+      toppings: c.toppings?.length
+        ? c.toppings.map((t) => ({ toppingId: t.toppingId, optionId: t.optionId }))
+        : undefined,
+    }));
+    const batch: OfflineOrderBatch = {
+      items: itemsPayload,
+      addedAt: new Date().toISOString(),
+      payload: {
+        tableId,
+        isPostpaid: true,
+        items: itemsPayload,
+        customerPhone: phone || undefined,
+      },
+    };
+    // Build initial snapshot using an empty "tab" so we reuse the same
+    // consolidation logic — keeps the rendering consistent with appends.
+    const seedTab: OfflineOrder = {
+      id: provisional,
+      outletId,
+      createdAt: Date.now(),
+      syncState: 'pending',
+      snapshot: null,
+      tableId,
+      customerPhone: phone,
+      staffId,
+      isOpenTab: true,
+      batches: [],
+    };
+    const snapshot = buildConsolidatedOfflineSnapshot(seedTab, batch);
+    const record: OfflineOrder = { ...seedTab, snapshot, batches: [batch] };
+    await saveOfflineOrder(record);
+    toast.success(`Offline tab opened · ${provisional}`, { duration: 6000 });
+    if (outlet?.receiptAutoPrint && outlet?.receiptPrinterId && isBluetoothSupported() && isPrinterConnected(outlet.receiptPrinterId)) {
+      try {
+        await printCustomerReceipt(outlet.receiptPrinterId, buildReceiptPayload(snapshot));
+      } catch (err: any) {
+        toast.error(`Receipt print failed: ${err?.message ?? err}`);
+      }
     }
   };
 

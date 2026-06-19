@@ -92,8 +92,35 @@ export async function setCachedMenu(payload: CachedMenu): Promise<void> {
 }
 
 // ─── Offline orders (queue of orders placed without network) ──────────
+//
+// Offline orders are modelled as open tabs from the start. Counter /
+// quick-pay flows happen to have a single batch and bill immediately;
+// table-service flows accumulate multiple batches and bill later. The
+// uniform shape lets the sticky-tab logic in PlaceOrderPage and the
+// Bill action on OfflineOrdersPage operate on one data model.
+//
+// The server POST is NOT queued at create / append time — only at
+// billing. Until then the tab lives purely in IndexedDB, so additions
+// don't need to mutate a queued outbox entry.
+export type OfflineOrderBatch = {
+  // Items as they came off the cart at the time of this batch. Used
+  // both to re-render the per-batch receipt and to assemble the
+  // consolidated POST body at billing.
+  items: any[];
+  // ISO timestamp of the batch — when the staff actually clicked
+  // "Place Order" / "Add items". Useful for reports and for keeping
+  // the batch order stable in the receipt.
+  addedAt: string;
+  // Raw payload that would have gone to /orders for THIS batch alone.
+  // Carries customerPhone, paymentMode, tableId, etc. The first batch
+  // carries the order-level fields; later batches duplicate them so
+  // the consolidated bill stays robust against the first batch being
+  // edited locally.
+  payload: any;
+};
+
 export type OfflineOrder = {
-  id: string;                 // = provisional orderNumber
+  id: string;                 // = provisional orderNumber (OFF-...)
   outletId: string;
   createdAt: number;
   // Sync state — 'pending' until the outbox drain replays it
@@ -102,15 +129,35 @@ export type OfflineOrder = {
   syncError?: string;
   serverOrderId?: string;     // populated after sync
   serverOrderNumber?: string; // populated after sync
-  // Snapshot of what was placed — enough to re-render the receipt
-  // for a reprint (same shape as a regular order detail response).
+  // Latest consolidated snapshot — refreshed every time a batch is
+  // appended. Enough to re-render the running customer receipt for a
+  // reprint or the final bill at sync time. Same shape as a regular
+  // order detail response.
   snapshot: any;
-  // Set when the order was marked Served locally before the network
-  // came back. ISO timestamp of the service-staff click. On sync, the
-  // outbox replay places the order AND chains a force-status PATCH so
-  // the server records the order as SERVED with this exact actedAt —
+  // Set when the customer was billed locally before the network came
+  // back. ISO timestamp of the bill click. On sync, the outbox replay
+  // places the consolidated order AND chains a force-status PATCH so
+  // the server records the order as SERVED with this actedAt —
   // crucial for reports/closing totals not to miss the revenue.
   servedAt?: string | null;
+
+  // ── Sticky-tab fields (table service) ──────────────────────────
+  // Together (outletId, tableId, customerPhone, staffId) form the
+  // tab key. Subsequent Place Order clicks that match all four
+  // append to this row instead of creating a new one — that way the
+  // staff can keep adding items as the meal progresses and bill once
+  // at the end, even when the network flaps online mid-meal.
+  tableId?: string | null;
+  customerPhone?: string | null;
+  staffId?: string | null;
+  // false once billed (locks the tab from further appends), true while
+  // the staff can still add more items. Defaults to true for legacy
+  // single-batch rows so existing code paths keep working.
+  isOpenTab?: boolean;
+  // Append-ordered history of the items added to this tab. The last
+  // entry is what the kitchen would print as a "delta" if that flow
+  // gets added later; the consolidated bill is built from all of them.
+  batches?: OfflineOrderBatch[];
 };
 
 export async function saveOfflineOrder(order: OfflineOrder): Promise<void> {
@@ -161,6 +208,59 @@ export async function getOfflineOrder(id: string): Promise<OfflineOrder | null> 
     const res = await tx<OfflineOrder | undefined>(STORE_OFFLINE_ORDERS, 'readonly', (s) => s.get(id) as any);
     return res ?? null;
   } catch { return null; }
+}
+
+// Look up a still-open offline tab matching (outletId, tableId, phone,
+// staff). The tab key is intentionally narrow — the user explicitly
+// asked that a different staff session or different customer (phone)
+// start a fresh tab even when seated at the same table.
+//
+// All four parts must match exactly, including the nullability of
+// tableId / customerPhone — a counter quick-pay tab (no table, no
+// phone) only matches another quick-pay attempt by the same staff.
+export async function findOpenOfflineTab(args: {
+  outletId: string;
+  tableId: string | null;
+  customerPhone: string | null;
+  staffId: string | null;
+}): Promise<OfflineOrder | null> {
+  try {
+    const all = await listOfflineOrders(args.outletId);
+    return (
+      all.find((o) =>
+        o.isOpenTab !== false &&        // legacy rows had no flag — treat as open
+        o.syncState === 'pending' &&
+        (o.tableId ?? null) === args.tableId &&
+        (o.customerPhone ?? null) === args.customerPhone &&
+        (o.staffId ?? null) === args.staffId,
+      ) ?? null
+    );
+  } catch { return null; }
+}
+
+// Append a batch to an open tab + refresh the consolidated snapshot.
+// Used when the staff adds more items to a table that already has an
+// offline tab in flight. Idempotency is the caller's job — typically
+// each Place Order click is a new batch with addedAt = now.
+export async function appendToOfflineTab(orderId: string, batch: OfflineOrderBatch, snapshot: any): Promise<void> {
+  const cur = await getOfflineOrder(orderId);
+  if (!cur) return;
+  cur.batches = [...(cur.batches ?? []), batch];
+  cur.snapshot = snapshot; // consolidated view for the running receipt + final bill
+  await saveOfflineOrder(cur);
+}
+
+// Bills the tab: locks further appends + stamps the bill timestamp on
+// servedAt so the outbox replay chain knows to mark the synced order
+// as SERVED at this exact moment. Separate from markOfflineServed so
+// the calling code stays explicit about closing the tab vs just
+// recording the served time.
+export async function closeOfflineTab(orderId: string, billedAtIso: string): Promise<void> {
+  const cur = await getOfflineOrder(orderId);
+  if (!cur) return;
+  cur.isOpenTab = false;
+  cur.servedAt = billedAtIso;
+  await saveOfflineOrder(cur);
 }
 
 // ─── Open-orders snapshot (one row per outlet) ────────────────────────
