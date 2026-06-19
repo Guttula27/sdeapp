@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException, BadRequestException, UnauthorizedException, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { OrdersGateway } from '../orders/orders.gateway';
 import { OrdersService } from '../orders/orders.service';
@@ -11,6 +11,7 @@ import {
 } from '../platform-settings/platform-settings.service';
 import { AuditLogService } from '../../config/logger/audit-log.service';
 import { EncryptionService } from '../../config/crypto/encryption.service';
+import { RefundsService } from '../refunds/refunds.service';
 
 @Injectable()
 export class PaymentsService {
@@ -23,6 +24,10 @@ export class PaymentsService {
     private platformSettings: PlatformSettingsService,
     private audit: AuditLogService,
     private encryption: EncryptionService,
+    // forwardRef-ed because RefundsService also depends on this
+    // module (RazorpayService). See the module wiring for the cycle.
+    @Inject(forwardRef(() => RefundsService))
+    private refunds: RefundsService,
   ) {}
 
   async initiatePayment(
@@ -266,6 +271,24 @@ export class PaymentsService {
       const gatewayRef = payload.payload?.payment?.entity?.id;
       if (paymentId) {
         return this.confirmPayment(paymentId, gatewayRef);
+      }
+    }
+    // Razorpay fires refund.processed when the money has actually moved
+    // back to the customer's instrument. We match the entity.id against
+    // the Refund row's stored gatewayRef and flip it COMPLETED — the
+    // sibling Payment.isRefund row gets minted there so reports + Z
+    // report's refund block update without any extra plumbing.
+    if (event === 'refund.processed') {
+      const razorpayRefundId = payload.payload?.refund?.entity?.id;
+      if (razorpayRefundId) {
+        await this.refunds.markCompletedByGatewayRef(razorpayRefundId);
+      }
+    }
+    if (event === 'refund.failed') {
+      const razorpayRefundId = payload.payload?.refund?.entity?.id;
+      const errorDescription = payload.payload?.refund?.entity?.error_description;
+      if (razorpayRefundId) {
+        await this.refunds.markFailedByGatewayRef(razorpayRefundId, errorDescription);
       }
     }
     return { received: true };

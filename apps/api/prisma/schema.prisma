@@ -112,6 +112,15 @@ enum CashierShiftStatus {
   CLOSED
 }
 
+enum RefundStatus {
+  INITIATED       // Cashier filed it; awaiting approval
+  APPROVED        // Approver OK'd; cash refunds complete here, gateway refunds move to PROCESSING
+  PROCESSING      // Razorpay refund API in flight
+  COMPLETED       // Money returned to customer
+  FAILED          // Razorpay rejected or processing errored
+  CANCELLED       // Cancelled before completion
+}
+
 enum SubscriptionStatus {
   TRIAL
   ACTIVE
@@ -225,6 +234,8 @@ model User {
   outletShiftsOpened     OutletShift[]           @relation("OutletShiftOpenedBy")
   outletShiftsClosed     OutletShift[]           @relation("OutletShiftClosedBy")
   cashierShifts          CashierShift[]          @relation("CashierShifts")
+  refundsInitiated       Refund[]                @relation("RefundsInitiated")
+  refundsApproved        Refund[]                @relation("RefundsApproved")
   preferredUpiApp        String?
   profileImageUrl        String?                 @db.MediumText
   alertRingtone          String?                 @default("chime")
@@ -1226,6 +1237,7 @@ model Order {
 
   items          OrderItem[]
   payments       Payment[]
+  refunds        Refund[]
   statusHistory  OrderStatusHistory[]
   disputes       Dispute[]
   customerAlerts CustomerAlert[]
@@ -1466,6 +1478,7 @@ model Payment {
   cashierShift   CashierShift? @relation(fields: [cashierShiftId], references: [id])
 
   reviewPayback OrderItemReview?
+  refunds       Refund[]            @relation("RefundFromPayment")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1538,6 +1551,7 @@ model CashierShift {
 
   orders          Order[]
   payments        Payment[]
+  refunds         Refund[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1545,6 +1559,63 @@ model CashierShift {
   @@index([cashierId, status])
   @@index([outletShiftId])
   @@map("paynpik_cashier_shifts")
+}
+
+// ─── Refunds ──────────────────────────────────────────────
+//
+// The Refund record tracks the workflow (initiate → approve →
+// complete) and serves as the audit trail. When a refund COMPLETES,
+// a sibling Payment row with isRefund=true is created — that's what
+// the Z report's "Refunds issued" block and the cashier drawer
+// reconciliation read. Cash refunds out of the drawer decrement
+// expectedCash; gateway refunds (via Razorpay) are settlement-side
+// only and don't affect the drawer.
+//
+// Partial refunds keep the order at FOR_REFUND; only a refund whose
+// cumulative refunded amount equals the order's totalAmount flips
+// the order to REFUND_COMPLETE.
+model Refund {
+  id                String        @id @default(cuid())
+  orderId           String
+  order             Order         @relation(fields: [orderId], references: [id])
+  // Source payment this refund is drawn against. Required for gateway
+  // refunds (Razorpay needs the original payment_id); for cash-out
+  // refunds against a cash-paid order it's also recorded so reports
+  // can trace each refund back to a specific receipt.
+  paymentId         String?
+  payment           Payment?      @relation("RefundFromPayment", fields: [paymentId], references: [id])
+  amount            Decimal       @db.Decimal(10, 2)
+  // How the money is going back to the customer. Cash refunds are
+  // resolved at the cashier's drawer; UPI/CARD/WALLET/NET_BANKING go
+  // through Razorpay's refund API.
+  mode              PaymentMode
+  reason            String?
+  status            RefundStatus  @default(INITIATED)
+  // Razorpay refund id when gateway-processed. Encrypted at rest the
+  // same way Payment.gatewayRef is, to keep parity with how PSP refs
+  // are handled elsewhere.
+  gatewayRef        String?       @db.Text
+  gatewayResponse   Json?
+  initiatedById     String
+  initiatedBy       User          @relation("RefundsInitiated", fields: [initiatedById], references: [id])
+  approvedById      String?
+  approvedBy        User?         @relation("RefundsApproved", fields: [approvedById], references: [id])
+  // Cashier drawer this refund was settled against (set at
+  // completion time for cash refunds so drawer reconciliation is
+  // correct). Null for gateway refunds.
+  cashierShiftId    String?
+  cashierShift      CashierShift? @relation(fields: [cashierShiftId], references: [id])
+  // Internal notes — failure messages, approver comments.
+  notes             String?
+  createdAt         DateTime      @default(now())
+  approvedAt        DateTime?
+  completedAt       DateTime?
+  updatedAt         DateTime      @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+  @@index([cashierShiftId])
+  @@map("paynpik_refunds")
 }
 
 model Dispute {

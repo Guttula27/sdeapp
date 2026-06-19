@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download, Maximize2, Minimize2, Filter, ChevronDown, Printer as PrinterIcon, ArrowUp, ArrowDown } from 'lucide-react';
+import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download, Maximize2, Minimize2, Filter, ChevronDown, Printer as PrinterIcon, ArrowUp, ArrowDown, RotateCcw } from 'lucide-react';
 import { RootState } from '../../store';
 import { setOrders, updateOrder } from '../../store/slices/ordersSlice';
 import { getSocket } from '../../services/socket';
@@ -212,6 +212,15 @@ export default function OrdersPage() {
     }
   };
   const [cancelTarget, setCancelTarget] = useState<any>(null);
+  // Refund modal state. Set to an order when the operator clicks
+  // "Refund" on the detail. The modal collects amount + reason and
+  // POSTs to /refunds; the order then appears on /refunds as
+  // INITIATED awaiting approval (or completes immediately if cash +
+  // operator has approve perms).
+  const [refundTarget, setRefundTarget] = useState<any>(null);
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundReason, setRefundReason] = useState('');
+  const [refundSubmitting, setRefundSubmitting] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
 
   // Platform/business listings span outlets and stay read-only here —
@@ -984,6 +993,19 @@ export default function OrdersPage() {
                   <X size={13} /> Cancel
                 </button>
               )}
+              {detail
+                && !['CANCELLED', 'REFUND_COMPLETE'].includes(detail.status)
+                && (detail.payments || []).some((p: any) => p.status === 'SUCCESS' && !p.isRefund)
+                && (tier === 'outlet' || has('CANCEL_ORDER'))
+                && (
+                  <button
+                    onClick={() => setRefundTarget(detail)}
+                    className="btn-secondary btn-sm"
+                    title="File a refund (partial or full) against this order"
+                  >
+                    <RotateCcw size={13} /> Refund
+                  </button>
+                )}
               <div className="flex-1" />
               {(() => {
                 if (!detail) return null;
@@ -1251,6 +1273,96 @@ export default function OrdersPage() {
             <textarea value={cancelReason} onChange={e => setCancelReason(e.target.value)} className="input resize-none" rows={2} placeholder="Customer requested, out of stock…" />
           </div>
         </div>
+      </Modal>
+
+      {/* Refund modal — partial or full refund against the order.
+          Defaults to a full refund (totalAmount); operator can edit.
+          The /refunds page handles the approval lifecycle from here. */}
+      <Modal
+        open={!!refundTarget}
+        onClose={() => { setRefundTarget(null); setRefundAmount(''); setRefundReason(''); }}
+        title="Initiate Refund"
+        subtitle={refundTarget?.orderNumber}
+        size="sm"
+        footer={
+          <>
+            <button className="btn-secondary" onClick={() => setRefundTarget(null)}>Cancel</button>
+            <button
+              className="btn-danger"
+              disabled={refundSubmitting || !refundAmount || Number(refundAmount) <= 0}
+              onClick={async () => {
+                if (!refundTarget) return;
+                setRefundSubmitting(true);
+                try {
+                  await api.post(`/outlets/${refundTarget.outletId || outletId}/refunds`, {
+                    orderId: refundTarget.id,
+                    amount: Number(refundAmount),
+                    reason: refundReason || undefined,
+                  });
+                  toast.success('Refund filed — review on the Refunds page for approval');
+                  setRefundTarget(null);
+                  setRefundAmount('');
+                  setRefundReason('');
+                } catch (e: any) {
+                  toast.error(e?.response?.data?.message || 'Refund failed');
+                } finally {
+                  setRefundSubmitting(false);
+                }
+              }}
+            >
+              <RotateCcw size={13} /> File Refund
+            </button>
+          </>
+        }
+      >
+        {refundTarget && (
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500">
+              Files an INITIATED refund. A manager (anyone with cancel-order rights) approves it on the
+              Refunds page; cash refunds settle at the cashier's drawer on approval, gateway refunds
+              fire Razorpay's refund API and complete via webhook.
+            </p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Order total</p>
+                <p className="text-sm font-semibold text-slate-900 tabular-nums">₹{Number(refundTarget.totalAmount ?? 0).toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Source payment</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  {(refundTarget.payments || []).find((p: any) => p.status === 'SUCCESS' && !p.isRefund)?.mode ?? '—'}
+                </p>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">
+                Refund amount (₹)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                max={Number(refundTarget.totalAmount ?? 0)}
+                value={refundAmount || String(refundTarget.totalAmount ?? 0)}
+                onChange={(e) => setRefundAmount(e.target.value)}
+                className="input"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">
+                Reason (optional)
+              </label>
+              <textarea
+                value={refundReason}
+                onChange={(e) => setRefundReason(e.target.value)}
+                className="input resize-none"
+                rows={2}
+                placeholder="Customer dissatisfied, wrong order, duplicate charge…"
+              />
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* Off-screen receipt source for PDF export. Rendered only when an order

@@ -9,7 +9,7 @@ import {
   Gauge, Menu, Flame, Tag, Sandwich, Plus, LayoutGrid, Shield, Languages, ConciergeBell,
   Plug, MessageCircle, ClipboardCheck, MessageSquare, Network,
   Ticket, Percent as PercentIcon, Package, Gift, Award,
-  CloudOff, Wallet,
+  CloudOff, Wallet, RotateCcw,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
@@ -153,6 +153,7 @@ const NAV: Record<UserTier, NavItem[]> = {
     { to: '/parcel-desk',  icon: Package,       label: 'Parcel Desk' },
     { to: '/offline-orders', icon: CloudOff,    label: 'Offline Orders' },
     { to: '/shifts',    icon: Wallet,          label: 'Shifts' },
+    { to: '/refunds',   icon: RotateCcw,       label: 'Refunds' },
     { to: '/disputes',  icon: ShieldAlert,     label: 'Disputes' },
     { to: '/feedback',  icon: MessageSquare,   label: 'Feedback' },
     { to: '/staff',     icon: Users,           label: 'Staff' },
@@ -189,6 +190,7 @@ const MINIMAL_NAV: NavItem[] = [
   { to: '/parcel-desk',  icon: Package,        label: 'Parcel Desk',  requires: ['VIEW_PARCEL_DESK'] },
   { to: '/offline-orders', icon: CloudOff,     label: 'Offline Orders', requires: ['CREATE_ORDER'] },
   { to: '/shifts',         icon: Wallet,       label: 'Shifts',          requires: ['CREATE_ORDER', 'COLLECT_PAYMENT'] },
+  { to: '/refunds',        icon: RotateCcw,    label: 'Refunds',         requires: ['CANCEL_ORDER'] },
   { to: '/menu',        icon: UtensilsCrossed, label: 'Menu',        requires: ['VIEW_MENU'] },
   { to: '/customers',   icon: Users,           label: 'Customers',   requires: ['VIEW_CUSTOMERS'] },
   { to: '/disputes',    icon: ShieldAlert,     label: 'Disputes',    requires: ['VIEW_DISPUTES'] },
