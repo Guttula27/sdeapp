@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { RedisService } from '../../config/redis/redis.service';
 import { TranslationsService } from '../translations/translations.service';
@@ -12,15 +12,34 @@ import {
 // 10 minutes — safety net for any mutation path we forgot to hook.
 // Direct invalidation via invalidateOutlet() is the primary mechanism.
 const MENU_TREE_TTL_SECONDS = 600;
+// Debounce window before a post-mutation cache warm fires. Long enough
+// to coalesce a bulk edit session (drag-reorder, batch price updates,
+// import-from-template) into a single warm; short enough that the first
+// customer after an admin save almost always hits a warm cache.
+const WARM_DEBOUNCE_MS = 2000;
 
 @Injectable()
-export class MenuService {
+export class MenuService implements OnModuleDestroy {
+  private readonly logger = new Logger(MenuService.name);
+  // Per-outlet debounce handle for the post-mutation warm. Cancelled
+  // on each new invalidation; bulk edit sessions collapse to one warm.
+  private readonly warmTimers = new Map<string, NodeJS.Timeout>();
+
   constructor(
     private prisma: PrismaService,
     private translations: TranslationsService,
     private discounts: DiscountsService,
     private redis: RedisService,
   ) {}
+
+  onModuleDestroy() {
+    // Drop pending warms on shutdown so an in-flight reload doesn't
+    // leak past Nest's lifecycle. Live warms (already in DB I/O) will
+    // complete and write to a possibly-already-evicted cache key —
+    // harmless.
+    for (const t of this.warmTimers.values()) clearTimeout(t);
+    this.warmTimers.clear();
+  }
 
   // ─── Cache helpers ────────────────────────────────────────
   // Version-counter invalidation: each cache key embeds the current
@@ -45,10 +64,36 @@ export class MenuService {
    * mutate menu-adjacent data (toppings, customer-tag prices,
    * table-type prices, business-level menu timing slots) should call
    * this too — exposed publicly for that reason.
+   *
+   * Also schedules a debounced background warm of the customer hot
+   * path (lang=en, public). The warm coalesces bursts — drag-reorder
+   * or batch import will fire only one reload — and runs async so it
+   * doesn't slow down the admin's save response. Other variants
+   * (other langs, includeHidden=true) fall back to lazy load on
+   * first read.
    */
   async invalidateOutlet(outletId: string): Promise<void> {
     if (!outletId) return;
     await this.redis.incr(this.menuVersionKey(outletId));
+    this.scheduleWarm(outletId);
+  }
+
+  private scheduleWarm(outletId: string) {
+    const existing = this.warmTimers.get(outletId);
+    if (existing) clearTimeout(existing);
+    const t = setTimeout(() => {
+      this.warmTimers.delete(outletId);
+      // Fire-and-forget. loadMenuTree's cache check will miss (we
+      // just INCR'd the version) so it goes through the DB path and
+      // populates the cache for the next reader.
+      void this.loadMenuTree(outletId, 'en', false).catch((e) =>
+        this.logger.warn(`Cache warm failed for outlet ${outletId}: ${e?.message ?? e}`),
+      );
+    }, WARM_DEBOUNCE_MS);
+    // Don't hold the event loop open just for a warm — let the
+    // process exit cleanly if it's idle.
+    t.unref?.();
+    this.warmTimers.set(outletId, t);
   }
 
   // Outlet-id resolvers — the cache busting needs an outletId but most
