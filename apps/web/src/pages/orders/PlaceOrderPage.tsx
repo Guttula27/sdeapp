@@ -135,61 +135,87 @@ export default function PlaceOrderPage() {
   const [tableTypeId, setTableTypeId] = useState('');
   const [tableId, setTableId] = useState('');
 
+  // Hydrate the page state from a cached or freshly-fetched menu
+  // bundle. Single applicator so the cache-first and network paths
+  // produce byte-identical UI state.
+  const applyMenuBundle = useCallback((
+    cats: any[],
+    menusList: any[],
+    outletMeta: any | null,
+    tableTypesList: any[] | null,
+  ) => {
+    setMenu(cats);
+    if (outletMeta) setOutlet(outletMeta);
+    if (tableTypesList) setTableTypes(tableTypesList);
+    const categoryMenuIds = new Set<string>(cats.map((c: any) => c.menuId).filter(Boolean));
+    const list: Array<{ id: string; name: string; isEnabled: boolean }> = (menusList || []).map((m: any) => ({
+      id: m.id, name: m.name, isEnabled: m.outletMenu?.isEnabled !== false,
+    }));
+    const usable = list.filter((m) => m.isEnabled && categoryMenuIds.has(m.id));
+    setEnabledMenus(usable);
+    setActiveMenuId((prev) => prev || usable[0]?.id || '');
+    setActiveCat((prev) => {
+      if (prev && cats.find((c: any) => c.id === prev)) return prev;
+      const firstCat = cats.find((c: any) => c.menuId === (usable[0]?.id || '')) || cats[0];
+      return firstCat?.id || '';
+    });
+    setActiveSub((prev) => {
+      if (prev) {
+        for (const c of cats) for (const s of (c.subcategories || [])) if (s.id === prev) return prev;
+      }
+      const firstCat = cats.find((c: any) => c.menuId === (usable[0]?.id || '')) || cats[0];
+      return firstCat?.subcategories?.[0]?.id || '';
+    });
+  }, []);
+
   const fetchMenu = useCallback(async () => {
-    setLoading(true);
+    // Cache-first: paint whatever IDB has immediately, then revalidate
+    // from the network in the background. This collapses the 3x-fetch
+    // bug (the prior fetchMenu re-fired every time outlet/tableTypes
+    // changed) and gives an instant first paint on warm devices.
+    const cached = await getCachedMenu(outletId);
+    if (cached) {
+      applyMenuBundle(cached.menu || [], cached.menus || [], cached.outlet ?? null, cached.tableTypes ?? null);
+      setLoading(false); // surface something usable while we revalidate
+    } else {
+      setLoading(true);
+    }
+
     try {
-      const [menuRes, statusRes, menusRes] = await Promise.all([
+      // Bundle every read this page needs into one cycle so the cache
+      // write below is atomic — no more partial caches missing outlet
+      // meta or table types.
+      const [menuRes, statusRes, menusRes, outletRes, tableTypesRes] = await Promise.all([
         api.get(`/outlets/${outletId}/menu`),
         api.get(`/outlets/${outletId}/open-status`).catch(() => null),
         api.get(`/outlets/${outletId}/menus`).catch(() => null),
+        api.get(`/outlets/${outletId}`).catch(() => null),
+        api.get(`/outlets/${outletId}/table-types`).catch(() => null),
       ]);
       const cats = menuRes.data.data || [];
-      setMenu(cats);
+      const menusList = menusRes?.data?.data || [];
+      const outletMeta = outletRes?.data?.data ?? null;
+      const tableTypesList = tableTypesRes?.data?.data ?? [];
+
+      applyMenuBundle(cats, menusList, outletMeta, tableTypesList);
       if (statusRes) setOpenStatus(statusRes.data.data);
-      // Write-through to IndexedDB so the next visit (or the offline
-      // fallback below) has something to serve. `outlet` / `tableTypes`
-      // get persisted whenever they're known so the receipt header +
-      // table picker work offline too.
+
+      // Write-through ONLY once all data is in hand — prevents the
+      // prior bug where outlet/tableTypes were persisted as null/[]
+      // because they hadn't loaded yet.
       setCachedMenu({
         outletId,
         cachedAt: Date.now(),
         menu: cats,
-        menus: (menusRes?.data?.data || []),
-        outlet,
-        tableTypes,
+        menus: menusList,
+        outlet: outletMeta,
+        tableTypes: tableTypesList,
       }).catch(() => {});
-
-      // Filter menus to those enabled at this outlet AND with at least one
-      // category in the loaded payload (otherwise a stale tab would render
-      // with no items behind it).
-      const categoryMenuIds = new Set<string>(cats.map((c: any) => c.menuId).filter(Boolean));
-      const list: Array<{ id: string; name: string; isEnabled: boolean }> = (menusRes?.data?.data || []).map((m: any) => ({
-        id: m.id, name: m.name, isEnabled: m.outletMenu?.isEnabled !== false,
-      }));
-      const usable = list.filter((m) => m.isEnabled && categoryMenuIds.has(m.id));
-      setEnabledMenus(usable);
-
-      const initialMenuId = usable[0]?.id || '';
-      setActiveMenuId(initialMenuId);
-      const firstCat = cats.find((c: any) => !initialMenuId || c.menuId === initialMenuId) || cats[0];
-      if (firstCat) {
-        setActiveCat(firstCat.id);
-        setActiveSub(firstCat.subcategories?.[0]?.id || '');
-      }
     } catch (e: any) {
-      // Network down or API unreachable — try the IndexedDB cache so
-      // staff can still place orders. If even the cache is empty,
-      // surface the original error so the screen isn't a silent blank.
-      const cached = await getCachedMenu(outletId);
+      // Network down or API unreachable. If the cache-first path
+      // already painted, we're done — just signal stale data. Otherwise
+      // surface the error so the screen isn't a silent blank.
       if (cached) {
-        setMenu(cached.menu || []);
-        const menus: Array<{ id: string; name: string; isEnabled: boolean }> = (cached.menus || []).map((m: any) => ({
-          id: m.id, name: m.name, isEnabled: m.outletMenu?.isEnabled !== false,
-        }));
-        const catMenuIds = new Set<string>((cached.menu || []).map((c: any) => c.menuId).filter(Boolean));
-        setEnabledMenus(menus.filter((m) => m.isEnabled && catMenuIds.has(m.id)));
-        if (cached.outlet)     setOutlet(cached.outlet);
-        if (cached.tableTypes) setTableTypes(cached.tableTypes);
         toast('Using cached menu — you appear to be offline', { icon: '📡' });
       } else {
         toast.error(e?.response?.data?.message || 'Could not load menu and no cache is available');
@@ -197,7 +223,7 @@ export default function PlaceOrderPage() {
     } finally {
       setLoading(false);
     }
-  }, [outletId, outlet, tableTypes]);
+  }, [outletId, applyMenuBundle]);
 
   // When the active menu changes, snap to its first category so the items
   // panel doesn't go blank because the prior category belongs to another menu.
@@ -221,14 +247,11 @@ export default function PlaceOrderPage() {
   // the tables of those stations. Empty array = no restriction (admins).
   const [myStationTableIds, setMyStationTableIds] = useState<string[] | null>(null);
 
-  // Fetch outlet meta + its table types (the table-types endpoint already
-  // returns each type's active tables, so one call is enough). Also pull
-  // the caller's service-station assignments to scope the picker.
+  // Outlet meta + table types are loaded by fetchMenu above (folded in
+  // so the IDB cache write is atomic across all four reads). This
+  // effect only pulls the caller's service-station assignments to
+  // scope the table picker — those don't need offline caching.
   useEffect(() => {
-    api.get(`/outlets/${outletId}`).then(({ data }) => setOutlet(data.data)).catch(() => {});
-    api.get(`/outlets/${outletId}/table-types`)
-      .then(({ data }) => setTableTypes(data.data || []))
-      .catch(() => setTableTypes([]));
     api.get(`/outlets/${outletId}/service-stations/mine`)
       .then(({ data }) => {
         const stations = data.data || [];
