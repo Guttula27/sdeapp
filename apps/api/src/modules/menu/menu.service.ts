@@ -40,6 +40,14 @@ export class MenuService {
 
   // ─── Categories ──────────────────────────────────────────
 
+  /**
+   * Top-level read used by the customer app and staff PlaceOrderPage.
+   * Two-phase by design so the heavy DB+translation work can be cached
+   * independently of per-request projection (viewer, table, time).
+   *
+   *   loadMenuTree(outletId, lang, includeHidden)   ← cacheable
+   *   projectMenu(tree, viewerUserId, tableId)      ← per request
+   */
   async getMenu(
     outletId: string,
     viewerUserId?: string,
@@ -50,92 +58,35 @@ export class MenuService {
     // — e.g. a "mini dosa" that's only ever sold as part of a combo.
     opts?: { includeHidden?: boolean },
   ) {
-    // Resolve which menus are visible to this caller right now. This is the
-    // single source of truth for menu visibility — both the customer app and
-    // staff PlaceOrderPage hit this endpoint, so filtering here covers both.
-    //   • Outlet.multipleMenusEnabled = false → only the default menu's
-    //     categories are returned, regardless of any other menus that exist.
-    //   • Outlet.multipleMenusEnabled = true  → include menus where the
-    //     OutletMenu link has isEnabled=true (default menu always counts),
-    //     minus any menus the table's section has disabled.
-    const outletMeta = await this.prisma.outlet.findUnique({
-      where: { id: outletId },
-      select: { multipleMenusEnabled: true, businessId: true },
-    });
-    let allowedMenuIds: string[] = [];
-    if (outletMeta) {
-      const defaultMenu = await this.prisma.menu.findFirst({
-        where: { businessId: outletMeta.businessId, isDefault: true },
-        select: { id: true },
-      });
-      if (!outletMeta.multipleMenusEnabled) {
-        allowedMenuIds = defaultMenu ? [defaultMenu.id] : [];
-      } else {
-        const links = await this.prisma.outletMenu.findMany({
-          where: { outletId, isEnabled: true },
-          select: { menuId: true },
-        });
-        const enabled = new Set<string>(links.map((l) => l.menuId));
-        if (defaultMenu) enabled.add(defaultMenu.id);
-        // Table-type-level disables (legacy / "Patio table" style grouping)
-        // AND section-level disables (physical area: "VIP room", "Bar"
-        // etc.). Both apply when a table QR is scanned — section wins
-        // when both reference the same menu (more specific to the
-        // physical location the customer is sitting in).
-        if (tableId) {
-          const table = await this.prisma.table.findUnique({
-            where: { id: tableId },
-            select: { tableTypeId: true, sectionId: true, outletId: true },
-          });
-          if (table && table.outletId === outletId) {
-            if (table.tableTypeId) {
-              const sectionDisabled = await this.prisma.tableTypeMenu.findMany({
-                where: { tableTypeId: table.tableTypeId, isEnabled: false },
-                select: { menuId: true },
-              });
-              for (const s of sectionDisabled) {
-                if (defaultMenu && s.menuId === defaultMenu.id) continue;
-                enabled.delete(s.menuId);
-              }
-            }
-            if (table.sectionId) {
-              const sectionDisables = await this.prisma.menuSectionExclusion.findMany({
-                where: { sectionId: table.sectionId },
-                select: { menuId: true },
-              });
-              for (const s of sectionDisables) {
-                // The default menu is the floor — never disabled, even
-                // if an admin accidentally adds an exclusion row for it.
-                if (defaultMenu && s.menuId === defaultMenu.id) continue;
-                enabled.delete(s.menuId);
-              }
-            }
-          }
-        }
-        allowedMenuIds = Array.from(enabled);
-      }
-    }
+    const tree = await this.loadMenuTree(outletId, lang, opts?.includeHidden);
+    return this.projectMenu(tree, { outletId, viewerUserId, tableId, includeHidden: opts?.includeHidden });
+  }
+
+  /**
+   * Heavy DB load: outlet meta + every active category in the outlet with
+   * nested subs, items, variants, toppings, images, timing slots, and all
+   * pricing-override rows so the projection can pick. Returns translated
+   * names/descriptions per `lang`.
+   *
+   * Intentionally outlet-only — no tableId, viewer, time-of-day. This is
+   * what step 2 will wrap in Redis keyed by (outletId, lang, public|all).
+   */
+  async loadMenuTree(
+    outletId: string,
+    lang?: string | null,
+    includeHidden?: boolean,
+  ) {
     const categories = await this.prisma.category.findMany({
-      where: {
-        outletId,
-        isActive: true,
-        // Only include categories whose menu is currently visible. Legacy
-        // categories with no menuId fall back to the default menu.
-        OR: [
-          { menuId: { in: allowedMenuIds } },
-          ...(outletMeta && !outletMeta.multipleMenusEnabled
-            ? [{ menuId: null }] // single-menu mode shows unassigned too
-            : []),
-        ],
-      },
+      where: { outletId, isActive: true },
       orderBy: { displayOrder: 'asc' },
       include: {
         // Per-day availability windows. Absent rows = no constraint at
-        // this level; cascade evaluation below combines outlet → menu →
-        // category → subcategory → item to set `inSchedule` per node.
+        // this level; cascade evaluation in projection combines
+        // outlet → menu → category → subcategory → item to set
+        // `inSchedule` per node.
         timingSlots: true,
-        // Menu-level timing slots come along so we can resolve the
-        // outlet-override variant (OutletMenuTimingSlot) when present
+        // Menu-level timing slots come along so projection can resolve
+        // the outlet-override variant (OutletMenuTimingSlot) when present
         // and fall back to MenuTimingSlot otherwise.
         menu: {
           include: {
@@ -152,7 +103,7 @@ export class MenuService {
           include: {
             timingSlots: true,
             items: {
-              ...(opts?.includeHidden ? {} : { where: { isDisplayed: true } }),
+              ...(includeHidden ? {} : { where: { isDisplayed: true } }),
               orderBy: { displayOrder: 'asc' },
               include: {
                 timingSlots: true,
@@ -181,6 +132,100 @@ export class MenuService {
           },
         },
       },
+    });
+
+    await this.hydrateMenu(categories, lang);
+    return { categories };
+  }
+
+  /**
+   * Per-request decoration layer. Inputs that change per request live
+   * here and never enter the cached tree:
+   *   • viewer's tag and favorites
+   *   • table's table-type (pricing) and section (menu exclusions)
+   *   • current time (schedule cascade)
+   *   • active auto-discounts
+   *   • rolling 30-day popular set + per-item rating aggregates
+   *
+   * Also applies the outlet's menu-visibility filter (OutletMenu enabled
+   * links + section/table-type exclusions) — kept out of the cache so
+   * menu toggles and table layout changes never invalidate.
+   */
+  private async projectMenu(
+    tree: { categories: any[] },
+    ctx: { outletId: string; viewerUserId?: string; tableId?: string; includeHidden?: boolean },
+  ) {
+    const { outletId, viewerUserId, tableId } = ctx;
+    const skipSchedule = !!ctx.includeHidden;
+
+    // ── Outlet-menu visibility resolution (out of cache so toggles
+    // don't invalidate). Mirrors the original gating:
+    //   • multipleMenusEnabled = false → only default menu (+ legacy
+    //     unassigned categories with menuId = null)
+    //   • multipleMenusEnabled = true  → enabled OutletMenu links,
+    //     minus table-driven exclusions; default menu always counts.
+    const outletMeta = await this.prisma.outlet.findUnique({
+      where: { id: outletId },
+      select: { multipleMenusEnabled: true, businessId: true },
+    });
+    let allowedMenuIds = new Set<string>();
+    let allowNullMenu = false; // single-menu mode also shows unassigned categories
+    let defaultMenuId: string | null = null;
+    if (outletMeta) {
+      const defaultMenu = await this.prisma.menu.findFirst({
+        where: { businessId: outletMeta.businessId, isDefault: true },
+        select: { id: true },
+      });
+      defaultMenuId = defaultMenu?.id ?? null;
+      if (!outletMeta.multipleMenusEnabled) {
+        if (defaultMenuId) allowedMenuIds.add(defaultMenuId);
+        allowNullMenu = true;
+      } else {
+        const links = await this.prisma.outletMenu.findMany({
+          where: { outletId, isEnabled: true },
+          select: { menuId: true },
+        });
+        for (const l of links) allowedMenuIds.add(l.menuId);
+        if (defaultMenuId) allowedMenuIds.add(defaultMenuId);
+        // Table-type-level disables (legacy / "Patio table" style
+        // grouping) AND section-level disables (physical area: "VIP
+        // room", "Bar"). Both apply when a table QR is scanned.
+        if (tableId) {
+          const table = await this.prisma.table.findUnique({
+            where: { id: tableId },
+            select: { tableTypeId: true, sectionId: true, outletId: true },
+          });
+          if (table && table.outletId === outletId) {
+            if (table.tableTypeId) {
+              const sectionDisabled = await this.prisma.tableTypeMenu.findMany({
+                where: { tableTypeId: table.tableTypeId, isEnabled: false },
+                select: { menuId: true },
+              });
+              for (const s of sectionDisabled) {
+                if (defaultMenuId && s.menuId === defaultMenuId) continue;
+                allowedMenuIds.delete(s.menuId);
+              }
+            }
+            if (table.sectionId) {
+              const sectionDisables = await this.prisma.menuSectionExclusion.findMany({
+                where: { sectionId: table.sectionId },
+                select: { menuId: true },
+              });
+              for (const s of sectionDisables) {
+                // Default menu is the floor — never disabled, even
+                // if an admin accidentally adds an exclusion row for it.
+                if (defaultMenuId && s.menuId === defaultMenuId) continue;
+                allowedMenuIds.delete(s.menuId);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const categories = tree.categories.filter((c: any) => {
+      if (c.menuId == null) return allowNullMenu;
+      return allowedMenuIds.has(c.menuId);
     });
 
     // Resolve viewer's tag for this outlet (if any) and project effective price
@@ -247,8 +292,6 @@ export class MenuService {
       return null;
     };
 
-    await this.hydrateMenu(categories, lang);
-
     // Active line-level auto-discounts (ITEM / SUBCATEGORY / CATEGORY).
     // Surfaced on each item so the customer menu can render strikethrough
     // pricing with the savings badge. Bill-level discounts apply to the
@@ -283,8 +326,9 @@ export class MenuService {
       };
     };
 
-    // Aggregate review stats for every item on the menu in one query so the
-    // customer can see the consolidated rating chip without an extra round-trip.
+    // Aggregate review stats for every item on the (filtered) menu in one
+    // query so the customer can see the consolidated rating chip without
+    // an extra round-trip.
     const itemIds = categories.flatMap((c: any) =>
       c.subcategories.flatMap((s: any) => s.items.map((i: any) => i.id)),
     );
@@ -312,7 +356,6 @@ export class MenuService {
     // Staff (includeHidden) callers see everything regardless of the
     // current time so the admin can edit out-of-window items.
     const now = nowInOutletTz();
-    const skipSchedule = !!opts?.includeHidden;
     const slotShape = (rows: any[]): TimingSlot[] => (rows ?? []).map((r) => ({
       dayOfWeek: r.dayOfWeek,
       startMinute: r.startMinute,
