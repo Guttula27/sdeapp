@@ -988,14 +988,21 @@ export class OrdersService {
 
     if (payload.items?.length) {
       const byId = new Map(order.items.map((it) => [it.id, it]));
+      // PENDING_VERIFICATION items haven't been confirmed to the kitchen
+      // yet (service desk Verify lane), so re-sequencing them is safe.
+      // Once an item moves to PENDING-and-released or beyond, the course
+      // position no longer changes its lifecycle and edits are blocked
+      // to keep the kitchen view honest.
+      const SEQUENCEABLE: OrderItemStatus[] = [
+        OrderItemStatus.PENDING,
+        OrderItemStatus.PENDING_VERIFICATION,
+      ];
       for (const { itemId, sequenceNumber } of payload.items) {
         const item = byId.get(itemId);
         if (!item) throw new BadRequestException(`Item ${itemId} is not part of this order`);
-        // Once an item has started cooking the course-position no longer
-        // changes its lifecycle, so block edits to keep the model honest.
-        if (item.status !== OrderItemStatus.PENDING && item.sequenceNumber !== sequenceNumber) {
+        if (!SEQUENCEABLE.includes(item.status) && item.sequenceNumber !== sequenceNumber) {
           throw new BadRequestException(
-            `Item "${itemId}" is already ${item.status} — sequencing can only be edited on PENDING items`,
+            `Item "${itemId}" is already ${item.status} — sequencing can only be edited on PENDING or PENDING_VERIFICATION items`,
           );
         }
         if (sequenceNumber != null && (!Number.isInteger(sequenceNumber) || sequenceNumber < 1)) {
