@@ -140,10 +140,80 @@ export class MenuService {
     // When true, include items where isDisplayed=false. Admin tools (menu
     // editor, bundle picker) pass this so they can see/manage hidden items
     // — e.g. a "mini dosa" that's only ever sold as part of a combo.
-    opts?: { includeHidden?: boolean },
+    // When `slim` is true, the per-item heavy fields are stripped or
+    // replaced with counts so the customer app can lazy-load detail
+    // via getItemDetail.
+    opts?: { includeHidden?: boolean; slim?: boolean },
   ) {
     const tree = await this.loadMenuTree(outletId, lang, opts?.includeHidden);
-    return this.projectMenu(tree, { outletId, viewerUserId, tableId, includeHidden: opts?.includeHidden });
+    const projected = await this.projectMenu(tree, { outletId, viewerUserId, tableId, includeHidden: opts?.includeHidden });
+    return opts?.slim ? this.slimMenu(projected) : projected;
+  }
+
+  /**
+   * Lazy-load entry point for the customer detail/picker modal. Returns
+   * the single fully-decorated item (toppings + their options,
+   * bundleChildren, gallery images, pricing-override rows). Reuses
+   * loadMenuTree's Redis cache so this is effectively an in-memory
+   * lookup once the tree is warm. Returns null if the item doesn't
+   * belong to this outlet.
+   */
+  async getItemDetail(
+    outletId: string,
+    itemId: string,
+    viewerUserId?: string,
+    tableId?: string,
+    lang?: string | null,
+  ) {
+    const tree = await this.loadMenuTree(outletId, lang, false);
+    const projected = await this.projectMenu(tree, { outletId, viewerUserId, tableId, includeHidden: false });
+    for (const cat of projected) {
+      for (const sub of cat.subcategories) {
+        const hit = sub.items.find((it: any) => it.id === itemId);
+        if (hit) return hit;
+      }
+    }
+    throw new NotFoundException('Item not found on this outlet menu');
+  }
+
+  // Trim the projected menu down to what a list-view card actually
+  // renders. The detail/picker modal triggers a separate request
+  // (getItemDetail) when the customer taps an item, which re-hydrates
+  // the stripped fields. Keep all decorated fields (effectivePrice,
+  // discountInfo, isFavorite, ratings, schedule flags) — those are what
+  // the card needs and they're already computed.
+  private slimMenu(projected: any[]): any[] {
+    return projected.map((cat: any) => ({
+      ...cat,
+      subcategories: cat.subcategories.map((sub: any) => ({
+        ...sub,
+        items: sub.items.map((item: any) => {
+          // Replace the full itemToppings array with a scalar count
+          // — the card uses .length to gate a "+ toppings" badge and
+          // to decide whether tapping opens the picker.
+          const itemToppingsCount = Array.isArray(item.itemToppings) ? item.itemToppings.length : 0;
+          const bundleChildrenCount = Array.isArray(item.bundleChildren) ? item.bundleChildren.length : 0;
+          // Strip the heavy fields. Pricing-override resolution is
+          // already baked into effectivePrice/appliedTagId/etc, so
+          // the raw rows aren't needed in the list view.
+          const {
+            itemToppings: _it,
+            bundleChildren: _bc,
+            customerTagPrices: _ctp,
+            tableTypePrices: _ttp,
+            images: _imgs,
+            options: _opts,
+            ...rest
+          } = item;
+          void _it; void _bc; void _ctp; void _ttp; void _imgs; void _opts;
+          return {
+            ...rest,
+            itemToppingsCount,
+            bundleChildrenCount,
+          };
+        }),
+      })),
+    }));
   }
 
   /**

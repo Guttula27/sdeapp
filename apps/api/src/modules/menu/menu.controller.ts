@@ -20,6 +20,11 @@ export class MenuController {
     @PreferredLanguage() lang: string | null,
     @Query('tableId') tableId?: string,
     @Query('includeHidden') includeHidden?: string,
+    // Customer apps pass slim=true to get a trimmed list payload (no
+    // toppings/bundleChildren/gallery/pricing-override rows). The full
+    // item is fetched on-demand from GET /items/:itemId when the user
+    // taps to open a detail/picker modal.
+    @Query('slim') slim?: string,
   ) {
     // includeHidden is honored only for staff users (those tied to a
     // business or outlet). Customer/anon callers always get the public
@@ -28,7 +33,25 @@ export class MenuController {
     const allowHidden = isStaff && includeHidden === 'true';
     return this.menuService.getMenu(outletId, req?.user?.id, tableId, lang, {
       includeHidden: allowHidden,
+      slim: slim === 'true',
     });
+  }
+
+  // Detail endpoint for the slim list. Returns the single item with all
+  // the heavy fields (itemToppings + their options, bundleChildren,
+  // images gallery, customerTagPrices, tableTypePrices) so the customer
+  // can render the picker/modal. Same per-request projection layer as
+  // /menu, so effectivePrice / isFavorite / inSchedule stay consistent.
+  @UseGuards(OptionalJwtAuthGuard)
+  @Get('items/:itemId')
+  getItemDetail(
+    @Param('outletId') outletId: string,
+    @Param('itemId') itemId: string,
+    @Req() req: any,
+    @PreferredLanguage() lang: string | null,
+    @Query('tableId') tableId?: string,
+  ) {
+    return this.menuService.getItemDetail(outletId, itemId, req?.user?.id, tableId, lang);
   }
 
   @Public()
