@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download, Maximize2, Minimize2, Filter, ChevronDown, Printer as PrinterIcon, ArrowUp, ArrowDown, RotateCcw } from 'lucide-react';
+import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download, Maximize2, Minimize2, Filter, ChevronDown, Printer as PrinterIcon, ArrowUp, ArrowDown, RotateCcw, Users as UsersIcon, Trash2 } from 'lucide-react';
 import { RootState } from '../../store';
 import { setOrders, updateOrder } from '../../store/slices/ordersSlice';
 import { getSocket } from '../../services/socket';
@@ -221,6 +221,43 @@ export default function OrdersPage() {
   const [refundAmount, setRefundAmount] = useState('');
   const [refundReason, setRefundReason] = useState('');
   const [refundSubmitting, setRefundSubmitting] = useState(false);
+
+  // Split-bill modal state. Each split is one cash Payment row that
+  // auto-confirms on initiate. Mixed cash + UPI splits are out of
+  // scope for the modal — staff can run UPI shares through the
+  // regular pay flow individually until the balance reaches zero.
+  const [splitTarget, setSplitTarget] = useState<any>(null);
+  const [splitRows, setSplitRows] = useState<Array<{ amount: string; label: string }>>([]);
+  const [splitSubmitting, setSplitSubmitting] = useState(false);
+  const splitOutstanding = (() => {
+    if (!splitTarget) return 0;
+    const total = Number(splitTarget.totalAmount ?? 0);
+    const paid = (splitTarget.payments ?? [])
+      .filter((p: any) => p.status === 'SUCCESS' && !p.isRefund)
+      .reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
+    return Math.max(0, total - paid);
+  })();
+  const splitSumAssigned = splitRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const splitRemaining = Math.max(0, splitOutstanding - splitSumAssigned);
+
+  const openSplitFor = (order: any, ways = 2) => {
+    const total = Number(order.totalAmount ?? 0);
+    const paid = (order.payments ?? [])
+      .filter((p: any) => p.status === 'SUCCESS' && !p.isRefund)
+      .reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
+    const outstanding = Math.max(0, total - paid);
+    // Round to 2 dp; absorb any remainder onto the last row so the
+    // splits sum exactly to the outstanding amount.
+    const evenShare = Math.floor((outstanding / ways) * 100) / 100;
+    const rows = Array.from({ length: ways }, (_, i) => ({
+      amount: (i === ways - 1
+        ? (outstanding - evenShare * (ways - 1)).toFixed(2)
+        : evenShare.toFixed(2)),
+      label: '',
+    }));
+    setSplitTarget(order);
+    setSplitRows(rows);
+  };
   const [cancelReason, setCancelReason] = useState('');
 
   // Platform/business listings span outlets and stay read-only here —
@@ -1006,6 +1043,24 @@ export default function OrdersPage() {
                     <RotateCcw size={13} /> Refund
                   </button>
                 )}
+              {detail
+                && !['CANCELLED', 'REFUND_COMPLETE'].includes(detail.status)
+                && Number(detail.totalAmount ?? 0) > 0
+                // Outstanding balance > 0 → still payable, split makes sense.
+                && Number(detail.totalAmount ?? 0)
+                    - (detail.payments ?? [])
+                        .filter((p: any) => p.status === 'SUCCESS' && !p.isRefund)
+                        .reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0)
+                    > 0.005
+                && (
+                  <button
+                    onClick={() => openSplitFor(detail, 2)}
+                    className="btn-secondary btn-sm"
+                    title="Split the bill across multiple cash payers"
+                  >
+                    <UsersIcon size={13} /> Split bill
+                  </button>
+                )}
               <div className="flex-1" />
               {(() => {
                 if (!detail) return null;
@@ -1361,6 +1416,152 @@ export default function OrdersPage() {
                 placeholder="Customer dissatisfied, wrong order, duplicate charge…"
               />
             </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Split-bill modal — cash-only, one Payment row per share.
+          Each row auto-confirms as it's submitted; the order's
+          outstanding balance ticks down with each. Mixed cash/UPI
+          splits use the regular Pay flow per share (out of scope
+          for this modal). */}
+      <Modal
+        open={!!splitTarget}
+        onClose={() => { setSplitTarget(null); setSplitRows([]); }}
+        title="Split bill"
+        subtitle={splitTarget?.orderNumber}
+        size="sm"
+        footer={
+          <>
+            <button className="btn-secondary" onClick={() => setSplitTarget(null)}>Cancel</button>
+            <button
+              className="btn-primary"
+              disabled={
+                splitSubmitting
+                || splitRows.length === 0
+                || splitRows.some((r) => !r.amount || Number(r.amount) <= 0)
+                || Math.abs(splitSumAssigned - splitOutstanding) > 0.005
+              }
+              onClick={async () => {
+                if (!splitTarget) return;
+                setSplitSubmitting(true);
+                try {
+                  // Fire payments in series so a failure mid-flight
+                  // doesn't leave the order half-split with no
+                  // diagnostic — toast shows what worked + what didn't.
+                  let ok = 0;
+                  for (const row of splitRows) {
+                    try {
+                      await api.post('/payments/initiate', {
+                        orderId: splitTarget.id,
+                        mode: 'CASH',
+                        amount: Number(row.amount),
+                      });
+                      ok += 1;
+                    } catch (err: any) {
+                      toast.error(`Share ${ok + 1} failed: ${err?.response?.data?.message || err?.message}`);
+                      break;
+                    }
+                  }
+                  if (ok === splitRows.length) {
+                    toast.success(`${ok} shares collected`);
+                    setSplitTarget(null);
+                    setSplitRows([]);
+                    // Refresh the detail to show new payments.
+                    try {
+                      const { data } = await api.get(`/outlets/${splitTarget.outletId || outletId}/orders/${splitTarget.id}`);
+                      setDetail(data.data);
+                      dispatch(updateOrder(data.data));
+                    } catch { /* best-effort */ }
+                  }
+                } finally {
+                  setSplitSubmitting(false);
+                }
+              }}
+            >
+              <UsersIcon size={13} /> Collect {splitRows.length} share{splitRows.length === 1 ? '' : 's'}
+            </button>
+          </>
+        }
+      >
+        {splitTarget && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Total</p>
+                <p className="text-sm font-semibold text-slate-900 tabular-nums">₹{Number(splitTarget.totalAmount ?? 0).toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Outstanding</p>
+                <p className="text-sm font-semibold text-slate-900 tabular-nums">₹{splitOutstanding.toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Unallocated</p>
+                <p className={`text-sm font-semibold tabular-nums ${Math.abs(splitRemaining) < 0.005 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  ₹{splitRemaining.toFixed(2)}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Quick split</span>
+              {[2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => openSplitFor(splitTarget, n)}
+                  className="text-[11px] font-semibold px-2 py-1 rounded-full border border-slate-200 hover:bg-slate-50"
+                >
+                  {n} ways
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-2">
+              {splitRows.map((row, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold w-12 shrink-0">
+                    #{idx + 1}
+                  </span>
+                  <input
+                    type="text"
+                    value={row.label}
+                    onChange={(e) => setSplitRows((p) => p.map((r, i) => i === idx ? { ...r, label: e.target.value } : r))}
+                    placeholder="Name (optional)"
+                    className="input text-sm flex-1"
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={row.amount}
+                    onChange={(e) => setSplitRows((p) => p.map((r, i) => i === idx ? { ...r, amount: e.target.value } : r))}
+                    className="input text-sm w-28 tabular-nums"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setSplitRows((p) => p.filter((_, i) => i !== idx))}
+                    className="text-slate-400 hover:text-rose-600"
+                    disabled={splitRows.length <= 1}
+                    title="Remove share"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setSplitRows((p) => [...p, { amount: splitRemaining.toFixed(2), label: '' }])}
+                className="text-[11px] font-semibold text-brand-700 hover:text-brand-900 inline-flex items-center gap-1"
+              >
+                <Plus size={11} /> Add a share
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400">
+              All shares are recorded as CASH payments and auto-confirm immediately. For mixed cash + UPI splits,
+              run the UPI shares through the regular Pay flow individually until the balance reaches zero.
+            </p>
           </div>
         )}
       </Modal>

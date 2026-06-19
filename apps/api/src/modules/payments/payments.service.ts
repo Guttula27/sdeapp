@@ -46,14 +46,30 @@ export class PaymentsService {
     // SERVED used to be in the terminal list too, but postpaid table
     // orders legitimately reach SERVED before the customer asks for
     // the bill (every item physically delivered → rollup to SERVED).
-    // Guard against double-payment by checking whether a SUCCESS
-    // payment already exists — that's the real "this is done" signal,
-    // not the order's status.
-    const paidAlready = await this.prisma.payment.count({
-      where: { orderId, status: 'SUCCESS' },
+    // Split-bill support: multiple partial payments are allowed as
+    // long as the cumulative SUCCESS-paid amount stays within the
+    // order's totalAmount. Refunds don't reduce the paid sum here —
+    // they have their own reversal flow and don't restore the
+    // payable balance.
+    const paidAgg = await this.prisma.payment.aggregate({
+      where: { orderId, status: 'SUCCESS', isRefund: false },
+      _sum: { amount: true },
     });
-    if (paidAlready > 0) {
+    const paidSum = Number(paidAgg._sum.amount ?? 0);
+    const orderTotal = Number(order.totalAmount);
+    const remaining = orderTotal - paidSum;
+    // Half-cent tolerance covers decimal-arithmetic drift from
+    // earlier partials totalling exactly to the order amount.
+    if (remaining <= 0.005) {
       throw new BadRequestException('Order has already been paid');
+    }
+    if (amount > remaining + 0.005) {
+      throw new BadRequestException(
+        `Amount ₹${amount.toFixed(2)} exceeds outstanding balance ₹${remaining.toFixed(2)}`,
+      );
+    }
+    if (amount <= 0) {
+      throw new BadRequestException('Payment amount must be greater than zero');
     }
 
     // Tag the payment with whoever's drawer settles it AT INITIATE time
