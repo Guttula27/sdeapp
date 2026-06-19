@@ -1985,7 +1985,17 @@ export class OrdersService {
     if (!existing) throw new NotFoundException('Order not found');
     if (!existing.isPostpaid) throw new BadRequestException('Items can only be appended to a postpaid order');
     if (existing.billRequestedAt) throw new BadRequestException('Bill already requested — items can no longer be appended');
-    if (existing.status === OrderStatus.CANCELLED) throw new BadRequestException('Order is cancelled');
+    // SERVED is appendable (table tab "one more naan" scenario) — it gets
+    // reopened below. Other terminal/dispute/refund states are not.
+    if (
+      existing.status === OrderStatus.CANCELLED
+      || existing.status === OrderStatus.DISPUTED
+      || existing.status === OrderStatus.RESOLVED
+      || existing.status === OrderStatus.FOR_REFUND
+      || existing.status === OrderStatus.REFUND_COMPLETE
+    ) {
+      throw new BadRequestException(`Order is in ${existing.status} — items cannot be appended`);
+    }
 
     // Re-resolve pricing context the same way create() does.
     const outlet = await this.prisma.outlet.findUnique({
@@ -2021,6 +2031,15 @@ export class OrdersService {
     // Appended lines on a postpaid order — always — start in
     // PENDING_VERIFICATION so the service desk has a chance to confirm
     // them with the customer before the kitchen picks them up.
+    //
+    // If the order had previously rolled up to SERVED (every prior item
+    // was served — common during a long meal where the customer asks
+    // for "one more naan" after the rest is done), we reopen it to
+    // QUEUED here. Without this, rollupOrderStatus's terminal-state
+    // bail (~line 1349) means the order keeps showing in the Served
+    // bucket on the Kitchen Display even though a fresh PENDING /
+    // PENDING_VERIFICATION item is waiting to be cooked.
+    const reopenFromServed = existing.status === OrderStatus.SERVED;
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.orderItem.createMany({
         data: newItems.map((i) => ({
@@ -2029,6 +2048,21 @@ export class OrdersService {
           status: OrderItemStatus.PENDING_VERIFICATION,
         })) as any,
       });
+      if (reopenFromServed) {
+        await tx.order.update({
+          where: { id: orderId },
+          data: {
+            status: OrderStatus.QUEUED,
+            statusHistory: {
+              create: {
+                status: OrderStatus.QUEUED,
+                changedBy: userId,
+                notes: 'Reopened — items appended after previous SERVED rollup',
+              },
+            },
+          },
+        });
+      }
 
       const allItems = await tx.orderItem.findMany({
         where: { orderId, status: { not: OrderItemStatus.CANCELLED } },
