@@ -52,7 +52,24 @@ import { RedisModule } from './config/redis/redis.module';
     ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
     BullModule.forRoot({
-      redis: process.env.REDIS_URL || 'redis://localhost:6379',
+      // Bull's redis option accepts either a URL string or an
+      // ioredis options object. We use the object form so REDIS_PASSWORD /
+      // REDIS_USERNAME env vars (used by hosted Redis providers that
+      // keep credentials out of the URL) carry through to the queue
+      // connection — same pattern as RedisService. The URL is parsed
+      // for host/port/db so an existing REDIS_URL keeps working.
+      redis: (() => {
+        const url = new URL(process.env.REDIS_URL || 'redis://localhost:6379');
+        return {
+          host: url.hostname,
+          port: Number(url.port || 6379),
+          ...(url.pathname && url.pathname !== '/' ? { db: Number(url.pathname.slice(1)) || 0 } : {}),
+          ...(process.env.REDIS_PASSWORD ? { password: process.env.REDIS_PASSWORD }
+              : url.password ? { password: decodeURIComponent(url.password) } : {}),
+          ...(process.env.REDIS_USERNAME ? { username: process.env.REDIS_USERNAME }
+              : url.username ? { username: decodeURIComponent(url.username) } : {}),
+        };
+      })(),
     }),
     LoggerModule,
     CryptoModule,

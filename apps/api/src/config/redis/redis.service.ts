@@ -16,7 +16,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     const url = process.env.REDIS_URL || 'redis://localhost:6379';
+    // Auth comes from either the URL (redis://:pass@host) or from
+    // REDIS_PASSWORD / REDIS_USERNAME env vars. Hosted Redis (Upstash,
+    // Redis Cloud, ElastiCache with ACL) typically wants the secret
+    // out-of-band rather than embedded in the URL. ioredis uses the
+    // option only when the URL doesn't already carry credentials.
+    const password = process.env.REDIS_PASSWORD;
+    const username = process.env.REDIS_USERNAME;
     this.client = new Redis(url, {
+      ...(password ? { password } : {}),
+      ...(username ? { username } : {}),
       // Limit reconnect storm if Redis is down — we'd rather degrade
       // to pass-through than thrash. ioredis keeps trying in the
       // background; individual ops just fail fast in the meantime.
