@@ -45,6 +45,7 @@ import { PlatformSettingsModule } from './modules/platform-settings/platform-set
 import { LoggerModule } from './config/logger/logger.module';
 import { RequestLogMiddleware } from './config/logger/request-log.middleware';
 import { CryptoModule } from './config/crypto/crypto.module';
+import { RedisModule } from './config/redis/redis.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { CryptoModule } from './config/crypto/crypto.module';
     }),
     LoggerModule,
     CryptoModule,
+    RedisModule,
     PrismaModule,
     AuthModule,
     UsersModule,

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
+import { RedisService } from '../../config/redis/redis.service';
 import { TranslationsService } from '../translations/translations.service';
 import { DiscountsService } from '../discounts/discounts.service';
 import {
@@ -8,13 +9,96 @@ import {
   TimingSlot,
 } from '../../common/timing/timing-slots';
 
+// 10 minutes — safety net for any mutation path we forgot to hook.
+// Direct invalidation via invalidateOutlet() is the primary mechanism.
+const MENU_TREE_TTL_SECONDS = 600;
+
 @Injectable()
 export class MenuService {
   constructor(
     private prisma: PrismaService,
     private translations: TranslationsService,
     private discounts: DiscountsService,
+    private redis: RedisService,
   ) {}
+
+  // ─── Cache helpers ────────────────────────────────────────
+  // Version-counter invalidation: each cache key embeds the current
+  // value of menu:ver:{outletId}. invalidateOutlet() simply INCRs the
+  // counter; stale keys orphan and expire by TTL. No SCAN, no key
+  // registry — one extra GET per read in exchange for atomic, race-free
+  // invalidation that scales with mutation volume not key count.
+  private menuVersionKey(outletId: string) {
+    return `menu:ver:${outletId}`;
+  }
+  private menuTreeKey(outletId: string, version: number, lang: string, includeHidden: boolean) {
+    const langPart = lang || 'en';
+    const audience = includeHidden ? 'all' : 'public';
+    return `menu:tree:v1:${outletId}:${version}:${langPart}:${audience}`;
+  }
+
+  /**
+   * Bumps the outlet's menu version counter so every cached variant
+   * (each lang × public|all) is effectively invalidated on the next
+   * read. Safe to call multiple times — INCR is atomic and cheap.
+   * Called from every menu-mutating path below. External modules that
+   * mutate menu-adjacent data (toppings, customer-tag prices,
+   * table-type prices, business-level menu timing slots) should call
+   * this too — exposed publicly for that reason.
+   */
+  async invalidateOutlet(outletId: string): Promise<void> {
+    if (!outletId) return;
+    await this.redis.incr(this.menuVersionKey(outletId));
+  }
+
+  // Outlet-id resolvers — the cache busting needs an outletId but most
+  // menu-mutation entry points only have the leaf entity's id. Each
+  // resolver is one indexed lookup. Returns null when the row belongs
+  // to a business template (no outletId) — those don't affect any
+  // outlet's cached tree until imported.
+  private async outletIdFromCategoryId(id: string): Promise<string | null> {
+    const c = await this.prisma.category.findUnique({
+      where: { id },
+      select: { outletId: true },
+    });
+    return c?.outletId ?? null;
+  }
+  private async outletIdFromSubcategoryId(id: string): Promise<string | null> {
+    const s = await this.prisma.subcategory.findUnique({
+      where: { id },
+      select: { category: { select: { outletId: true } } },
+    });
+    return s?.category?.outletId ?? null;
+  }
+  private async outletIdFromItemId(id: string): Promise<string | null> {
+    const i = await this.prisma.item.findUnique({
+      where: { id },
+      select: { subcategory: { select: { category: { select: { outletId: true } } } } },
+    });
+    return i?.subcategory?.category?.outletId ?? null;
+  }
+  private async outletIdFromVariantId(id: string): Promise<string | null> {
+    const v = await this.prisma.variant.findUnique({
+      where: { id },
+      select: { item: { select: { subcategory: { select: { category: { select: { outletId: true } } } } } } },
+    });
+    return v?.item?.subcategory?.category?.outletId ?? null;
+  }
+  private async outletIdFromItemImageId(id: string): Promise<string | null> {
+    const img = await this.prisma.itemImage.findUnique({
+      where: { id },
+      select: { item: { select: { subcategory: { select: { category: { select: { outletId: true } } } } } } },
+    });
+    return img?.item?.subcategory?.category?.outletId ?? null;
+  }
+  // Convenience wrapper — looks up the outletId for any resolver
+  // shape, then invalidates. Null outletId (= template entity) is a
+  // no-op. Callers that already have the outletId should just call
+  // invalidateOutlet directly.
+  private async invalidateForCategory(id: string)    { const o = await this.outletIdFromCategoryId(id);    if (o) await this.invalidateOutlet(o); }
+  private async invalidateForSubcategory(id: string) { const o = await this.outletIdFromSubcategoryId(id); if (o) await this.invalidateOutlet(o); }
+  private async invalidateForItem(id: string)        { const o = await this.outletIdFromItemId(id);        if (o) await this.invalidateOutlet(o); }
+  private async invalidateForVariant(id: string)     { const o = await this.outletIdFromVariantId(id);     if (o) await this.invalidateOutlet(o); }
 
   // Translate every menu-bearing entity in a single getMenu response.
   private async hydrateMenu(categories: any[], lang: string | null | undefined) {
@@ -68,14 +152,34 @@ export class MenuService {
    * pricing-override rows so the projection can pick. Returns translated
    * names/descriptions per `lang`.
    *
-   * Intentionally outlet-only — no tableId, viewer, time-of-day. This is
-   * what step 2 will wrap in Redis keyed by (outletId, lang, public|all).
+   * Intentionally outlet-only — no tableId, viewer, time-of-day. Wrapped
+   * by a Redis cache (key includes the outlet's menu-version counter)
+   * with a 10-min TTL safety net. Cache misses, parse errors, or a
+   * downed Redis all fall through to the live DB query transparently.
    */
   async loadMenuTree(
     outletId: string,
     lang?: string | null,
     includeHidden?: boolean,
-  ) {
+  ): Promise<{ categories: any[] }> {
+    const version = await this.redis.getCounter(this.menuVersionKey(outletId));
+    const cacheKey = this.menuTreeKey(outletId, version, lang || 'en', !!includeHidden);
+
+    const cached = await this.redis.getJSON<{ categories: any[] }>(cacheKey);
+    if (cached) return cached;
+
+    const tree = await this.loadMenuTreeFromDb(outletId, lang, includeHidden);
+    // Fire-and-forget write — we already have the freshly-loaded tree
+    // to return; a cache write failure shouldn't slow down the response.
+    void this.redis.setJSON(cacheKey, tree, MENU_TREE_TTL_SECONDS);
+    return tree;
+  }
+
+  private async loadMenuTreeFromDb(
+    outletId: string,
+    lang?: string | null,
+    includeHidden?: boolean,
+  ): Promise<{ categories: any[] }> {
     const categories = await this.prisma.category.findMany({
       where: { outletId, isActive: true },
       orderBy: { displayOrder: 'asc' },
@@ -492,6 +596,7 @@ export class MenuService {
         data: slots.map((s) => ({ categoryId, ...s })),
       }),
     ]);
+    if (cat.outletId) await this.invalidateOutlet(cat.outletId);
     return this.prisma.category.findUnique({
       where: { id: categoryId },
       include: { timingSlots: true },
@@ -508,6 +613,7 @@ export class MenuService {
         data: slots.map((s) => ({ subcategoryId, ...s })),
       }),
     ]);
+    await this.invalidateForSubcategory(subcategoryId);
     return this.prisma.subcategory.findUnique({
       where: { id: subcategoryId },
       include: { timingSlots: true },
@@ -524,6 +630,7 @@ export class MenuService {
         data: slots.map((s) => ({ itemId, ...s })),
       }),
     ]);
+    await this.invalidateForItem(itemId);
     return this.prisma.item.findUnique({
       where: { id: itemId },
       include: { timingSlots: true },
@@ -548,6 +655,7 @@ export class MenuService {
       data: { name: data.name, imageUrl: data.imageUrl, outletId, menuId: menuId ?? undefined },
     });
     await this.translations.upsertAll('Category', category.id, { name: category.name });
+    await this.invalidateOutlet(outletId);
     return category;
   }
 
@@ -556,17 +664,24 @@ export class MenuService {
     if (data.name !== undefined) {
       await this.translations.upsertAll('Category', category.id, { name: category.name });
     }
+    if (category.outletId) await this.invalidateOutlet(category.outletId);
     return category;
   }
 
   async deleteCategory(id: string) {
+    // Capture outletId BEFORE the delete — the soft-delete branch
+    // (orderItemCount > 0) still has it, but the hard-delete branch
+    // would lose the row.
+    const outletId = await this.outletIdFromCategoryId(id);
     const orderItemCount = await this.prisma.orderItem.count({
       where: { item: { subcategory: { categoryId: id } } },
     });
     if (orderItemCount > 0) {
-      return this.prisma.category.update({ where: { id }, data: { isActive: false } });
+      const updated = await this.prisma.category.update({ where: { id }, data: { isActive: false } });
+      if (outletId) await this.invalidateOutlet(outletId);
+      return updated;
     }
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const subs = await tx.subcategory.findMany({ where: { categoryId: id }, select: { id: true } });
       const subIds = subs.map((s) => s.id);
       const items = await tx.item.findMany({ where: { subcategoryId: { in: subIds } }, select: { id: true } });
@@ -580,6 +695,8 @@ export class MenuService {
       if (subIds.length) await tx.subcategory.deleteMany({ where: { id: { in: subIds } } });
       return tx.category.delete({ where: { id } });
     });
+    if (outletId) await this.invalidateOutlet(outletId);
+    return result;
   }
 
   // ─── Subcategories ────────────────────────────────────────
@@ -587,6 +704,7 @@ export class MenuService {
   async createSubcategory(categoryId: string, data: { name: string; imageUrl?: string | null }) {
     const sub = await this.prisma.subcategory.create({ data: { ...data, categoryId } });
     await this.translations.upsertAll('Subcategory', sub.id, { name: sub.name });
+    await this.invalidateForCategory(categoryId);
     return sub;
   }
 
@@ -595,6 +713,7 @@ export class MenuService {
     if (data.name !== undefined) {
       await this.translations.upsertAll('Subcategory', sub.id, { name: sub.name });
     }
+    await this.invalidateForCategory(sub.categoryId);
     return sub;
   }
 
@@ -604,16 +723,19 @@ export class MenuService {
   // outlet rows and business templates — the template path skips the order
   // count entirely (template items can never be ordered).
   async deleteSubcategory(id: string) {
+    const outletId = await this.outletIdFromSubcategoryId(id);
     const orderItemCount = await this.prisma.orderItem.count({
       where: { item: { subcategoryId: id } },
     });
     if (orderItemCount > 0) {
-      return this.prisma.subcategory.update({
+      const updated = await this.prisma.subcategory.update({
         where: { id },
         data: { isActive: false },
       });
+      if (outletId) await this.invalidateOutlet(outletId);
+      return updated;
     }
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const items = await tx.item.findMany({ where: { subcategoryId: id }, select: { id: true } });
       const itemIds = items.map((i) => i.id);
       if (itemIds.length) {
@@ -626,6 +748,8 @@ export class MenuService {
       await tx.translation.deleteMany({ where: { entityType: 'Subcategory', entityId: id } });
       return tx.subcategory.delete({ where: { id } });
     });
+    if (outletId) await this.invalidateOutlet(outletId);
+    return result;
   }
 
   // ─── Items ────────────────────────────────────────────────
@@ -680,6 +804,7 @@ export class MenuService {
         shortDescription: (v as any).shortDescription ?? undefined,
       });
     }
+    await this.invalidateForSubcategory(subcategoryId);
     return item;
   }
 
@@ -700,6 +825,7 @@ export class MenuService {
         description: item.description ?? undefined,
       });
     }
+    await this.invalidateForSubcategory(item.subcategoryId);
     return item;
   }
 
@@ -728,10 +854,12 @@ export class MenuService {
   async toggleItemAvailability(id: string) {
     const item = await this.prisma.item.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Item not found');
-    return this.prisma.item.update({
+    const updated = await this.prisma.item.update({
       where: { id },
       data: { isAvailable: !item.isAvailable },
     });
+    await this.invalidateForSubcategory(updated.subcategoryId);
+    return updated;
   }
 
   // Toggle whether this item is visible on the customer menu. Hidden items
@@ -740,10 +868,12 @@ export class MenuService {
   async toggleItemVisibility(id: string) {
     const item = await this.prisma.item.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Item not found');
-    return this.prisma.item.update({
+    const updated = await this.prisma.item.update({
       where: { id },
       data: { isDisplayed: !item.isDisplayed },
     });
+    await this.invalidateForSubcategory(updated.subcategoryId);
+    return updated;
   }
 
   /**
@@ -770,7 +900,7 @@ export class MenuService {
       throw new BadRequestException('Provide addQuantity or setQuantity');
     }
 
-    return this.prisma.item.update({
+    const updated = await this.prisma.item.update({
       where: { id },
       data: {
         availableQuantity: next,
@@ -779,22 +909,29 @@ export class MenuService {
         ...(next > 0 ? { isAvailable: true } : {}),
       },
     });
+    await this.invalidateForSubcategory(updated.subcategoryId);
+    return updated;
   }
 
   async deleteItem(id: string) {
+    const outletId = await this.outletIdFromItemId(id);
     const orderItemCount = await this.prisma.orderItem.count({ where: { itemId: id } });
     if (orderItemCount > 0) {
-      return this.prisma.item.update({
+      const updated = await this.prisma.item.update({
         where: { id },
         data: { isDisplayed: false, isAvailable: false },
       });
+      if (outletId) await this.invalidateOutlet(outletId);
+      return updated;
     }
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.itemTag.deleteMany({ where: { itemId: id } });
       await tx.option.deleteMany({ where: { itemId: id } });
       await tx.variant.deleteMany({ where: { itemId: id } });
       return tx.item.delete({ where: { id } });
     });
+    if (outletId) await this.invalidateOutlet(outletId);
+    return result;
   }
 
   // ─── Variants ─────────────────────────────────────────────
@@ -805,6 +942,7 @@ export class MenuService {
       name: variant.name,
       shortDescription: (variant as any).shortDescription ?? undefined,
     });
+    await this.invalidateForItem(itemId);
     return variant;
   }
 
@@ -814,13 +952,18 @@ export class MenuService {
       where: { itemId },
       _max: { displayOrder: true },
     });
-    return this.prisma.itemImage.create({
+    const img = await this.prisma.itemImage.create({
       data: { itemId, url, displayOrder: (max._max.displayOrder ?? -1) + 1 },
     });
+    await this.invalidateForItem(itemId);
+    return img;
   }
 
   async removeItemImage(imageId: string) {
-    return this.prisma.itemImage.delete({ where: { id: imageId } });
+    const outletId = await this.outletIdFromItemImageId(imageId);
+    const result = await this.prisma.itemImage.delete({ where: { id: imageId } });
+    if (outletId) await this.invalidateOutlet(outletId);
+    return result;
   }
 
   async reorderItemImages(itemId: string, orderedIds: string[]) {
@@ -832,6 +975,7 @@ export class MenuService {
         }),
       ),
     );
+    await this.invalidateForItem(itemId);
     return this.prisma.itemImage.findMany({
       where: { itemId },
       orderBy: { displayOrder: 'asc' },
@@ -866,6 +1010,10 @@ export class MenuService {
         this.prisma.category.update({ where: { id }, data: { displayOrder: idx } }),
       ),
     );
+    // Business-scoped reorder affects category template ordering, not
+    // outlet caches (templates are imported as copies). Only invalidate
+    // when reorder is outlet-scoped.
+    if (scope.outletId) await this.invalidateOutlet(scope.outletId);
     return { reordered: orderedIds.length };
   }
 
@@ -881,6 +1029,7 @@ export class MenuService {
         this.prisma.subcategory.update({ where: { id }, data: { displayOrder: idx } }),
       ),
     );
+    await this.invalidateForCategory(categoryId);
     return { reordered: orderedIds.length };
   }
 
@@ -896,6 +1045,7 @@ export class MenuService {
         this.prisma.item.update({ where: { id }, data: { displayOrder: idx } }),
       ),
     );
+    await this.invalidateForSubcategory(subcategoryId);
     return { reordered: orderedIds.length };
   }
 
@@ -907,15 +1057,21 @@ export class MenuService {
         shortDescription: (variant as any).shortDescription ?? undefined,
       });
     }
+    await this.invalidateForItem(variant.itemId);
     return variant;
   }
 
   async deleteVariant(id: string) {
+    const outletId = await this.outletIdFromVariantId(id);
     const orderItemCount = await this.prisma.orderItem.count({ where: { variantId: id } });
     if (orderItemCount > 0) {
-      return this.prisma.variant.update({ where: { id }, data: { isAvailable: false } });
+      const updated = await this.prisma.variant.update({ where: { id }, data: { isAvailable: false } });
+      if (outletId) await this.invalidateOutlet(outletId);
+      return updated;
     }
-    return this.prisma.variant.delete({ where: { id } });
+    const result = await this.prisma.variant.delete({ where: { id } });
+    if (outletId) await this.invalidateOutlet(outletId);
+    return result;
   }
 
   // ─── Options ──────────────────────────────────────────────
@@ -1248,6 +1404,13 @@ export class MenuService {
       }
     });
 
+    // Bust the cache before the translation fan-out — the imported
+    // rows are already visible to the customer in English, so the next
+    // /menu GET should hit the DB and surface them. Translations land
+    // asynchronously; the language-keyed cache variants will be
+    // invalidated again when those upserts hit the translations module.
+    await this.invalidateOutlet(targetOutletId);
+
     // Fire-and-forget the translation jobs. External providers (Lingva /
     // Bhashini) can take many seconds per field × language; we don't want the
     // import HTTP request to block on that. Items render in English until
@@ -1261,6 +1424,9 @@ export class MenuService {
           console.warn(`[importFromBusiness] translate ${job.entityType}/${job.entityId} failed`, err);
         }
       }
+      // Re-invalidate so the non-English cache variants pick up the
+      // freshly-translated rows.
+      await this.invalidateOutlet(targetOutletId);
     })();
 
     return { categories: categoriesCount, subcategories: subcategoriesCount, items: itemsCount };
