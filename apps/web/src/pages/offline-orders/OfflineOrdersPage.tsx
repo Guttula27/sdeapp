@@ -4,12 +4,12 @@ import { Navigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import {
-  CloudOff, CheckCircle2, RefreshCw, Trash2, Printer as PrinterIcon, AlertCircle, Clock,
+  CloudOff, CheckCircle2, RefreshCw, Trash2, Printer as PrinterIcon, AlertCircle, Clock, Utensils,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import { useUserRole } from '../../hooks/useUserRole';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
-import { listOfflineOrders, type OfflineOrder } from '../../utils/idb';
+import { listOfflineOrders, markOfflineServed, type OfflineOrder } from '../../utils/idb';
 import { drain } from '../../utils/outbox';
 import { replayEntry } from '../../services/api';
 import {
@@ -104,6 +104,25 @@ export default function OfflineOrdersPage() {
       toast.success('Receipt reprinted');
     } catch (e: any) {
       toast.error(e?.message || 'Print failed');
+    }
+  };
+
+  // Stamp the local offline order as Served. The next outbox drain
+  // chains a force-status PATCH (status=SERVED, actedAt=this timestamp,
+  // force=true) right after the placement POST succeeds, so the synced
+  // record on the server lands in SERVED at the *real* service time —
+  // important for reports that bucket revenue by hour.
+  const markServed = async (row: OfflineOrder) => {
+    if (!window.confirm(
+      `Mark ${row.id} as Served? When this device is back online, the order will sync to the server with status SERVED and the timestamp captured now.`,
+    )) return;
+    const actedAt = new Date().toISOString();
+    try {
+      await markOfflineServed(row.id, actedAt);
+      toast.success('Marked Served — will sync with this timestamp');
+      await refresh();
+    } catch (e: any) {
+      toast.error(e?.message || 'Could not mark as Served');
     }
   };
 
@@ -208,6 +227,14 @@ export default function OfflineOrdersPage() {
                   </td>
                   <td className="px-4 py-3">
                     <StateBadge state={row.syncState} error={row.syncError} />
+                    {row.servedAt && (
+                      <span
+                        className="ml-1 inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 align-middle"
+                        title={`Marked Served locally at ${new Date(row.servedAt).toLocaleString('en-IN')}`}
+                      >
+                        <Utensils size={9} /> SERVED
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
@@ -218,6 +245,19 @@ export default function OfflineOrdersPage() {
                       >
                         <PrinterIcon size={12} /> Reprint
                       </button>
+                      {/* Mark Served — visible only while the row is
+                          still pending sync AND hasn't already been
+                          stamped served. Once synced the order shows up
+                          on OrdersPage and is managed there normally. */}
+                      {row.syncState === 'pending' && !row.servedAt && (
+                        <button
+                          onClick={() => markServed(row)}
+                          className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg text-emerald-700 hover:bg-emerald-50 transition-colors"
+                          title="Record that the customer was served — will sync with this timestamp"
+                        >
+                          <Utensils size={12} /> Mark Served
+                        </button>
+                      )}
                       <button
                         onClick={() => remove(row)}
                         className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors"

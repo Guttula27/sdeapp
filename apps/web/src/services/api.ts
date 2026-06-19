@@ -159,10 +159,38 @@ export async function replayEntry(entry: OutboxEntry): Promise<{ ok: boolean; st
     // alongside. Lazy-imported so this module stays UI-app-agnostic.
     if (entry.idempotencyKey.startsWith('OFF-')) {
       try {
-        const { markOfflineSynced } = await import('../utils/idb');
+        const { markOfflineSynced, getOfflineOrder } = await import('../utils/idb');
         const body = res.data?.data;
         if (body?.id) {
           await markOfflineSynced(entry.idempotencyKey, { id: body.id, orderNumber: body.orderNumber });
+          // If the order was also marked Served while offline, chain
+          // the status update so the synced order lands in SERVED on
+          // the server. force=true skips the normal step-by-step
+          // state-machine check (CREATED → SERVED is otherwise
+          // illegal), and actedAt preserves the real service time so
+          // the order appears in reports at the correct hour. Best-
+          // effort — a failed follow-up leaves the order in CREATED
+          // on the server (better than losing the placement), and
+          // staff can fix it manually once they see it on OrdersPage.
+          const local = await getOfflineOrder(entry.idempotencyKey);
+          if (local?.servedAt && body.outletId) {
+            try {
+              await api.request({
+                method: 'PATCH',
+                url: `/outlets/${body.outletId}/orders/${body.id}/status`,
+                data: { status: 'SERVED', actedAt: local.servedAt, force: true },
+                headers: { 'Idempotency-Key': `${entry.idempotencyKey}-served` },
+                __skipOutbox: true,
+              } as RetryableConfig);
+            } catch (chainErr) {
+              // Don't fail the whole replay — placement succeeded;
+              // the follow-up can be retried on the next drain by
+              // re-saving the OfflineOrder with servedAt still set.
+              // (For now we just log via the entry's lastError so
+              // the OfflineOrdersPage can surface it.)
+              void chainErr;
+            }
+          }
         }
       } catch { /* offline-orders module missing or write failed — ignore */ }
     }

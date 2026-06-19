@@ -105,6 +105,12 @@ export type OfflineOrder = {
   // Snapshot of what was placed — enough to re-render the receipt
   // for a reprint (same shape as a regular order detail response).
   snapshot: any;
+  // Set when the order was marked Served locally before the network
+  // came back. ISO timestamp of the service-staff click. On sync, the
+  // outbox replay places the order AND chains a force-status PATCH so
+  // the server records the order as SERVED with this exact actedAt —
+  // crucial for reports/closing totals not to miss the revenue.
+  servedAt?: string | null;
 };
 
 export async function saveOfflineOrder(order: OfflineOrder): Promise<void> {
@@ -134,6 +140,27 @@ export async function markOfflineFailed(id: string, error: string) {
   cur.syncState = 'failed';
   cur.syncError = error;
   await saveOfflineOrder(cur);
+}
+
+// Stamps the offline-served timestamp on a pending offline order so
+// the next outbox drain can chain a force-status PATCH after the
+// placement POST succeeds. Idempotent — re-clicking just refreshes
+// the timestamp, which is harmless before sync.
+export async function markOfflineServed(id: string, actedAtIso: string) {
+  const cur = await tx<OfflineOrder | undefined>(STORE_OFFLINE_ORDERS, 'readonly', (s) => s.get(id) as any);
+  if (!cur) return;
+  cur.servedAt = actedAtIso;
+  await saveOfflineOrder(cur);
+}
+
+// Read a single OfflineOrder by id. Used by the outbox replay to look
+// up whether a placed-offline order also needs its served-status PATCH
+// chained after the placement succeeds.
+export async function getOfflineOrder(id: string): Promise<OfflineOrder | null> {
+  try {
+    const res = await tx<OfflineOrder | undefined>(STORE_OFFLINE_ORDERS, 'readonly', (s) => s.get(id) as any);
+    return res ?? null;
+  } catch { return null; }
 }
 
 // ─── Open-orders snapshot (one row per outlet) ────────────────────────

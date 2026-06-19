@@ -1,4 +1,4 @@
-import { IsEnum, IsISO8601, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsISO8601, IsOptional, IsString } from 'class-validator';
 import { OrderStatus } from '@prisma/client';
 
 export class UpdateOrderStatusDto {
@@ -16,4 +16,14 @@ export class UpdateOrderStatusDto {
   @IsISO8601()
   @IsOptional()
   actedAt?: string;
+
+  // Offline reconciliation flag: when set, the server skips the normal
+  // step-by-step status-transition validation and writes the target
+  // status directly (e.g. CREATED → SERVED for an order that was
+  // placed and served while the device was offline). The actor must
+  // still have UPDATE_ORDER_STATUS perms via the standard guard — the
+  // flag only relaxes the state-machine check, not auth.
+  @IsBoolean()
+  @IsOptional()
+  force?: boolean;
 }

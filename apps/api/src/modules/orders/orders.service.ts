@@ -840,11 +840,17 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException('Order not found');
 
-    this.validateStatusTransition(order.status, dto.status, {
-      outletType: order.outlet?.outletType,
-      tableId: order.tableId,
-      isParcel: order.isParcel,
-    });
+    // dto.force = offline reconciliation path. The order was placed
+    // and SERVED while the device was offline; the sync replays the
+    // placement and then jumps the status to SERVED in one go. The
+    // normal state-machine check would reject that jump.
+    if (!dto.force) {
+      this.validateStatusTransition(order.status, dto.status, {
+        outletType: order.outlet?.outletType,
+        tableId: order.tableId,
+        isParcel: order.isParcel,
+      });
+    }
 
     // Offline replays from the admin POS pass actedAt — the client-
     // captured time when staff actually pressed the button. Use it for
