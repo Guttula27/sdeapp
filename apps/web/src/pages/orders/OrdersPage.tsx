@@ -12,6 +12,7 @@ import api from '../../services/api';
 import { isPrinterConnected, isBluetoothSupported, connectPrinter, printCustomerReceipt } from '../../utils/bluetoothPrinter';
 import { buildReceiptPayload } from '../../utils/receiptPayload';
 import { getOpenOrdersSnapshot, setOpenOrdersSnapshot } from '../../utils/idb';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import ThermalReceipt from '../../components/receipt/ThermalReceipt';
 import { downloadReceiptPdf } from '../../components/receipt/downloadReceiptPdf';
 import Modal from '../../components/common/Modal';
@@ -185,8 +186,24 @@ export default function OrdersPage() {
       if (!isPrinterConnected(outletPrint.printerId)) {
         await connectPrinter(outletPrint.printerId);
       }
-      const { data } = await api.get(`/outlets/${detail.outletId || outletId}/orders/${detail.id}`);
-      await printCustomerReceipt(outletPrint.printerId, buildReceiptPayload(data.data));
+      // Prefer fresh detail from the server (richer than the list
+      // payload — guarantees totals + tax rows are exact for the
+      // receipt). If the server is unreachable, fall back to the
+      // local detail snapshot so the kitchen can still print the
+      // handoff receipt for service staff offline.
+      let payload: any = null;
+      try {
+        const { data } = await api.get(`/outlets/${detail.outletId || outletId}/orders/${detail.id}`);
+        payload = data.data;
+      } catch (fetchErr: any) {
+        const httpStatus = fetchErr?.response?.status ?? 0;
+        const isInfraTransient = !fetchErr?.response || httpStatus === 502 || httpStatus === 503 || httpStatus === 504;
+        if (!isInfraTransient) throw fetchErr;
+        // Offline fallback — the snapshot we opened the modal with
+        // is sufficient for an itemised receipt.
+        payload = detail;
+      }
+      await printCustomerReceipt(outletPrint.printerId, buildReceiptPayload(payload));
       toast.success('Receipt sent to printer');
     } catch (e: any) {
       toast.error(e?.message || 'Print failed');
@@ -197,8 +214,29 @@ export default function OrdersPage() {
   const [cancelTarget, setCancelTarget] = useState<any>(null);
   const [cancelReason, setCancelReason] = useState('');
 
-  const isReadOnly  = tier === 'platform' || tier === 'business' || tier === 'kitchen';
+  // Platform/business listings span outlets and stay read-only here —
+  // those tiers manage via their own dashboards. Kitchen used to be in
+  // this list too, but the offline flow needs them to mark items
+  // READY from this page when their kitchen board is unreachable.
+  const isReadOnly  = tier === 'platform' || tier === 'business';
   const canAccept   = tier === 'kitchen'; // chef can accept NEW orders but nothing else
+
+  // Action-button gating for the offline manual-delivery flow:
+  //   • Kitchen staff can mark items/orders READY (their handoff
+  //     point to service), but NOT SERVED — that's the service
+  //     staff's call, kept separate so the kitchen can't accidentally
+  //     close out an order the customer hasn't received yet.
+  //   • Service / counter / outlet-admin staff can do both.
+  //   • A staff member who happens to have both kitchen + service
+  //     roles still goes through the same per-button gating, so the
+  //     UI doesn't pretend they can bypass the workflow.
+  const canMarkServed = tier !== 'kitchen';
+
+  // Snapshot-aware live network state. Buttons stay visible regardless
+  // — the optimistic update + outbox replay handle the offline case
+  // transparently. Kept here as a hook for any future offline-only UI
+  // (e.g. an inline "queued" pill on a card we know hasn't synced yet).
+  useNetworkStatus();
 
   // Station scope: kitchen + counter (service desk) users only see items routed to their station
   const [myStation, setMyStation] = useState<{ id: string; name: string; isMaster?: boolean } | null>(null);
@@ -346,14 +384,50 @@ export default function OrdersPage() {
     if (reconnectedAt) fetchOrders();
   }, [reconnectedAt, fetchOrders]);
 
+  // Persists the live Redux orders list back to the per-outlet
+  // IndexedDB snapshot so the next offline cold-load reflects whatever
+  // status changes were made between fetches.
+  const persistSnapshot = (next: any[]) => {
+    if (!outletId || tier !== 'outlet') return;
+    setOpenOrdersSnapshot({ outletId, cachedAt: Date.now(), orders: next }).catch(() => {});
+  };
+
   const advance = async (orderId: string, status: string) => {
     setSaving(true);
+    // Optimistic update — apply locally first so the UI reflects the
+    // click immediately even when the network round-trip is slow or
+    // queued via the outbox. The api interceptor handles retry +
+    // outbox queue for infra-transient errors (502/503/504/network),
+    // so the optimistic state stays correct without us repainting on
+    // failure. actedAt preserves the real action time across the
+    // outbox replay window.
+    const actedAt = new Date().toISOString();
+    const target = orders.find((o) => o.id === orderId);
+    if (target) {
+      const optimistic = { ...target, status, statusUpdatedAt: actedAt };
+      dispatch(updateOrder(optimistic));
+      if (detail?.id === orderId) setDetail((d: any) => ({ ...d, status, statusUpdatedAt: actedAt }));
+      persistSnapshot(orders.map((o) => (o.id === orderId ? optimistic : o)));
+    }
     try {
-      const { data } = await api.patch(`/outlets/${outletId}/orders/${orderId}/status`, { status });
+      const { data } = await api.patch(`/outlets/${outletId}/orders/${orderId}/status`, { status, actedAt });
       dispatch(updateOrder(data.data));
       if (detail?.id === orderId) setDetail(data.data);
       toast.success(`→ ${STATUS[status].label}`);
-    } catch (e: any) { toast.error(e.response?.data?.message || 'Failed'); }
+    } catch (e: any) {
+      // Application errors (4xx/500) revert; infra-transient errors
+      // (no response or 502/503/504) leave the optimistic state in
+      // place and rely on the outbox replay.
+      const httpStatus = e?.response?.status ?? 0;
+      const isInfraTransient = !e?.response || httpStatus === 502 || httpStatus === 503 || httpStatus === 504;
+      if (isInfraTransient) {
+        toast.success(`Queued — will sync when network is back`, { icon: '📡' });
+      } else if (target) {
+        dispatch(updateOrder(target));
+        if (detail?.id === orderId) setDetail(target);
+        toast.error(e.response?.data?.message || 'Failed');
+      }
+    }
     finally { setSaving(false); }
   };
 
@@ -398,9 +472,34 @@ export default function OrdersPage() {
   const [pendingItem, setPendingItem] = useState<string | null>(null);
   const advanceItem = async (orderId: string, itemId: string, nextStatus: ItemStatus) => {
     setPendingItem(itemId);
+    // Same optimistic + actedAt pattern as advance(). We don't try to
+    // compute the rolled-up order status locally — the next successful
+    // fetch will reconcile, and the outbox replay returns the truth
+    // from the server when the network is back.
+    const actedAt = new Date().toISOString();
+    const targetOrder = orders.find((o) => o.id === orderId);
+    const optimisticOrder = targetOrder ? {
+      ...targetOrder,
+      items: (targetOrder.items || []).map((it: any) =>
+        it.id === itemId ? { ...it, status: nextStatus } : it,
+      ),
+    } : null;
+    if (optimisticOrder) {
+      dispatch(updateOrder(optimisticOrder));
+      if (detail?.id === orderId) {
+        setDetail((d: any) => d ? ({
+          ...d,
+          items: (d.items || []).map((it: any) => it.id === itemId ? { ...it, status: nextStatus } : it),
+        }) : d);
+      }
+      persistSnapshot(orders.map((o) => (o.id === orderId ? optimisticOrder : o)));
+    }
     try {
       const targetOutlet = detail?.outletId || outletId;
-      const { data } = await api.patch(`/outlets/${targetOutlet}/orders/${orderId}/items/${itemId}/status`, { status: nextStatus });
+      const { data } = await api.patch(
+        `/outlets/${targetOutlet}/orders/${orderId}/items/${itemId}/status`,
+        { status: nextStatus, actedAt },
+      );
       if (data.data?.order) {
         const updated = data.data.order;
         dispatch(updateOrder(updated));
@@ -408,7 +507,17 @@ export default function OrdersPage() {
         if (data.data.rolledUp) toast.success(`Order moved to ${data.data.rolledUp}`);
         else toast.success('Item updated');
       }
-    } catch (e: any) { toast.error(e.response?.data?.message || 'Failed'); }
+    } catch (e: any) {
+      const httpStatus = e?.response?.status ?? 0;
+      const isInfraTransient = !e?.response || httpStatus === 502 || httpStatus === 503 || httpStatus === 504;
+      if (isInfraTransient) {
+        toast.success(`Queued — will sync when network is back`, { icon: '📡' });
+      } else if (targetOrder) {
+        dispatch(updateOrder(targetOrder));
+        if (detail?.id === orderId) setDetail(targetOrder);
+        toast.error(e.response?.data?.message || 'Failed');
+      }
+    }
     finally { setPendingItem(null); }
   };
 
@@ -516,7 +625,7 @@ export default function OrdersPage() {
                     <p className="text-[10px] text-indigo-600 truncate">{item.notes}</p>
                   )}
                 </div>
-                {!isReadOnly && !terminal && next && (
+                {!isReadOnly && !terminal && next && (next.status !== 'SERVED' || canMarkServed) && (
                   <button
                     onClick={(e) => { e.stopPropagation(); advanceItem(order.id, item.id, next.status); }}
                     disabled={busy}
@@ -540,7 +649,7 @@ export default function OrdersPage() {
             detail view to avoid accidental clicks. */}
         <div className="px-3 py-2 border-t border-slate-50 flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
-            {!isReadOnly && commonNext && (
+            {!isReadOnly && commonNext && (commonNext.status !== 'SERVED' || canMarkServed) && (
               <button
                 onClick={(e) => { e.stopPropagation(); advanceAll(e as any); }}
                 className="text-[10px] font-bold px-2 py-1 rounded-md bg-gold-500 hover:bg-gold-600 text-charcoal-900"
@@ -870,6 +979,11 @@ export default function OrdersPage() {
                   isParcel: detail.isParcel,
                 });
                 if (!step) return null;
+                // Kitchen tier can advance to anything except SERVED —
+                // the handoff to service staff is intentional, so the
+                // kitchen can't accidentally close out an order the
+                // customer hasn't received yet.
+                if (step.next === 'SERVED' && !canMarkServed) return null;
                 return (
                   <button onClick={() => advance(detail.id, step.next)} disabled={saving} className="btn-primary">
                     {saving && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}

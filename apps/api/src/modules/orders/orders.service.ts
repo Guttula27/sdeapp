@@ -846,12 +846,20 @@ export class OrdersService {
       isParcel: order.isParcel,
     });
 
+    // Offline replays from the admin POS pass actedAt — the client-
+    // captured time when staff actually pressed the button. Use it for
+    // the statusHistory row so reports show real activity time, not
+    // the eventual sync time. Reject future timestamps and obviously
+    // bogus values (>7d in the past) so a misconfigured client can't
+    // backdate to corrupt analytics.
+    const actedAt = this.resolveActedAt(dto.actedAt);
+
     const updated = await this.prisma.order.update({
       where: { id },
       data: {
         status: dto.status,
         statusHistory: {
-          create: { status: dto.status, changedBy: userId, notes: dto.notes },
+          create: { status: dto.status, changedBy: userId, notes: dto.notes, ...(actedAt ? { changedAt: actedAt } : {}) },
         },
       },
       include: {
@@ -875,7 +883,8 @@ export class OrdersService {
       from: order.status,
       to: dto.status,
       notes: dto.notes ?? null,
-    });
+      ...(actedAt ? { actedAt: actedAt.toISOString() } : {}),
+    } as any);
 
     // Service-desk lane routing on the new status:
     //   - self-service: kitchen-done → OUT_FOR_SERVICE → "release" lane.
@@ -1086,7 +1095,7 @@ export class OrdersService {
     }
   }
 
-  async updateItemStatus(orderId: string, orderItemId: string, status: OrderItemStatus, userId?: string) {
+  async updateItemStatus(orderId: string, orderItemId: string, status: OrderItemStatus, userId?: string, actedAtIso?: string) {
     const item = await this.prisma.orderItem.findUnique({
       where: { id: orderItemId },
       include: { order: true, item: true },
@@ -1149,13 +1158,19 @@ export class OrdersService {
 
     if (updated) {
       this.ordersGateway.emitOrderStatusUpdated(updated.outletId, updated);
+      // actedAt only flows into the audit payload — the OrderItem
+      // schema has no per-status timestamp to backdate. Reports that
+      // consume the audit stream get the real action time; the
+      // OrderItem.status mutation itself is current-time as usual.
+      const actedAt = this.resolveActedAt(actedAtIso);
       this.audit.orderItemStatusChanged({
         actorId: userId ?? null,
         orderId: updated.id,
         orderItemId,
         from: item.status,
         to: status,
-      });
+        ...(actedAt ? { actedAt: actedAt.toISOString() } : {}),
+      } as any);
     }
 
     // Fan-out the service-desk / parcel-desk nudge whenever *any* item
@@ -1261,6 +1276,24 @@ export class OrdersService {
     }
 
     return { order: updated, rolledUp };
+  }
+
+  /**
+   * Validates a client-supplied actedAt (offline replay timestamp) and
+   * returns it as a Date — or null if missing/invalid. Rejects future
+   * timestamps and ones more than 7 days in the past so a misconfigured
+   * client clock can't corrupt reporting. Returning null is the signal
+   * to fall back to the server's now() (Prisma default).
+   */
+  private resolveActedAt(iso?: string | null): Date | null {
+    if (!iso) return null;
+    const t = new Date(iso);
+    if (Number.isNaN(t.getTime())) return null;
+    const now = Date.now();
+    const week = 7 * 24 * 60 * 60 * 1000;
+    if (t.getTime() > now + 60_000) return null;   // >1 min in the future
+    if (t.getTime() < now - week) return null;     // older than the offline window we support
+    return t;
   }
 
   private validateItemTransition(from: OrderItemStatus, to: OrderItemStatus) {

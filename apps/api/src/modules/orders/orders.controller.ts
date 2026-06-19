@@ -4,12 +4,13 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { UpdateItemStatusDto } from './dto/update-item-status.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PreferredLanguage } from '../../common/language/preferred-language';
 import { IdempotencyInterceptor } from '../../common/interceptors/idempotency.interceptor';
-import { OrderStatus, OrderItemStatus } from '@prisma/client';
+import { OrderStatus } from '@prisma/client';
 
 @ApiTags('Orders')
 @ApiBearerAuth()
@@ -140,10 +141,10 @@ export class OrdersController {
   updateItemStatus(
     @Param('id') id: string,
     @Param('itemId') itemId: string,
-    @Body('status') status: OrderItemStatus,
+    @Body() dto: UpdateItemStatusDto,
     @CurrentUser('id') userId: string,
   ) {
-    return this.ordersService.updateItemStatus(id, itemId, status, userId);
+    return this.ordersService.updateItemStatus(id, itemId, dto.status, userId, dto.actedAt);
   }
 
   // Order log: enriched status history (stage / time / staff). Gated by
