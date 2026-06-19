@@ -68,7 +68,16 @@ api.interceptors.response.use(
     const isSafeMethod = method === 'get' || method === 'head';
     const isMutating = MUTATING_METHODS.has(method);
     const status = error.response?.status ?? 0;
-    const isNetworkError = !error.response; // no response → can't tell if it landed
+    // A "true" network error has no response at all. But when the API is
+    // sitting behind a reverse proxy (Traefik on Dokploy, Nginx, an LB,
+    // a CDN), a downed upstream surfaces as a 502/503/504 from the
+    // proxy — there's a response, but the request didn't actually reach
+    // the API. Treat both the same way for retry + outbox queueing,
+    // since neither path can have produced server-side side effects.
+    // 500 is not included: that's an application error and should not
+    // be auto-replayed (could be a constraint violation, etc.).
+    const INFRA_TRANSIENT = new Set([502, 503, 504]);
+    const isNetworkError = !error.response || INFRA_TRANSIENT.has(status);
     const tried = config.__retryCount ?? 0;
 
     // ── GET / HEAD: retry both network + server-side transient errors.
@@ -80,11 +89,12 @@ api.interceptors.response.use(
       return api.request(config);
     }
 
-    // ── Mutating methods: retry NETWORK errors only (so we don't replay
-    //    a request that the server has actually processed + rejected).
-    //    Same Idempotency-Key flows through every retry. After all
-    //    retries are exhausted, queue to the outbox unless explicitly
-    //    skipped.
+    // ── Mutating methods: retry "infrastructure transient" errors only
+    //    (raw network failures + 502/503/504 from the proxy). We do NOT
+    //    replay 4xx (legitimate rejection) or 500 (server processed and
+    //    threw); those are surfaced to the caller as-is. Same
+    //    Idempotency-Key flows through every retry. After all retries
+    //    are exhausted, queue to the outbox unless explicitly skipped.
     if (isMutating && isNetworkError && tried < MAX_RETRIES) {
       config.__retryCount = tried + 1;
       config.__isRetry = true;

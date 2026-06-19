@@ -506,8 +506,14 @@ export default function PlaceOrderPage() {
       // and fire the printer if configured. The drain on reconnect
       // (OfflineBanner) will replay the original POST so the server
       // creates the canonical record.
-      const isNetwork = !e?.response;
-      if (isNetwork) {
+      //
+      // 502/503/504 = the reverse proxy (Traefik/Dokploy/Nginx) returned
+      // a "upstream unavailable" response. The API never received the
+      // request, so it's safe to treat as offline + queue. Same outbox
+      // path the interceptor already used.
+      const status = e?.response?.status ?? 0;
+      const isInfraTransient = !e?.response || status === 502 || status === 503 || status === 504;
+      if (isInfraTransient) {
         await placeOfflineOrder(provisional, isTableOrder, body, mode);
         setCart([]);
         try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
