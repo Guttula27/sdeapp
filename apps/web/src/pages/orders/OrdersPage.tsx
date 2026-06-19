@@ -11,6 +11,7 @@ import { useUserRole } from '../../hooks/useUserRole';
 import api from '../../services/api';
 import { isPrinterConnected, isBluetoothSupported, connectPrinter, printCustomerReceipt } from '../../utils/bluetoothPrinter';
 import { buildReceiptPayload } from '../../utils/receiptPayload';
+import { getOpenOrdersSnapshot, setOpenOrdersSnapshot } from '../../utils/idb';
 import ThermalReceipt from '../../components/receipt/ThermalReceipt';
 import { downloadReceiptPdf } from '../../components/receipt/downloadReceiptPdf';
 import Modal from '../../components/common/Modal';
@@ -252,8 +253,31 @@ export default function OrdersPage() {
     return () => window.clearTimeout(t);
   }, [search]);
 
+  // True when the last successful render came from the IDB snapshot —
+  // surfaces a small "stale" banner so staff know what they're looking
+  // at when the API is unreachable.
+  const [snapshotAge, setSnapshotAge] = useState<number | null>(null);
+
   const fetchOrders = useCallback(async () => {
     setLoading(true);
+    // Cache-first for the outlet tier — the only tier staff use offline.
+    // Platform/business tiers are admin-only and not relevant to offline
+    // POS, so they skip the snapshot path.
+    const isOutletTier =
+      tier === 'outlet' ||
+      (tier === 'business' && selectedOutletId && selectedOutletId !== 'ALL');
+    const effectiveOutletId = tier === 'outlet'
+      ? outletId
+      : (tier === 'business' && selectedOutletId !== 'ALL' ? selectedOutletId : null);
+    if (isOutletTier && effectiveOutletId) {
+      const snap = await getOpenOrdersSnapshot(effectiveOutletId);
+      if (snap?.orders?.length) {
+        dispatch(setOrders(snap.orders));
+        setSnapshotAge(snap.cachedAt);
+        setLoading(false);
+      }
+    }
+
     try {
       // Same params object for every tier so the server applies search
       // + sort uniformly. Empty `search` is dropped by the backend.
@@ -263,23 +287,46 @@ export default function OrdersPage() {
         sortBy,
         sortDir,
       };
+      let fetched: any[] | null = null;
       if (tier === 'platform') {
         const { data } = await api.get(`/orders`, { params });
-        dispatch(setOrders(data.data.orders));
+        fetched = data.data.orders;
       } else if (tier === 'business' && businessId) {
         if (selectedOutletId !== 'ALL') {
           const { data } = await api.get(`/outlets/${selectedOutletId}/orders`, { params });
-          dispatch(setOrders(data.data.orders));
+          fetched = data.data.orders;
         } else {
           const { data } = await api.get(`/orders`, { params: { ...params, businessId } });
-          dispatch(setOrders(data.data.orders));
+          fetched = data.data.orders;
         }
       } else {
         const { data } = await api.get(`/outlets/${outletId}/orders`, { params });
-        dispatch(setOrders(data.data.orders));
+        fetched = data.data.orders;
+      }
+      if (fetched) {
+        dispatch(setOrders(fetched));
+        setSnapshotAge(null);
+        // Write-through to IDB so the next offline visit has a recent
+        // snapshot to fall back to. Scoped to outlet-tier reads —
+        // platform/business listings span multiple outlets and would
+        // pollute the per-outlet keyed store.
+        if (isOutletTier && effectiveOutletId) {
+          setOpenOrdersSnapshot({
+            outletId: effectiveOutletId,
+            cachedAt: Date.now(),
+            orders: fetched,
+          }).catch(() => {});
+        }
+      }
+    } catch (e: any) {
+      // Network failure with no usable snapshot → toast the error.
+      // If the snapshot path above already painted, stay silent: the
+      // "stale" banner is the user-visible signal.
+      if (snapshotAge == null) {
+        toast.error(e?.response?.data?.message || 'Could not load orders');
       }
     } finally { setLoading(false); }
-  }, [tier, outletId, businessId, selectedOutletId, debouncedSearch, sortBy, sortDir]);
+  }, [tier, outletId, businessId, selectedOutletId, debouncedSearch, sortBy, sortDir, dispatch, snapshotAge]);
 
   useEffect(() => {
     fetchOrders();
@@ -728,6 +775,22 @@ export default function OrdersPage() {
           )}
         </div>
       </div>
+
+      {/* Stale-snapshot banner. Surfaces only when the last successful
+          render came from the IDB offline cache, not a live API call.
+          Tells staff what they're looking at so they don't act on
+          out-of-date state without realising. */}
+      {snapshotAge && (
+        <div className="mb-3 -mx-1 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-[12px] text-amber-800 flex items-center gap-2 flex-shrink-0">
+          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-200/60">
+            <RefreshCw size={11} className="text-amber-700" />
+          </span>
+          <span className="font-semibold">Offline — showing last-saved orders</span>
+          <span className="text-amber-700/70">
+            cached {Math.max(0, Math.round((Date.now() - snapshotAge) / 60000))} min ago
+          </span>
+        </div>
+      )}
 
       {/* Grid — claims all remaining vertical space via flex-1 + min-h-0.
           Order cards flow top-to-bottom through CSS columns; once a column

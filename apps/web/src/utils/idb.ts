@@ -9,9 +9,12 @@
 // doesn't hard-fail the page.
 
 const DB_NAME = 'paynpik-pos';
-const DB_VERSION = 1;
+// Bumped to 2 to add the open-orders snapshot store used by OrdersPage
+// for offline read fallback + the manual-delivery workflow on top.
+const DB_VERSION = 2;
 const STORE_MENU = 'menu-cache';
 const STORE_OFFLINE_ORDERS = 'offline-orders';
+const STORE_OPEN_ORDERS = 'open-orders';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -28,6 +31,12 @@ function openDb(): Promise<IDBDatabase> {
         const s = db.createObjectStore(STORE_OFFLINE_ORDERS, { keyPath: 'id' });
         s.createIndex('outletId', 'outletId', { unique: false });
         s.createIndex('syncState', 'syncState', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_OPEN_ORDERS)) {
+        // One row per outlet — value carries the last-known list of
+        // open orders along with the fetch timestamp so the offline
+        // view can show a "stale data" hint.
+        db.createObjectStore(STORE_OPEN_ORDERS); // keyed by outletId
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -125,4 +134,29 @@ export async function markOfflineFailed(id: string, error: string) {
   cur.syncState = 'failed';
   cur.syncError = error;
   await saveOfflineOrder(cur);
+}
+
+// ─── Open-orders snapshot (one row per outlet) ────────────────────────
+// Powers OrdersPage's offline fallback: every successful fetch writes
+// through; on network failure the snapshot is dispatched to Redux so
+// staff still see the open tabs and in-flight orders. Stored as the
+// raw server response shape (a flat list of order objects) so the rest
+// of the page can render it without translation.
+export type OpenOrdersSnapshot = {
+  outletId: string;
+  cachedAt: number;
+  orders: any[];
+};
+
+export async function getOpenOrdersSnapshot(outletId: string): Promise<OpenOrdersSnapshot | null> {
+  try {
+    const res = await tx<any>(STORE_OPEN_ORDERS, 'readonly', (s) => s.get(outletId));
+    return res ?? null;
+  } catch { return null; }
+}
+
+export async function setOpenOrdersSnapshot(payload: OpenOrdersSnapshot): Promise<void> {
+  try {
+    await tx<void>(STORE_OPEN_ORDERS, 'readwrite', (s) => s.put(payload, payload.outletId));
+  } catch { /* quota / private mode — best-effort */ }
 }
