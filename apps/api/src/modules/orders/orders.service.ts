@@ -380,6 +380,21 @@ export class OrdersService {
         });
       }
 
+      // Tag the order with the placing cashier's active drawer (if
+      // any). Z reports group orders by cashierShiftId for the
+      // gross-sales numbers; payment-mode revenue comes off the
+      // Payment row (stamped at confirm-time on whoever's drawer
+      // settles the bill). Customer-placed orders (no staff) don't
+      // get tagged — they roll into "house" rather than any cashier.
+      let cashierShiftId: string | null = null;
+      if (resolvedStaffId) {
+        const drawer = await tx.cashierShift.findFirst({
+          where: { outletId, cashierId: resolvedStaffId, status: 'ACTIVE' },
+          select: { id: true },
+        });
+        cashierShiftId = drawer?.id ?? null;
+      }
+
       const created = await tx.order.create({
         data: {
           orderNumber,
@@ -391,6 +406,7 @@ export class OrdersService {
           sectionId: dto.sectionId || null,
           customerId: resolvedCustomerId,
           staffId: resolvedStaffId,
+          cashierShiftId,
           isParcel: dto.isParcel || false,
           isPostpaid: dto.isPostpaid || false,
           notes: dto.notes,

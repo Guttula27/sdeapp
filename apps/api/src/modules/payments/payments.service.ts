@@ -25,7 +25,12 @@ export class PaymentsService {
     private encryption: EncryptionService,
   ) {}
 
-  async initiatePayment(orderId: string, mode: PaymentMode, amount: number) {
+  async initiatePayment(
+    orderId: string,
+    mode: PaymentMode,
+    amount: number,
+    userId?: string,
+  ) {
     const order = await this.prisma.order.findUnique({ where: { id: orderId } });
     if (!order) throw new NotFoundException('Order not found');
     // Truly terminal states — payment makes no sense once the order
@@ -46,8 +51,23 @@ export class PaymentsService {
       throw new BadRequestException('Order has already been paid');
     }
 
+    // Tag the payment with whoever's drawer settles it AT INITIATE time
+    // (cash auto-confirms below; gateway flows confirm via webhook
+    // with no user context, but the initiating cashier's drawer is
+    // who owns the collection). The Z report groups revenue by
+    // Payment.cashierShiftId — NOT Order.cashierShiftId — because a
+    // tab opened in one shift can be billed in another.
+    let cashierShiftId: string | null = null;
+    if (userId) {
+      const drawer = await this.prisma.cashierShift.findFirst({
+        where: { outletId: order.outletId, cashierId: userId, status: 'ACTIVE' },
+        select: { id: true },
+      });
+      cashierShiftId = drawer?.id ?? null;
+    }
+
     const payment = await this.prisma.payment.create({
-      data: { orderId, mode, amount, status: 'PENDING' },
+      data: { orderId, mode, amount, status: 'PENDING', cashierShiftId },
     });
 
     // For cash payments, auto-confirm
@@ -59,16 +79,23 @@ export class PaymentsService {
     return { paymentId: payment.id, amount, mode, orderId };
   }
 
-  async confirmPayment(paymentId: string, gatewayRef: string | null) {
+  async confirmPayment(paymentId: string, gatewayRef: string | null, _userId?: string) {
     const payment = await this.prisma.payment.findUnique({
       where: { id: paymentId },
       include: { order: true },
     });
     if (!payment) throw new NotFoundException('Payment not found');
 
+    // cashierShiftId is intentionally NOT updated here. It's stamped
+    // at initiate-time when the cashier triggers the flow, so the
+    // webhook (which has no user context) doesn't need to know who
+    // owns the drawer.
     const updated = await this.prisma.payment.update({
       where: { id: paymentId },
-      data: { status: 'SUCCESS', gatewayRef: this.encryption.encrypt(gatewayRef) },
+      data: {
+        status: 'SUCCESS',
+        gatewayRef: this.encryption.encrypt(gatewayRef),
+      },
     });
 
     // Order status is driven by the kitchen/service workflow, not by payment.

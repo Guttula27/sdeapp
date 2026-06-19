@@ -102,6 +102,16 @@ enum PaymentMode {
   NET_BANKING
 }
 
+enum OutletShiftStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum CashierShiftStatus {
+  ACTIVE
+  CLOSED
+}
+
 enum SubscriptionStatus {
   TRIAL
   ACTIVE
@@ -212,6 +222,9 @@ model User {
   rewardAccount          CustomerRewardAccount?  @relation("RewardAccount")
   rewardTransactions     RewardTransaction[]     @relation("RewardTransactions")
   orderStatusChanges     OrderStatusHistory[]    @relation("OrderStatusHistoryActor")
+  outletShiftsOpened     OutletShift[]           @relation("OutletShiftOpenedBy")
+  outletShiftsClosed     OutletShift[]           @relation("OutletShiftClosedBy")
+  cashierShifts          CashierShift[]          @relation("CashierShifts")
   preferredUpiApp        String?
   profileImageUrl        String?                 @db.MediumText
   alertRingtone          String?                 @default("chime")
@@ -569,6 +582,7 @@ model Outlet {
   sections               Section[]
   categories             Category[]
   orders                 Order[]
+  outletShifts           OutletShift[]
   tables                 Table[]
   qrCodes                QRCode[]
   kitchenStations        KitchenStation[]
@@ -1176,6 +1190,14 @@ model Order {
   staffId    String?
   staff      User?    @relation("StaffOrders", fields: [staffId], references: [id])
 
+  // Cashier shift this order was opened against. Nullable for legacy
+  // orders + orders placed when no cashier shift was active. Z report
+  // counts gross-sales by this column; revenue (payments) is tracked
+  // separately via Payment.cashierShiftId since an order placed in one
+  // shift can be paid in another (postpaid tabs spanning shift change).
+  cashierShiftId String?
+  cashierShift   CashierShift? @relation(fields: [cashierShiftId], references: [id])
+
   // When non-null, this Order is a child of a ClusterOrder — created as part
   // of a cluster checkout where the customer placed one cart with items from
   // multiple outlets. The parent ClusterOrder holds the unified payment;
@@ -1434,12 +1456,95 @@ model Payment {
   orderId         String
   order           Order         @relation(fields: [orderId], references: [id])
 
+  // Cashier shift this payment was recorded against. Stamped at
+  // payment-confirmation time on the active cashier shift of the
+  // staff confirming the payment. The Z report's cash totals and
+  // payment-mode split read this column — not the Order's shift —
+  // so a tab opened in one shift and billed in the next attributes
+  // revenue to the closing shift correctly.
+  cashierShiftId String?
+  cashierShift   CashierShift? @relation(fields: [cashierShiftId], references: [id])
+
   reviewPayback OrderItemReview?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([cashierShiftId, status])
   @@map("paynpik_payments")
+}
+
+// ─── Cashier shifts / end-of-day Z reports ────────────────
+//
+// An OutletShift is the per-outlet envelope ("today's session"). A
+// new one is opened by an outlet admin (or auto-spawned when a
+// cashier first opens their drawer if no envelope exists). Closing
+// the envelope rolls up totals across every cashier shift inside it.
+//
+// CashierShifts are per-cashier drawers under an OutletShift. Each
+// has its own opening float, declared closing cash, expected cash
+// (derived from CASH payments stamped against it), and variance.
+// Z reports can be generated at either level — the cashier level
+// is what the cashier closes their drawer with; the outlet level is
+// what the manager / accountant reads at end of day.
+model OutletShift {
+  id              String              @id @default(cuid())
+  outletId        String
+  outlet          Outlet              @relation(fields: [outletId], references: [id])
+  openedAt        DateTime            @default(now())
+  closedAt        DateTime?
+  // Note string for the operator opening the shift (e.g. "morning")
+  // and an optional close note (variance reason etc.). Free-text.
+  openNote        String?
+  closeNote       String?
+  openedByUserId  String
+  openedBy        User                @relation("OutletShiftOpenedBy", fields: [openedByUserId], references: [id])
+  closedByUserId  String?
+  closedBy        User?               @relation("OutletShiftClosedBy", fields: [closedByUserId], references: [id])
+  status          OutletShiftStatus   @default(ACTIVE)
+  cashierShifts   CashierShift[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([outletId, status])
+  @@map("paynpik_outlet_shifts")
+}
+
+model CashierShift {
+  id              String              @id @default(cuid())
+  outletShiftId   String
+  outletShift     OutletShift         @relation(fields: [outletShiftId], references: [id])
+  // Denormalised so the most common Z-report queries
+  // (outlet/cashier/date scope) can avoid the join.
+  outletId        String
+  cashierId       String
+  cashier         User                @relation("CashierShifts", fields: [cashierId], references: [id])
+  openedAt        DateTime            @default(now())
+  closedAt        DateTime?
+  // Opening cash float the cashier started with. Required at open
+  // — even if zero, the operator declares it explicitly.
+  openingFloat    Decimal             @default(0) @db.Decimal(10, 2)
+  // Set at close: what the cashier physically counted in the drawer.
+  declaredCash    Decimal?            @db.Decimal(10, 2)
+  // Set at close: opening + cash payments - cash refunds across the
+  // shift. The cashier's drawer should hold exactly this much; any
+  // difference between declaredCash and expectedCash is the variance.
+  expectedCash    Decimal?            @db.Decimal(10, 2)
+  variance        Decimal?            @db.Decimal(10, 2)
+  status          CashierShiftStatus  @default(ACTIVE)
+  openNote        String?
+  closeNote       String?
+
+  orders          Order[]
+  payments        Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([cashierId, status])
+  @@index([outletShiftId])
+  @@map("paynpik_cashier_shifts")
 }
 
 model Dispute {
