@@ -4,7 +4,7 @@ import { Navigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import {
-  CloudOff, CheckCircle2, RefreshCw, Trash2, Printer as PrinterIcon, AlertCircle, Clock, Utensils,
+  CloudOff, CheckCircle2, RefreshCw, Trash2, Printer as PrinterIcon, AlertCircle, Clock, Receipt,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import { useUserRole } from '../../hooks/useUserRole';
@@ -107,22 +107,49 @@ export default function OfflineOrdersPage() {
     }
   };
 
-  // Stamp the local offline order as Served. The next outbox drain
-  // chains a force-status PATCH (status=SERVED, actedAt=this timestamp,
-  // force=true) right after the placement POST succeeds, so the synced
-  // record on the server lands in SERVED at the *real* service time —
-  // important for reports that bucket revenue by hour.
-  const markServed = async (row: OfflineOrder) => {
+  // Bill = "this order is done". One click does three things:
+  //   1. Print the customer receipt — the physical bill handed over.
+  //   2. Stamp the local record with the billing timestamp (servedAt).
+  //   3. Trigger an outbox drain so the placement POST + the chained
+  //      force-status PATCH (CREATED → SERVED with actedAt = bill
+  //      time) flush as soon as the API is reachable.
+  // There's intentionally no separate "Mark Served" step — billing
+  // IS the served signal. The chained sync logic that lives in
+  // services/api.ts replayEntry handles the rest when connectivity
+  // returns; if we're already online, the immediate drain triggers it
+  // here.
+  const bill = async (row: OfflineOrder) => {
     if (!window.confirm(
-      `Mark ${row.id} as Served? When this device is back online, the order will sync to the server with status SERVED and the timestamp captured now.`,
+      `Bill ${row.id}? This prints the customer receipt and, when the network is back, syncs the order as SERVED at the current time.`,
     )) return;
-    const actedAt = new Date().toISOString();
+    const billedAt = new Date().toISOString();
     try {
-      await markOfflineServed(row.id, actedAt);
-      toast.success('Marked Served — will sync with this timestamp');
+      // 1. Print receipt — the physical bill that goes to the customer.
+      //    Best-effort: print failure shouldn't block the local stamping
+      //    of "we billed this", since staff can reprint from this page.
+      if (isBluetoothSupported()) {
+        const printerId = row.snapshot?.outlet?.receiptPrinterId ?? null;
+        if (printerId) {
+          try {
+            if (!isPrinterConnected(printerId)) await connectPrinter(printerId);
+            await printCustomerReceipt(printerId, buildReceiptPayload(row.snapshot));
+          } catch (printErr: any) {
+            toast.error(`Receipt print failed: ${printErr?.message || printErr}`);
+          }
+        }
+      }
+      // 2. Stamp servedAt on the local record. The replayEntry helper
+      //    in services/api.ts reads this and chains the status PATCH
+      //    after the placement POST succeeds.
+      await markOfflineServed(row.id, billedAt);
+      toast.success('Billed — order will sync as SERVED when the network is back');
       await refresh();
+      // 3. Fire a drain attempt now. If the API happens to be reachable
+      //    the order syncs immediately and the row flips to "Synced"
+      //    without staff waiting for the next auto-drain tick.
+      void drain(replayEntry).then(() => refresh()).catch(() => { /* best-effort */ });
     } catch (e: any) {
-      toast.error(e?.message || 'Could not mark as Served');
+      toast.error(e?.message || 'Could not bill this order');
     }
   };
 
@@ -230,9 +257,9 @@ export default function OfflineOrdersPage() {
                     {row.servedAt && (
                       <span
                         className="ml-1 inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 align-middle"
-                        title={`Marked Served locally at ${new Date(row.servedAt).toLocaleString('en-IN')}`}
+                        title={`Billed locally at ${new Date(row.servedAt).toLocaleString('en-IN')}`}
                       >
-                        <Utensils size={9} /> SERVED
+                        <Receipt size={9} /> BILLED
                       </span>
                     )}
                   </td>
@@ -245,17 +272,20 @@ export default function OfflineOrdersPage() {
                       >
                         <PrinterIcon size={12} /> Reprint
                       </button>
-                      {/* Mark Served — visible only while the row is
-                          still pending sync AND hasn't already been
-                          stamped served. Once synced the order shows up
-                          on OrdersPage and is managed there normally. */}
+                      {/* Bill — visible only while the row is still
+                          pending sync AND hasn't already been billed.
+                          Billing prints the customer receipt and
+                          stamps the local record so the chained sync
+                          lands the server order in SERVED at the bill
+                          time. Service staff never has a separate
+                          "Mark Served" step — billing IS that signal. */}
                       {row.syncState === 'pending' && !row.servedAt && (
                         <button
-                          onClick={() => markServed(row)}
+                          onClick={() => bill(row)}
                           className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg text-emerald-700 hover:bg-emerald-50 transition-colors"
-                          title="Record that the customer was served — will sync with this timestamp"
+                          title="Print the customer receipt and sync as SERVED"
                         >
-                          <Utensils size={12} /> Mark Served
+                          <Receipt size={12} /> Bill
                         </button>
                       )}
                       <button
