@@ -33,6 +33,29 @@ interface CartItem {
   cartLineId: string;
 }
 
+// Format a nextOpen hint (server-stamped { dayOfWeek 1..7, minute 0..1439 })
+// into a short label like "9:00 AM" (today), "Tomorrow 9:00 AM", or
+// "Mon 9:00 AM" (further out). Used to populate the "Available from …"
+// badge on items / categories / subs whose schedule has them blocked.
+const DAY_LABELS = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+function formatNextOpen(
+  next: { dayOfWeek: number; minute: number } | null | undefined,
+  fallback = 'soon',
+): string {
+  if (!next) return fallback;
+  const h = Math.floor(next.minute / 60);
+  const m = next.minute % 60;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  const time = `${hour12}:${m.toString().padStart(2, '0')} ${period}`;
+  const now = new Date();
+  const todayDow = now.getDay() === 0 ? 7 : now.getDay(); // ISO Mon=1..Sun=7
+  if (next.dayOfWeek === todayDow) return time;
+  const tomorrow = (todayDow % 7) + 1;
+  if (next.dayOfWeek === tomorrow) return `Tomorrow ${time}`;
+  return `${DAY_LABELS[next.dayOfWeek]} ${time}`;
+}
+
 export default function OrderPage() {
   const [params, setParams] = useSearchParams();
   const navigate  = useNavigate();
@@ -86,6 +109,42 @@ export default function OrderPage() {
   // the localStorage cache rather than a fresh network fetch.
   const [menuFromCache, setMenuFromCache] = useState(false);
   const [menuCachedAt, setMenuCachedAt] = useState<number | null>(null);
+
+  /**
+   * Opens the detail/picker modal. The list response is slim — toppings,
+   * bundleChildren, gallery images, and pricing-override rows are stripped
+   * so the first paint is small. This wrapper shows the modal immediately
+   * with the slim data (basic fields render fine) and fans out a fetch for
+   * the full item in parallel. When the fetch lands, both the modal item
+   * and the in-memory menu tree are patched so a re-open is instant.
+   *
+   * Gracefully degrades on fetch failure: the modal still shows what it
+   * has; the user can close without seeing toppings if the network is down.
+   */
+  const openDetail = async (item: any) => {
+    setDetailItem(item);
+    // Already hydrated (e.g. user re-opened the same item) → skip.
+    if (item.itemToppings !== undefined && item.bundleChildren !== undefined) return;
+    try {
+      const { data } = await api.get(`/outlets/${outletId}/menu/items/${item.id}`, {
+        params: tableId ? { tableId } : undefined,
+      });
+      const full = data?.data;
+      if (!full) return;
+      setDetailItem((curr: any) => (curr && curr.id === full.id ? full : curr));
+      setMenu((prev: any[]) =>
+        prev.map((cat) => ({
+          ...cat,
+          subcategories: (cat.subcategories || []).map((s: any) => ({
+            ...s,
+            items: (s.items || []).map((i: any) => (i.id === full.id ? { ...i, ...full } : i)),
+          })),
+        })),
+      );
+    } catch {
+      /* swallow — modal already showed with slim data */
+    }
+  };
 
   // Optimistic favorite toggle on the menu list
   const toggleFavorite = async (item: any) => {
@@ -143,9 +202,16 @@ export default function OrderPage() {
     // Menu fetch goes through cachedGet so a network blip can fall back
     // to the last successful read. The other two fetches (open-status,
     // menus list) are direct since they're cheap and degrade gracefully.
-    const menuKey = `outlet-menu:${outletId}:${tableId || ''}`;
+    // slim=true asks the server for a trimmed list payload (no toppings/
+    // bundleChildren/gallery/pricing-override rows). The detail/picker
+    // modal lazy-loads the full item from /menu/items/:itemId on open.
+    // The `-slim` suffix on the cache key keeps any legacy non-slim
+    // localStorage entries from being served as slim-shape after rollout.
+    const menuKey = `outlet-menu-slim:${outletId}:${tableId || ''}`;
     Promise.all([
-      cachedGet<any[]>(menuKey, `/outlets/${outletId}/menu`, { params: tableId ? { tableId } : undefined }),
+      cachedGet<any[]>(menuKey, `/outlets/${outletId}/menu`, {
+        params: { slim: 'true', ...(tableId ? { tableId } : {}) },
+      }),
       api.get(`/outlets/${outletId}/open-status`).catch(() => null),
       api.get(`/outlets/${outletId}/menus`, { params: tableId ? { tableId } : {} }).catch(() => null),
       api.get(`/outlets/${outletId}/offers/active`).catch(() => null),
@@ -223,10 +289,10 @@ export default function OrderPage() {
   useRefreshOnFocus(async () => {
     if (!outletId) return;
     try {
-      const menuKey = `outlet-menu:${outletId}:${tableId || ''}`;
+      const menuKey = `outlet-menu-slim:${outletId}:${tableId || ''}`;
       const [result, statusRes] = await Promise.all([
         cachedGet<any[]>(menuKey, `/outlets/${outletId}/menu`, {
-          params: tableId ? { tableId } : undefined,
+          params: { slim: 'true', ...(tableId ? { tableId } : {}) },
         }),
         // Open-status must NOT be cached — if the outlet opened at 9
         // and the customer returns at 9:35, the stale "closed" from
@@ -285,7 +351,7 @@ export default function OrderPage() {
       for (const sub of cat.subcategories || []) {
         const found = (sub.items || []).find((i: any) => i.id === deeplinkItemId);
         if (found) {
-          setDetailItem(found);
+          void openDetail(found);
           const next = new URLSearchParams(params);
           next.delete('item');
           setParams(next, { replace: true });
@@ -743,14 +809,24 @@ export default function OrderPage() {
                 return <p className="text-sm text-slate-400 italic text-center py-12">No specials right now</p>;
               }
               const outletClosed = openStatus && !openStatus.isOpen;
-              return specialItems.map((item: any) => (
+              return specialItems.map((item: any) => {
+                const outOfSchedule = item.inSchedule === false;
+                const rowDisabled = outletClosed || !item.isAvailable || outOfSchedule;
+                const rowReason = outletClosed
+                  ? 'Outlet closed'
+                  : !item.isAvailable
+                    ? 'Currently not available'
+                    : outOfSchedule
+                      ? `Available ${formatNextOpen(item.nextOpen, 'later')}`
+                      : null;
+                return (
                 <MenuItemRow
                   key={item.id}
                   item={item}
                   qty={cart.filter(c => c.itemId === item.id).reduce((s, l) => s + l.quantity, 0)}
-                  disabled={outletClosed || !item.isAvailable}
-                  disabledReason={outletClosed ? 'Outlet closed' : !item.isAvailable ? 'Currently not available' : null}
-                  onOpen={() => setDetailItem(item)}
+                  disabled={rowDisabled}
+                  disabledReason={rowReason}
+                  onOpen={() => void openDetail(item)}
                   onQuickAdd={(e) => {
                     e.stopPropagation();
                     // Open the detail modal whenever the item has anything
@@ -758,11 +834,13 @@ export default function OrderPage() {
                     // bundle. Without the toppings clause, the +Add button
                     // silently dropped toppings on no-variant items, leaving
                     // every add stacking into a single un-customised line.
+                    // Slim list payload exposes itemToppingsCount instead of
+                    // the full itemToppings array.
                     const needsPicker = item.variants?.length
-                      || item.itemToppings?.length
+                      || (item.itemToppingsCount ?? 0) > 0
                       || (item.isBundle && Number(item.maxBundleSelections) > 0);
                     if (needsPicker) {
-                      setDetailItem(item);
+                      void openDetail(item);
                     } else {
                       addToCart(item);
                       toast.success(`Added ${item.name}`);
@@ -770,7 +848,8 @@ export default function OrderPage() {
                   }}
                   onToggleFavorite={(e) => { e.stopPropagation(); toggleFavorite(item); }}
                 />
-              ));
+                );
+              });
             })()}
           </main>
         ) : (
@@ -834,20 +913,30 @@ export default function OrderPage() {
               );
             }
             const outletClosed = openStatus && !openStatus.isOpen;
-            return items.map((item: any) => (
+            return items.map((item: any) => {
+              const outOfSchedule = item.inSchedule === false;
+              const rowDisabled = outletClosed || !item.isAvailable || outOfSchedule;
+              const rowReason = outletClosed
+                ? 'Outlet closed'
+                : !item.isAvailable
+                  ? 'Currently not available'
+                  : outOfSchedule
+                    ? `Available ${formatNextOpen(item.nextOpen, 'later')}`
+                    : null;
+              return (
               <MenuItemRow
                 key={item.id}
                 item={item}
                 qty={cart.filter(c => c.itemId === item.id).reduce((s, l) => s + l.quantity, 0)}
-                disabled={outletClosed || !item.isAvailable}
-                disabledReason={outletClosed ? 'Outlet closed' : !item.isAvailable ? 'Currently not available' : null}
-                onOpen={() => setDetailItem(item)}
+                disabled={rowDisabled}
+                disabledReason={rowReason}
+                onOpen={() => void openDetail(item)}
                 onQuickAdd={(e) => {
                   e.stopPropagation();
                   const needsPicker = item.variants?.length
                     || (item.isBundle && Number(item.maxBundleSelections) > 0);
                   if (needsPicker) {
-                    setDetailItem(item);
+                    void openDetail(item);
                   } else {
                     addToCart(item);
                     toast.success(`Added ${item.name}`);
@@ -855,7 +944,8 @@ export default function OrderPage() {
                 }}
                 onToggleFavorite={(e) => { e.stopPropagation(); toggleFavorite(item); }}
               />
-            ));
+              );
+            });
           })()}
         </main>
         </>
@@ -1157,7 +1247,7 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
                 <span className="text-slate-400 font-normal">({item.ratingCount})</span>
               </span>
             )}
-            {item.itemToppings?.length > 0 && <span className="text-[10px] text-indigo-600 font-semibold">+ toppings</span>}
+            {(item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 && <span className="text-[10px] text-indigo-600 font-semibold">+ toppings</span>}
             {item.preparationTime && <span className="text-[10px] text-slate-400 flex items-center gap-0.5"><Clock size={9} /> {item.preparationTime}m</span>}
           </div>
         </div>

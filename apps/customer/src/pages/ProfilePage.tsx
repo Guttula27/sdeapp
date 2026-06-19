@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 import api from '../services/api';
-import { playRingtone, isVibrateEnabled, setVibrateEnabled, vibrationSupported, isIOS } from '../utils/ringtones';
+import { playRingtone, isVibrateEnabled, setVibrateEnabled, vibrationSupported, isIOS, fireVibration } from '../utils/ringtones';
 import { invalidateAllCache } from '../utils/cachedGet';
 
 const UPI_APPS = [
@@ -239,8 +239,11 @@ export default function ProfilePage() {
     }
     try {
       // A noticeable pattern: 200ms on, 100ms off, 200ms on.
-      const ok = navigator.vibrate([200, 100, 200]);
-      if (ok === false) {
+      // fireVibration routes through Capacitor Haptics on the APK
+      // (bypasses the WebView's user-activation gate) and falls
+      // back to navigator.vibrate in browsers.
+      const ok = fireVibration([200, 100, 200]);
+      if (!ok) {
         toast.error('Vibration was blocked — check OS sound/vibration settings');
       } else {
         toast.success('Buzz! Did you feel it?');

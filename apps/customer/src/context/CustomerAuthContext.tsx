@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import { setupPushNotifications, teardownPushNotifications } from '../utils/pushSetup';
 
 interface CustomerUser {
   id: string;
@@ -38,11 +39,25 @@ export function CustomerAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    // Drop the FCM / Web Push subscription on the way out so the next
+    // user signing in on the same device doesn't receive alerts
+    // intended for this account.
+    void teardownPushNotifications();
     localStorage.removeItem('customer_user');
     localStorage.removeItem('customer_token');
     setUser(null);
     setToken(null);
   }, []);
+
+  // Register the device's push subscription on sign-in. Fire-and-
+  // forget — failure here is non-fatal (the in-app socket alerts +
+  // 45 s polling fallback from CustomerAlertsContext still cover
+  // foreground / quickly-backgrounded cases). Only runs once per
+  // (userId, deviceToken) — the helper de-dupes internally.
+  useEffect(() => {
+    if (!user?.id || !token) return;
+    void setupPushNotifications();
+  }, [user?.id, token]);
 
   return (
     <CustomerAuthContext.Provider value={{ user, token, login, logout, isLoggedIn: !!user }}>

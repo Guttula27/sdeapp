@@ -1,7 +1,17 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
+import { RedisService } from '../../config/redis/redis.service';
 import { TranslationsService } from '../translations/translations.service';
 import { DiscountsService } from '../discounts/discounts.service';
+import {
+  evaluateCascade,
+  nowInOutletTz,
+  TimingSlot,
+} from '../../common/timing/timing-slots';
+
+// 10 minutes — safety net for any mutation path we forgot to hook.
+// Direct invalidation via invalidateOutlet() is the primary mechanism.
+const MENU_TREE_TTL_SECONDS = 600;
 
 @Injectable()
 export class MenuService {
@@ -9,7 +19,86 @@ export class MenuService {
     private prisma: PrismaService,
     private translations: TranslationsService,
     private discounts: DiscountsService,
+    private redis: RedisService,
   ) {}
+
+  // ─── Cache helpers ────────────────────────────────────────
+  // Version-counter invalidation: each cache key embeds the current
+  // value of menu:ver:{outletId}. invalidateOutlet() simply INCRs the
+  // counter; stale keys orphan and expire by TTL. No SCAN, no key
+  // registry — one extra GET per read in exchange for atomic, race-free
+  // invalidation that scales with mutation volume not key count.
+  private menuVersionKey(outletId: string) {
+    return `menu:ver:${outletId}`;
+  }
+  private menuTreeKey(outletId: string, version: number, lang: string, includeHidden: boolean) {
+    const langPart = lang || 'en';
+    const audience = includeHidden ? 'all' : 'public';
+    return `menu:tree:v1:${outletId}:${version}:${langPart}:${audience}`;
+  }
+
+  /**
+   * Bumps the outlet's menu version counter so every cached variant
+   * (each lang × public|all) is effectively invalidated on the next
+   * read. Safe to call multiple times — INCR is atomic and cheap.
+   * Called from every menu-mutating path below. External modules that
+   * mutate menu-adjacent data (toppings, customer-tag prices,
+   * table-type prices, business-level menu timing slots) should call
+   * this too — exposed publicly for that reason.
+   */
+  async invalidateOutlet(outletId: string): Promise<void> {
+    if (!outletId) return;
+    await this.redis.incr(this.menuVersionKey(outletId));
+  }
+
+  // Outlet-id resolvers — the cache busting needs an outletId but most
+  // menu-mutation entry points only have the leaf entity's id. Each
+  // resolver is one indexed lookup. Returns null when the row belongs
+  // to a business template (no outletId) — those don't affect any
+  // outlet's cached tree until imported.
+  private async outletIdFromCategoryId(id: string): Promise<string | null> {
+    const c = await this.prisma.category.findUnique({
+      where: { id },
+      select: { outletId: true },
+    });
+    return c?.outletId ?? null;
+  }
+  private async outletIdFromSubcategoryId(id: string): Promise<string | null> {
+    const s = await this.prisma.subcategory.findUnique({
+      where: { id },
+      select: { category: { select: { outletId: true } } },
+    });
+    return s?.category?.outletId ?? null;
+  }
+  private async outletIdFromItemId(id: string): Promise<string | null> {
+    const i = await this.prisma.item.findUnique({
+      where: { id },
+      select: { subcategory: { select: { category: { select: { outletId: true } } } } },
+    });
+    return i?.subcategory?.category?.outletId ?? null;
+  }
+  private async outletIdFromVariantId(id: string): Promise<string | null> {
+    const v = await this.prisma.variant.findUnique({
+      where: { id },
+      select: { item: { select: { subcategory: { select: { category: { select: { outletId: true } } } } } } },
+    });
+    return v?.item?.subcategory?.category?.outletId ?? null;
+  }
+  private async outletIdFromItemImageId(id: string): Promise<string | null> {
+    const img = await this.prisma.itemImage.findUnique({
+      where: { id },
+      select: { item: { select: { subcategory: { select: { category: { select: { outletId: true } } } } } } },
+    });
+    return img?.item?.subcategory?.category?.outletId ?? null;
+  }
+  // Convenience wrapper — looks up the outletId for any resolver
+  // shape, then invalidates. Null outletId (= template entity) is a
+  // no-op. Callers that already have the outletId should just call
+  // invalidateOutlet directly.
+  private async invalidateForCategory(id: string)    { const o = await this.outletIdFromCategoryId(id);    if (o) await this.invalidateOutlet(o); }
+  private async invalidateForSubcategory(id: string) { const o = await this.outletIdFromSubcategoryId(id); if (o) await this.invalidateOutlet(o); }
+  private async invalidateForItem(id: string)        { const o = await this.outletIdFromItemId(id);        if (o) await this.invalidateOutlet(o); }
+  private async invalidateForVariant(id: string)     { const o = await this.outletIdFromVariantId(id);     if (o) await this.invalidateOutlet(o); }
 
   // Translate every menu-bearing entity in a single getMenu response.
   private async hydrateMenu(categories: any[], lang: string | null | undefined) {
@@ -35,6 +124,14 @@ export class MenuService {
 
   // ─── Categories ──────────────────────────────────────────
 
+  /**
+   * Top-level read used by the customer app and staff PlaceOrderPage.
+   * Two-phase by design so the heavy DB+translation work can be cached
+   * independently of per-request projection (viewer, table, time).
+   *
+   *   loadMenuTree(outletId, lang, includeHidden)   ← cacheable
+   *   projectMenu(tree, viewerUserId, tableId)      ← per request
+   */
   async getMenu(
     outletId: string,
     viewerUserId?: string,
@@ -43,96 +140,147 @@ export class MenuService {
     // When true, include items where isDisplayed=false. Admin tools (menu
     // editor, bundle picker) pass this so they can see/manage hidden items
     // — e.g. a "mini dosa" that's only ever sold as part of a combo.
-    opts?: { includeHidden?: boolean },
+    // When `slim` is true, the per-item heavy fields are stripped or
+    // replaced with counts so the customer app can lazy-load detail
+    // via getItemDetail.
+    opts?: { includeHidden?: boolean; slim?: boolean },
   ) {
-    // Resolve which menus are visible to this caller right now. This is the
-    // single source of truth for menu visibility — both the customer app and
-    // staff PlaceOrderPage hit this endpoint, so filtering here covers both.
-    //   • Outlet.multipleMenusEnabled = false → only the default menu's
-    //     categories are returned, regardless of any other menus that exist.
-    //   • Outlet.multipleMenusEnabled = true  → include menus where the
-    //     OutletMenu link has isEnabled=true (default menu always counts),
-    //     minus any menus the table's section has disabled.
-    const outletMeta = await this.prisma.outlet.findUnique({
-      where: { id: outletId },
-      select: { multipleMenusEnabled: true, businessId: true },
-    });
-    let allowedMenuIds: string[] = [];
-    if (outletMeta) {
-      const defaultMenu = await this.prisma.menu.findFirst({
-        where: { businessId: outletMeta.businessId, isDefault: true },
-        select: { id: true },
-      });
-      if (!outletMeta.multipleMenusEnabled) {
-        allowedMenuIds = defaultMenu ? [defaultMenu.id] : [];
-      } else {
-        const links = await this.prisma.outletMenu.findMany({
-          where: { outletId, isEnabled: true },
-          select: { menuId: true },
-        });
-        const enabled = new Set<string>(links.map((l) => l.menuId));
-        if (defaultMenu) enabled.add(defaultMenu.id);
-        // Table-type-level disables (legacy / "Patio table" style grouping)
-        // AND section-level disables (physical area: "VIP room", "Bar"
-        // etc.). Both apply when a table QR is scanned — section wins
-        // when both reference the same menu (more specific to the
-        // physical location the customer is sitting in).
-        if (tableId) {
-          const table = await this.prisma.table.findUnique({
-            where: { id: tableId },
-            select: { tableTypeId: true, sectionId: true, outletId: true },
-          });
-          if (table && table.outletId === outletId) {
-            if (table.tableTypeId) {
-              const sectionDisabled = await this.prisma.tableTypeMenu.findMany({
-                where: { tableTypeId: table.tableTypeId, isEnabled: false },
-                select: { menuId: true },
-              });
-              for (const s of sectionDisabled) {
-                if (defaultMenu && s.menuId === defaultMenu.id) continue;
-                enabled.delete(s.menuId);
-              }
-            }
-            if (table.sectionId) {
-              const sectionDisables = await this.prisma.menuSectionExclusion.findMany({
-                where: { sectionId: table.sectionId },
-                select: { menuId: true },
-              });
-              for (const s of sectionDisables) {
-                // The default menu is the floor — never disabled, even
-                // if an admin accidentally adds an exclusion row for it.
-                if (defaultMenu && s.menuId === defaultMenu.id) continue;
-                enabled.delete(s.menuId);
-              }
-            }
-          }
-        }
-        allowedMenuIds = Array.from(enabled);
+    const tree = await this.loadMenuTree(outletId, lang, opts?.includeHidden);
+    const projected = await this.projectMenu(tree, { outletId, viewerUserId, tableId, includeHidden: opts?.includeHidden });
+    return opts?.slim ? this.slimMenu(projected) : projected;
+  }
+
+  /**
+   * Lazy-load entry point for the customer detail/picker modal. Returns
+   * the single fully-decorated item (toppings + their options,
+   * bundleChildren, gallery images, pricing-override rows). Reuses
+   * loadMenuTree's Redis cache so this is effectively an in-memory
+   * lookup once the tree is warm. Returns null if the item doesn't
+   * belong to this outlet.
+   */
+  async getItemDetail(
+    outletId: string,
+    itemId: string,
+    viewerUserId?: string,
+    tableId?: string,
+    lang?: string | null,
+  ) {
+    const tree = await this.loadMenuTree(outletId, lang, false);
+    const projected = await this.projectMenu(tree, { outletId, viewerUserId, tableId, includeHidden: false });
+    for (const cat of projected) {
+      for (const sub of cat.subcategories) {
+        const hit = sub.items.find((it: any) => it.id === itemId);
+        if (hit) return hit;
       }
     }
+    throw new NotFoundException('Item not found on this outlet menu');
+  }
+
+  // Trim the projected menu down to what a list-view card actually
+  // renders. The detail/picker modal triggers a separate request
+  // (getItemDetail) when the customer taps an item, which re-hydrates
+  // the stripped fields. Keep all decorated fields (effectivePrice,
+  // discountInfo, isFavorite, ratings, schedule flags) — those are what
+  // the card needs and they're already computed.
+  private slimMenu(projected: any[]): any[] {
+    return projected.map((cat: any) => ({
+      ...cat,
+      subcategories: cat.subcategories.map((sub: any) => ({
+        ...sub,
+        items: sub.items.map((item: any) => {
+          // Replace the full itemToppings array with a scalar count
+          // — the card uses .length to gate a "+ toppings" badge and
+          // to decide whether tapping opens the picker.
+          const itemToppingsCount = Array.isArray(item.itemToppings) ? item.itemToppings.length : 0;
+          const bundleChildrenCount = Array.isArray(item.bundleChildren) ? item.bundleChildren.length : 0;
+          // Strip the heavy fields. Pricing-override resolution is
+          // already baked into effectivePrice/appliedTagId/etc, so
+          // the raw rows aren't needed in the list view.
+          const {
+            itemToppings: _it,
+            bundleChildren: _bc,
+            customerTagPrices: _ctp,
+            tableTypePrices: _ttp,
+            images: _imgs,
+            options: _opts,
+            ...rest
+          } = item;
+          void _it; void _bc; void _ctp; void _ttp; void _imgs; void _opts;
+          return {
+            ...rest,
+            itemToppingsCount,
+            bundleChildrenCount,
+          };
+        }),
+      })),
+    }));
+  }
+
+  /**
+   * Heavy DB load: outlet meta + every active category in the outlet with
+   * nested subs, items, variants, toppings, images, timing slots, and all
+   * pricing-override rows so the projection can pick. Returns translated
+   * names/descriptions per `lang`.
+   *
+   * Intentionally outlet-only — no tableId, viewer, time-of-day. Wrapped
+   * by a Redis cache (key includes the outlet's menu-version counter)
+   * with a 10-min TTL safety net. Cache misses, parse errors, or a
+   * downed Redis all fall through to the live DB query transparently.
+   */
+  async loadMenuTree(
+    outletId: string,
+    lang?: string | null,
+    includeHidden?: boolean,
+  ): Promise<{ categories: any[] }> {
+    const version = await this.redis.getCounter(this.menuVersionKey(outletId));
+    const cacheKey = this.menuTreeKey(outletId, version, lang || 'en', !!includeHidden);
+
+    const cached = await this.redis.getJSON<{ categories: any[] }>(cacheKey);
+    if (cached) return cached;
+
+    const tree = await this.loadMenuTreeFromDb(outletId, lang, includeHidden);
+    // Fire-and-forget write — we already have the freshly-loaded tree
+    // to return; a cache write failure shouldn't slow down the response.
+    void this.redis.setJSON(cacheKey, tree, MENU_TREE_TTL_SECONDS);
+    return tree;
+  }
+
+  private async loadMenuTreeFromDb(
+    outletId: string,
+    lang?: string | null,
+    includeHidden?: boolean,
+  ): Promise<{ categories: any[] }> {
     const categories = await this.prisma.category.findMany({
-      where: {
-        outletId,
-        isActive: true,
-        // Only include categories whose menu is currently visible. Legacy
-        // categories with no menuId fall back to the default menu.
-        OR: [
-          { menuId: { in: allowedMenuIds } },
-          ...(outletMeta && !outletMeta.multipleMenusEnabled
-            ? [{ menuId: null }] // single-menu mode shows unassigned too
-            : []),
-        ],
-      },
+      where: { outletId, isActive: true },
       orderBy: { displayOrder: 'asc' },
       include: {
+        // Per-day availability windows. Absent rows = no constraint at
+        // this level; cascade evaluation in projection combines
+        // outlet → menu → category → subcategory → item to set
+        // `inSchedule` per node.
+        timingSlots: true,
+        // Menu-level timing slots come along so projection can resolve
+        // the outlet-override variant (OutletMenuTimingSlot) when present
+        // and fall back to MenuTimingSlot otherwise.
+        menu: {
+          include: {
+            timingSlots: true,
+            outletLinks: {
+              where: { outletId },
+              include: { timingSlots: true },
+            },
+          },
+        },
         subcategories: {
           where: { isActive: true },
           orderBy: { displayOrder: 'asc' },
           include: {
+            timingSlots: true,
             items: {
-              ...(opts?.includeHidden ? {} : { where: { isDisplayed: true } }),
+              ...(includeHidden ? {} : { where: { isDisplayed: true } }),
               orderBy: { displayOrder: 'asc' },
               include: {
+                timingSlots: true,
                 variants: true,
                 options: true,
                 tags: true,
@@ -158,6 +306,100 @@ export class MenuService {
           },
         },
       },
+    });
+
+    await this.hydrateMenu(categories, lang);
+    return { categories };
+  }
+
+  /**
+   * Per-request decoration layer. Inputs that change per request live
+   * here and never enter the cached tree:
+   *   • viewer's tag and favorites
+   *   • table's table-type (pricing) and section (menu exclusions)
+   *   • current time (schedule cascade)
+   *   • active auto-discounts
+   *   • rolling 30-day popular set + per-item rating aggregates
+   *
+   * Also applies the outlet's menu-visibility filter (OutletMenu enabled
+   * links + section/table-type exclusions) — kept out of the cache so
+   * menu toggles and table layout changes never invalidate.
+   */
+  private async projectMenu(
+    tree: { categories: any[] },
+    ctx: { outletId: string; viewerUserId?: string; tableId?: string; includeHidden?: boolean },
+  ) {
+    const { outletId, viewerUserId, tableId } = ctx;
+    const skipSchedule = !!ctx.includeHidden;
+
+    // ── Outlet-menu visibility resolution (out of cache so toggles
+    // don't invalidate). Mirrors the original gating:
+    //   • multipleMenusEnabled = false → only default menu (+ legacy
+    //     unassigned categories with menuId = null)
+    //   • multipleMenusEnabled = true  → enabled OutletMenu links,
+    //     minus table-driven exclusions; default menu always counts.
+    const outletMeta = await this.prisma.outlet.findUnique({
+      where: { id: outletId },
+      select: { multipleMenusEnabled: true, businessId: true },
+    });
+    let allowedMenuIds = new Set<string>();
+    let allowNullMenu = false; // single-menu mode also shows unassigned categories
+    let defaultMenuId: string | null = null;
+    if (outletMeta) {
+      const defaultMenu = await this.prisma.menu.findFirst({
+        where: { businessId: outletMeta.businessId, isDefault: true },
+        select: { id: true },
+      });
+      defaultMenuId = defaultMenu?.id ?? null;
+      if (!outletMeta.multipleMenusEnabled) {
+        if (defaultMenuId) allowedMenuIds.add(defaultMenuId);
+        allowNullMenu = true;
+      } else {
+        const links = await this.prisma.outletMenu.findMany({
+          where: { outletId, isEnabled: true },
+          select: { menuId: true },
+        });
+        for (const l of links) allowedMenuIds.add(l.menuId);
+        if (defaultMenuId) allowedMenuIds.add(defaultMenuId);
+        // Table-type-level disables (legacy / "Patio table" style
+        // grouping) AND section-level disables (physical area: "VIP
+        // room", "Bar"). Both apply when a table QR is scanned.
+        if (tableId) {
+          const table = await this.prisma.table.findUnique({
+            where: { id: tableId },
+            select: { tableTypeId: true, sectionId: true, outletId: true },
+          });
+          if (table && table.outletId === outletId) {
+            if (table.tableTypeId) {
+              const sectionDisabled = await this.prisma.tableTypeMenu.findMany({
+                where: { tableTypeId: table.tableTypeId, isEnabled: false },
+                select: { menuId: true },
+              });
+              for (const s of sectionDisabled) {
+                if (defaultMenuId && s.menuId === defaultMenuId) continue;
+                allowedMenuIds.delete(s.menuId);
+              }
+            }
+            if (table.sectionId) {
+              const sectionDisables = await this.prisma.menuSectionExclusion.findMany({
+                where: { sectionId: table.sectionId },
+                select: { menuId: true },
+              });
+              for (const s of sectionDisables) {
+                // Default menu is the floor — never disabled, even
+                // if an admin accidentally adds an exclusion row for it.
+                if (defaultMenuId && s.menuId === defaultMenuId) continue;
+                allowedMenuIds.delete(s.menuId);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const categories = tree.categories.filter((c: any) => {
+      if (c.menuId == null) return allowNullMenu;
+      return allowedMenuIds.has(c.menuId);
     });
 
     // Resolve viewer's tag for this outlet (if any) and project effective price
@@ -224,8 +466,6 @@ export class MenuService {
       return null;
     };
 
-    await this.hydrateMenu(categories, lang);
-
     // Active line-level auto-discounts (ITEM / SUBCATEGORY / CATEGORY).
     // Surfaced on each item so the customer menu can render strikethrough
     // pricing with the savings badge. Bill-level discounts apply to the
@@ -260,8 +500,9 @@ export class MenuService {
       };
     };
 
-    // Aggregate review stats for every item on the menu in one query so the
-    // customer can see the consolidated rating chip without an extra round-trip.
+    // Aggregate review stats for every item on the (filtered) menu in one
+    // query so the customer can see the consolidated rating chip without
+    // an extra round-trip.
     const itemIds = categories.flatMap((c: any) =>
       c.subcategories.flatMap((s: any) => s.items.map((i: any) => i.id)),
     );
@@ -281,55 +522,189 @@ export class MenuService {
       });
     }
 
-    return categories.map(cat => ({
-      ...cat,
-      subcategories: cat.subcategories.map(sub => ({
-        ...sub,
-        items: sub.items.map(item => {
-          const itemOv = pickItemPrice(item);
-          const itemEffective = itemOv ? itemOv.price : Number(item.basePrice);
-          // Candidate discounts for this item — ITEM matches the row,
-          // SUBCATEGORY matches its parent sub, CATEGORY matches the
-          // sub's category. Same candidate set drives both the item-
-          // level price and each variant's price (PERCENT scales).
-          const candidates = lineDiscounts.filter((d: any) => {
-            if (d.targetType === 'ITEM') return d.itemId === item.id;
-            if (d.targetType === 'SUBCATEGORY') return d.subcategoryId === sub.id;
-            if (d.targetType === 'CATEGORY') return d.categoryId === cat.id;
-            return false;
-          });
-          const variants = item.variants.map((v: any) => {
-            const vOv = pickItemPrice(item, v.id);
-            const variantEffective = vOv ? vOv.price : Number(v.price);
-            return {
-              ...v,
-              effectivePrice: variantEffective,
-              appliedTagId: vOv?.source === 'CUSTOMER_TAG' ? vOv.id : null,
-              appliedTableTypeId: vOv?.source === 'TABLE_TYPE' ? vOv.id : null,
-              discountInfo: computeLineDiscount(candidates, variantEffective),
-            };
-          });
-          const rating = ratingByItem.get(item.id) ?? { avg: 0, count: 0 };
+    // Cascading availability evaluation. Outlet hours and bot
+    // category/sub/item per-day slots all cascade — a node is in
+    // schedule only if its own slots pass AND every ancestor passes.
+    // The menu-level effective slots prefer the outlet override
+    // (OutletMenuTimingSlot) when set, falling back to MenuTimingSlot.
+    // Staff (includeHidden) callers see everything regardless of the
+    // current time so the admin can edit out-of-window items.
+    const now = nowInOutletTz();
+    const slotShape = (rows: any[]): TimingSlot[] => (rows ?? []).map((r) => ({
+      dayOfWeek: r.dayOfWeek,
+      startMinute: r.startMinute,
+      endMinute: r.endMinute,
+    }));
+
+    return categories.map((cat: any) => {
+      const menuSlots: TimingSlot[] = (() => {
+        const link = cat.menu?.outletLinks?.[0];
+        const overrideSlots = link?.overrideTimings ? slotShape(link.timingSlots) : null;
+        if (overrideSlots && overrideSlots.length) return overrideSlots;
+        return slotShape(cat.menu?.timingSlots);
+      })();
+      const menuChain = [
+        { slots: menuSlots, label: cat.menu?.name || 'Menu' },
+      ];
+      const catSlots = slotShape(cat.timingSlots);
+      const catChain = [...menuChain, { slots: catSlots, label: cat.name }];
+      const catEval = skipSchedule ? { inSchedule: true } : evaluateCascade(catChain, now);
+      // Strip the internal menu join — clients only need the
+      // pre-existing menuId/menuName fields, not the slot rows.
+      const { menu: _menuJoin, timingSlots: catSlotRows, ...catRest } = cat;
+      void _menuJoin; void catSlotRows;
+      return {
+        ...catRest,
+        timingSlots: catSlots,
+        inSchedule: catEval.inSchedule,
+        nextOpen: skipSchedule ? null : (catEval as any).blockedBy?.nextOpen ?? null,
+        blockedBy: skipSchedule ? null : (catEval as any).blockedBy?.label ?? null,
+        subcategories: cat.subcategories.map((sub: any) => {
+          const subSlots = slotShape(sub.timingSlots);
+          const subChain = [...catChain, { slots: subSlots, label: sub.name }];
+          const subEval = skipSchedule ? { inSchedule: true } : evaluateCascade(subChain, now);
+          const { timingSlots: subSlotRows, ...subRest } = sub;
+          void subSlotRows;
           return {
-            ...item,
-            variants,
-            effectivePrice: itemEffective,
-            appliedTagId: itemOv?.source === 'CUSTOMER_TAG' ? itemOv.id : null,
-            appliedTableTypeId: itemOv?.source === 'TABLE_TYPE' ? itemOv.id : null,
-            // Active line-level discount on the item's base price.
-            // The pricing engine applies the same rule at /cart/quote so
-            // the menu badge and the actual bill stay in sync.
-            discountInfo: computeLineDiscount(candidates, itemEffective),
-            // Computed flags:
-            isPopular: popularSet.has(item.id) || item.isPopular,
-            isFavorite: favoriteSet.has(item.id),
-            // Review aggregates: avg rating (rounded to 1 decimal) + count.
-            ratingAvg: rating.avg,
-            ratingCount: rating.count,
+            ...subRest,
+            timingSlots: subSlots,
+            inSchedule: subEval.inSchedule,
+            nextOpen: skipSchedule ? null : (subEval as any).blockedBy?.nextOpen ?? null,
+            blockedBy: skipSchedule ? null : (subEval as any).blockedBy?.label ?? null,
+            items: sub.items.map((item: any) => {
+              const itemOv = pickItemPrice(item);
+              const itemEffective = itemOv ? itemOv.price : Number(item.basePrice);
+              // Candidate discounts for this item — ITEM matches the row,
+              // SUBCATEGORY matches its parent sub, CATEGORY matches the
+              // sub's category. Same candidate set drives both the item-
+              // level price and each variant's price (PERCENT scales).
+              const candidates = lineDiscounts.filter((d: any) => {
+                if (d.targetType === 'ITEM') return d.itemId === item.id;
+                if (d.targetType === 'SUBCATEGORY') return d.subcategoryId === sub.id;
+                if (d.targetType === 'CATEGORY') return d.categoryId === cat.id;
+                return false;
+              });
+              const variants = item.variants.map((v: any) => {
+                const vOv = pickItemPrice(item, v.id);
+                const variantEffective = vOv ? vOv.price : Number(v.price);
+                return {
+                  ...v,
+                  effectivePrice: variantEffective,
+                  appliedTagId: vOv?.source === 'CUSTOMER_TAG' ? vOv.id : null,
+                  appliedTableTypeId: vOv?.source === 'TABLE_TYPE' ? vOv.id : null,
+                  discountInfo: computeLineDiscount(candidates, variantEffective),
+                };
+              });
+              const rating = ratingByItem.get(item.id) ?? { avg: 0, count: 0 };
+              const itemSlots = slotShape(item.timingSlots);
+              const itemChain = [...subChain, { slots: itemSlots, label: item.name }];
+              const itemEval = skipSchedule ? { inSchedule: true } : evaluateCascade(itemChain, now);
+              const { timingSlots: itemSlotRows, ...itemRest } = item;
+              void itemSlotRows;
+              return {
+                ...itemRest,
+                variants,
+                effectivePrice: itemEffective,
+                appliedTagId: itemOv?.source === 'CUSTOMER_TAG' ? itemOv.id : null,
+                appliedTableTypeId: itemOv?.source === 'TABLE_TYPE' ? itemOv.id : null,
+                // Active line-level discount on the item's base price.
+                // The pricing engine applies the same rule at /cart/quote so
+                // the menu badge and the actual bill stay in sync.
+                discountInfo: computeLineDiscount(candidates, itemEffective),
+                // Computed flags:
+                isPopular: popularSet.has(item.id) || item.isPopular,
+                isFavorite: favoriteSet.has(item.id),
+                // Review aggregates: avg rating (rounded to 1 decimal) + count.
+                ratingAvg: rating.avg,
+                ratingCount: rating.count,
+                // Schedule flags. inSchedule=true means the item is
+                // orderable right now. When false, nextOpen + blockedBy
+                // tell the UI what to show as the "available from" hint
+                // and which ancestor closed the window (so a customer
+                // sees one badge, not three conflicting ones).
+                timingSlots: itemSlots,
+                inSchedule: itemEval.inSchedule,
+                nextOpen: skipSchedule ? null : (itemEval as any).blockedBy?.nextOpen ?? null,
+                blockedBy: skipSchedule ? null : (itemEval as any).blockedBy?.label ?? null,
+              };
+            }),
           };
         }),
-      })),
-    }));
+      };
+    });
+  }
+
+  // ─── Per-day availability slots: cat / sub / item ─────────
+  // Same shape as MenuService.replaceTimings — the client sends the
+  // full desired set and we replace in one transaction. Empty array
+  // clears the slots (level inherits from its ancestors via cascade).
+  private validateTimingSlots(slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }>) {
+    if (!Array.isArray(slots)) throw new BadRequestException('timings must be an array');
+    for (const s of slots) {
+      if (!Number.isInteger(s.dayOfWeek) || s.dayOfWeek < 1 || s.dayOfWeek > 7) {
+        throw new BadRequestException('dayOfWeek must be 1..7');
+      }
+      if (!Number.isInteger(s.startMinute) || !Number.isInteger(s.endMinute)) {
+        throw new BadRequestException('start/end minute must be integers');
+      }
+      if (s.startMinute < 0 || s.startMinute >= 1440 || s.endMinute < 0 || s.endMinute > 1440) {
+        throw new BadRequestException('start/end minute must be within 0..1440');
+      }
+      if (s.endMinute <= s.startMinute) {
+        throw new BadRequestException('endMinute must be greater than startMinute');
+      }
+    }
+  }
+
+  async replaceCategoryTimings(categoryId: string, slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }>) {
+    this.validateTimingSlots(slots);
+    const cat = await this.prisma.category.findUnique({ where: { id: categoryId } });
+    if (!cat) throw new NotFoundException('Category not found');
+    await this.prisma.$transaction([
+      this.prisma.categoryTimingSlot.deleteMany({ where: { categoryId } }),
+      this.prisma.categoryTimingSlot.createMany({
+        data: slots.map((s) => ({ categoryId, ...s })),
+      }),
+    ]);
+    if (cat.outletId) await this.invalidateOutlet(cat.outletId);
+    return this.prisma.category.findUnique({
+      where: { id: categoryId },
+      include: { timingSlots: true },
+    });
+  }
+
+  async replaceSubcategoryTimings(subcategoryId: string, slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }>) {
+    this.validateTimingSlots(slots);
+    const sub = await this.prisma.subcategory.findUnique({ where: { id: subcategoryId } });
+    if (!sub) throw new NotFoundException('Subcategory not found');
+    await this.prisma.$transaction([
+      this.prisma.subcategoryTimingSlot.deleteMany({ where: { subcategoryId } }),
+      this.prisma.subcategoryTimingSlot.createMany({
+        data: slots.map((s) => ({ subcategoryId, ...s })),
+      }),
+    ]);
+    await this.invalidateForSubcategory(subcategoryId);
+    return this.prisma.subcategory.findUnique({
+      where: { id: subcategoryId },
+      include: { timingSlots: true },
+    });
+  }
+
+  async replaceItemTimings(itemId: string, slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }>) {
+    this.validateTimingSlots(slots);
+    const item = await this.prisma.item.findUnique({ where: { id: itemId } });
+    if (!item) throw new NotFoundException('Item not found');
+    await this.prisma.$transaction([
+      this.prisma.itemTimingSlot.deleteMany({ where: { itemId } }),
+      this.prisma.itemTimingSlot.createMany({
+        data: slots.map((s) => ({ itemId, ...s })),
+      }),
+    ]);
+    await this.invalidateForItem(itemId);
+    return this.prisma.item.findUnique({
+      where: { id: itemId },
+      include: { timingSlots: true },
+    });
   }
 
   async createCategory(outletId: string, data: { name: string; imageUrl?: string; menuId?: string }) {
@@ -350,6 +725,7 @@ export class MenuService {
       data: { name: data.name, imageUrl: data.imageUrl, outletId, menuId: menuId ?? undefined },
     });
     await this.translations.upsertAll('Category', category.id, { name: category.name });
+    await this.invalidateOutlet(outletId);
     return category;
   }
 
@@ -358,17 +734,24 @@ export class MenuService {
     if (data.name !== undefined) {
       await this.translations.upsertAll('Category', category.id, { name: category.name });
     }
+    if (category.outletId) await this.invalidateOutlet(category.outletId);
     return category;
   }
 
   async deleteCategory(id: string) {
+    // Capture outletId BEFORE the delete — the soft-delete branch
+    // (orderItemCount > 0) still has it, but the hard-delete branch
+    // would lose the row.
+    const outletId = await this.outletIdFromCategoryId(id);
     const orderItemCount = await this.prisma.orderItem.count({
       where: { item: { subcategory: { categoryId: id } } },
     });
     if (orderItemCount > 0) {
-      return this.prisma.category.update({ where: { id }, data: { isActive: false } });
+      const updated = await this.prisma.category.update({ where: { id }, data: { isActive: false } });
+      if (outletId) await this.invalidateOutlet(outletId);
+      return updated;
     }
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const subs = await tx.subcategory.findMany({ where: { categoryId: id }, select: { id: true } });
       const subIds = subs.map((s) => s.id);
       const items = await tx.item.findMany({ where: { subcategoryId: { in: subIds } }, select: { id: true } });
@@ -382,6 +765,8 @@ export class MenuService {
       if (subIds.length) await tx.subcategory.deleteMany({ where: { id: { in: subIds } } });
       return tx.category.delete({ where: { id } });
     });
+    if (outletId) await this.invalidateOutlet(outletId);
+    return result;
   }
 
   // ─── Subcategories ────────────────────────────────────────
@@ -389,6 +774,7 @@ export class MenuService {
   async createSubcategory(categoryId: string, data: { name: string; imageUrl?: string | null }) {
     const sub = await this.prisma.subcategory.create({ data: { ...data, categoryId } });
     await this.translations.upsertAll('Subcategory', sub.id, { name: sub.name });
+    await this.invalidateForCategory(categoryId);
     return sub;
   }
 
@@ -397,6 +783,7 @@ export class MenuService {
     if (data.name !== undefined) {
       await this.translations.upsertAll('Subcategory', sub.id, { name: sub.name });
     }
+    await this.invalidateForCategory(sub.categoryId);
     return sub;
   }
 
@@ -406,16 +793,19 @@ export class MenuService {
   // outlet rows and business templates — the template path skips the order
   // count entirely (template items can never be ordered).
   async deleteSubcategory(id: string) {
+    const outletId = await this.outletIdFromSubcategoryId(id);
     const orderItemCount = await this.prisma.orderItem.count({
       where: { item: { subcategoryId: id } },
     });
     if (orderItemCount > 0) {
-      return this.prisma.subcategory.update({
+      const updated = await this.prisma.subcategory.update({
         where: { id },
         data: { isActive: false },
       });
+      if (outletId) await this.invalidateOutlet(outletId);
+      return updated;
     }
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const items = await tx.item.findMany({ where: { subcategoryId: id }, select: { id: true } });
       const itemIds = items.map((i) => i.id);
       if (itemIds.length) {
@@ -428,6 +818,8 @@ export class MenuService {
       await tx.translation.deleteMany({ where: { entityType: 'Subcategory', entityId: id } });
       return tx.subcategory.delete({ where: { id } });
     });
+    if (outletId) await this.invalidateOutlet(outletId);
+    return result;
   }
 
   // ─── Items ────────────────────────────────────────────────
@@ -482,6 +874,7 @@ export class MenuService {
         shortDescription: (v as any).shortDescription ?? undefined,
       });
     }
+    await this.invalidateForSubcategory(subcategoryId);
     return item;
   }
 
@@ -502,6 +895,7 @@ export class MenuService {
         description: item.description ?? undefined,
       });
     }
+    await this.invalidateForSubcategory(item.subcategoryId);
     return item;
   }
 
@@ -530,10 +924,12 @@ export class MenuService {
   async toggleItemAvailability(id: string) {
     const item = await this.prisma.item.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Item not found');
-    return this.prisma.item.update({
+    const updated = await this.prisma.item.update({
       where: { id },
       data: { isAvailable: !item.isAvailable },
     });
+    await this.invalidateForSubcategory(updated.subcategoryId);
+    return updated;
   }
 
   // Toggle whether this item is visible on the customer menu. Hidden items
@@ -542,10 +938,12 @@ export class MenuService {
   async toggleItemVisibility(id: string) {
     const item = await this.prisma.item.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Item not found');
-    return this.prisma.item.update({
+    const updated = await this.prisma.item.update({
       where: { id },
       data: { isDisplayed: !item.isDisplayed },
     });
+    await this.invalidateForSubcategory(updated.subcategoryId);
+    return updated;
   }
 
   /**
@@ -572,7 +970,7 @@ export class MenuService {
       throw new BadRequestException('Provide addQuantity or setQuantity');
     }
 
-    return this.prisma.item.update({
+    const updated = await this.prisma.item.update({
       where: { id },
       data: {
         availableQuantity: next,
@@ -581,22 +979,29 @@ export class MenuService {
         ...(next > 0 ? { isAvailable: true } : {}),
       },
     });
+    await this.invalidateForSubcategory(updated.subcategoryId);
+    return updated;
   }
 
   async deleteItem(id: string) {
+    const outletId = await this.outletIdFromItemId(id);
     const orderItemCount = await this.prisma.orderItem.count({ where: { itemId: id } });
     if (orderItemCount > 0) {
-      return this.prisma.item.update({
+      const updated = await this.prisma.item.update({
         where: { id },
         data: { isDisplayed: false, isAvailable: false },
       });
+      if (outletId) await this.invalidateOutlet(outletId);
+      return updated;
     }
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.itemTag.deleteMany({ where: { itemId: id } });
       await tx.option.deleteMany({ where: { itemId: id } });
       await tx.variant.deleteMany({ where: { itemId: id } });
       return tx.item.delete({ where: { id } });
     });
+    if (outletId) await this.invalidateOutlet(outletId);
+    return result;
   }
 
   // ─── Variants ─────────────────────────────────────────────
@@ -607,6 +1012,7 @@ export class MenuService {
       name: variant.name,
       shortDescription: (variant as any).shortDescription ?? undefined,
     });
+    await this.invalidateForItem(itemId);
     return variant;
   }
 
@@ -616,13 +1022,18 @@ export class MenuService {
       where: { itemId },
       _max: { displayOrder: true },
     });
-    return this.prisma.itemImage.create({
+    const img = await this.prisma.itemImage.create({
       data: { itemId, url, displayOrder: (max._max.displayOrder ?? -1) + 1 },
     });
+    await this.invalidateForItem(itemId);
+    return img;
   }
 
   async removeItemImage(imageId: string) {
-    return this.prisma.itemImage.delete({ where: { id: imageId } });
+    const outletId = await this.outletIdFromItemImageId(imageId);
+    const result = await this.prisma.itemImage.delete({ where: { id: imageId } });
+    if (outletId) await this.invalidateOutlet(outletId);
+    return result;
   }
 
   async reorderItemImages(itemId: string, orderedIds: string[]) {
@@ -634,6 +1045,7 @@ export class MenuService {
         }),
       ),
     );
+    await this.invalidateForItem(itemId);
     return this.prisma.itemImage.findMany({
       where: { itemId },
       orderBy: { displayOrder: 'asc' },
@@ -668,6 +1080,10 @@ export class MenuService {
         this.prisma.category.update({ where: { id }, data: { displayOrder: idx } }),
       ),
     );
+    // Business-scoped reorder affects category template ordering, not
+    // outlet caches (templates are imported as copies). Only invalidate
+    // when reorder is outlet-scoped.
+    if (scope.outletId) await this.invalidateOutlet(scope.outletId);
     return { reordered: orderedIds.length };
   }
 
@@ -683,6 +1099,7 @@ export class MenuService {
         this.prisma.subcategory.update({ where: { id }, data: { displayOrder: idx } }),
       ),
     );
+    await this.invalidateForCategory(categoryId);
     return { reordered: orderedIds.length };
   }
 
@@ -698,6 +1115,7 @@ export class MenuService {
         this.prisma.item.update({ where: { id }, data: { displayOrder: idx } }),
       ),
     );
+    await this.invalidateForSubcategory(subcategoryId);
     return { reordered: orderedIds.length };
   }
 
@@ -709,15 +1127,21 @@ export class MenuService {
         shortDescription: (variant as any).shortDescription ?? undefined,
       });
     }
+    await this.invalidateForItem(variant.itemId);
     return variant;
   }
 
   async deleteVariant(id: string) {
+    const outletId = await this.outletIdFromVariantId(id);
     const orderItemCount = await this.prisma.orderItem.count({ where: { variantId: id } });
     if (orderItemCount > 0) {
-      return this.prisma.variant.update({ where: { id }, data: { isAvailable: false } });
+      const updated = await this.prisma.variant.update({ where: { id }, data: { isAvailable: false } });
+      if (outletId) await this.invalidateOutlet(outletId);
+      return updated;
     }
-    return this.prisma.variant.delete({ where: { id } });
+    const result = await this.prisma.variant.delete({ where: { id } });
+    if (outletId) await this.invalidateOutlet(outletId);
+    return result;
   }
 
   // ─── Options ──────────────────────────────────────────────
@@ -1050,6 +1474,13 @@ export class MenuService {
       }
     });
 
+    // Bust the cache before the translation fan-out — the imported
+    // rows are already visible to the customer in English, so the next
+    // /menu GET should hit the DB and surface them. Translations land
+    // asynchronously; the language-keyed cache variants will be
+    // invalidated again when those upserts hit the translations module.
+    await this.invalidateOutlet(targetOutletId);
+
     // Fire-and-forget the translation jobs. External providers (Lingva /
     // Bhashini) can take many seconds per field × language; we don't want the
     // import HTTP request to block on that. Items render in English until
@@ -1063,6 +1494,9 @@ export class MenuService {
           console.warn(`[importFromBusiness] translate ${job.entityType}/${job.entityId} failed`, err);
         }
       }
+      // Re-invalidate so the non-English cache variants pick up the
+      // freshly-translated rows.
+      await this.invalidateOutlet(targetOutletId);
     })();
 
     return { categories: categoriesCount, subcategories: subcategoriesCount, items: itemsCount };

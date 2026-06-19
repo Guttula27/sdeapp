@@ -12,6 +12,17 @@
 // 2. iOS Safari requires the SAME AudioContext to have been
 //    resumed-by-gesture — creating a fresh one inside the alert handler
 //    still gets suspended. So we hold a single module-level context.
+//
+// 3. navigator.vibrate is gated behind "transient user activation"
+//    inside the Capacitor WebView on Android — a vibration triggered
+//    by a Socket.IO event (no fresh user gesture) silently no-ops
+//    even though navigator.vibrate is defined. We route through the
+//    Capacitor Haptics plugin when running native, which uses the
+//    Android VIBRATOR_SERVICE directly and isn't gated by the
+//    activation rules.
+
+import { Capacitor } from '@capacitor/core';
+import { Haptics } from '@capacitor/haptics';
 
 const TONES: Record<string, { freq: number; dur: number }[]> = {
   chime: [{ freq: 880, dur: 0.18 }, { freq: 1320, dur: 0.22 }],
@@ -61,7 +72,40 @@ export function isIOS(): boolean {
 }
 
 export function vibrationSupported(): boolean {
+  // Capacitor native always supports vibration via the Haptics plugin
+  // (Android VIBRATOR_SERVICE / iOS UIImpactFeedback) — independent of
+  // navigator.vibrate which is missing on iOS Safari and gated by
+  // user-activation on Android WebView.
+  if (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform?.()) return true;
   return typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+}
+
+/**
+ * Fire the device vibration with the given pattern. Returns true if
+ * the call was dispatched (we can't know if the user felt it). Routes
+ * through Capacitor Haptics when running native — that one bypasses
+ * the WebView's user-activation gate that silently swallows
+ * navigator.vibrate calls fired from a socket / setInterval handler.
+ *
+ * Pattern is an array following navigator.vibrate's convention:
+ * [onMs, offMs, onMs, offMs, ...]. For Haptics we just iterate the
+ * "on" segments and call vibrate() for the rough total duration.
+ */
+export function fireVibration(pattern: number[]): boolean {
+  if (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform?.()) {
+    // Sum of the "on" durations approximates total perceived buzz.
+    // Capacitor Haptics.vibrate accepts an optional duration in ms
+    // (Android-only; iOS uses a fixed haptic strength).
+    const onDurations = pattern.filter((_, i) => i % 2 === 0);
+    const total = onDurations.reduce((s, d) => s + d, 0);
+    Haptics.vibrate({ duration: Math.max(50, Math.min(2000, total)) }).catch(() => {});
+    return true;
+  }
+  if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+    try { return navigator.vibrate(pattern) !== false; }
+    catch { return false; }
+  }
+  return false;
 }
 
 function getCtx(): AudioContext | null {
@@ -118,11 +162,11 @@ export function playRingtone(kind: string | null | undefined, opts: PlayOptions 
   const peakGain = (volume / 100) * 0.35; // 0.35 was the original hardcoded peak
 
   // Vibrate first (independent of audio — works even if audio is blocked).
-  if (opts.vibrate && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-    try {
-      const pattern = VIBRATE_PATTERNS[kind || 'chime'] || VIBRATE_PATTERNS.chime;
-      navigator.vibrate(pattern);
-    } catch { /* some browsers throw if vibrate is disabled at OS level */ }
+  // Routes through fireVibration so the native Capacitor Haptics path
+  // wins over navigator.vibrate when running inside the APK.
+  if (opts.vibrate) {
+    const pattern = VIBRATE_PATTERNS[kind || 'chime'] || VIBRATE_PATTERNS.chime;
+    fireVibration(pattern);
   }
 
   if (volume <= 0) return true; // user muted audio; vibrate still fired
@@ -176,8 +220,11 @@ export function startLoudAlert(kind: string | null | undefined, opts: PlayOption
     stop() {
       clearInterval(id);
       // Cancel any in-flight vibration so the device doesn't keep
-      // buzzing after the user dismisses.
-      if (vibrationSupported()) {
+      // buzzing after the user dismisses. navigator.vibrate(0) is
+      // safe on browsers; Capacitor Haptics has no explicit cancel
+      // but its vibrations are short-lived so a tight loop being
+      // stopped is enough.
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
         try { navigator.vibrate(0); } catch { /* ignore */ }
       }
     },

@@ -170,6 +170,23 @@ export class OrdersController {
     return this.ordersService.verifyItems(id, body.itemIds, body.action || 'confirm', user?.id);
   }
 
+  // Service desk: adjust the quantity of an individual unverified line
+  // while the customer is being verified. Rejected if the line has
+  // already gone to the kitchen — at that point qty changes go through
+  // the cancel + re-add path so stock + KOT history stay correct.
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(IdempotencyInterceptor)
+  @Patch(':id/items/:itemId/quantity')
+  updateItemQuantity(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() body: { quantity: number },
+    @CurrentUser() user: any,
+  ) {
+    assertResponsibility(user, 'MANAGE_SERVICE_DESK');
+    return this.ordersService.updateItemQuantityAtVerify(id, itemId, body?.quantity, user?.id);
+  }
+
   // Service desk dashboard: returns three lanes for this outlet —
   // postpaid orders awaiting verify, self-service awaiting release,
   // table-service awaiting pickup. Parcel orders ride in their own UI.
@@ -178,6 +195,21 @@ export class OrdersController {
   serviceDeskQueue(@Param('outletId') outletId: string, @CurrentUser() user: any) {
     assertResponsibility(user, 'VIEW_SERVICE_DESK');
     return this.ordersService.getServiceDeskQueue(outletId);
+  }
+
+  // Open tabs view: every postpaid order on this outlet whose payment
+  // hasn't completed yet. Stays visible across verify → preparing →
+  // ready → served → bill → payment, only disappearing once paid.
+  // Client groups by section / table for the working surface.
+  @UseGuards(JwtAuthGuard)
+  @Get('service-desk/open-tabs')
+  openServiceTabs(
+    @Param('outletId') outletId: string,
+    @CurrentUser() user: any,
+    @Query('tableId') tableId?: string,
+  ) {
+    assertResponsibility(user, 'VIEW_SERVICE_DESK');
+    return this.ordersService.getOpenServiceTabs(outletId, tableId);
   }
 
   // Parcel desk dashboard: two lanes — pack (kitchen done, awaiting

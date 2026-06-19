@@ -69,7 +69,10 @@ export class AuditLogService {
   postpaidVerification(args: {
     actorId?: string | null;
     orderId: string;
-    action: 'confirm' | 'strike';
+    // `qty:N` is emitted when the service desk adjusts a line's
+    // quantity during verification — keeps the audit trail consistent
+    // with the confirm / strike entries.
+    action: 'confirm' | 'strike' | `qty:${number}`;
     itemCount: number;
   }) {
     this.record('POSTPAID_VERIFICATION', args);

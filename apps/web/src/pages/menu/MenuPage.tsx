@@ -171,6 +171,18 @@ export default function MenuPage() {
   const [activeMenuId, setActiveMenuId] = useState<string>('');
   const [menuModal, setMenuModal] = useState<{ open: boolean; editing?: MenuRow }>({ open: false });
   const [timingsModal, setTimingsModal] = useState<{ open: boolean; menu?: MenuRow }>({ open: false });
+  // Per-day availability editor for the cat / sub / item levels. Same
+  // shape across all three; the kind drives the PUT endpoint.
+  type NodeTimingsTarget = {
+    open: boolean;
+    kind?: 'category' | 'subcategory' | 'item';
+    id?: string;
+    name?: string;
+    slots?: { dayOfWeek: number; startMinute: number; endMinute: number }[];
+  };
+  const [nodeTimingsModal, setNodeTimingsModal] = useState<NodeTimingsTarget>({ open: false });
+  const openNodeTimings = (kind: 'category' | 'subcategory' | 'item', node: any) =>
+    setNodeTimingsModal({ open: true, kind, id: node.id, name: node.name, slots: node.timingSlots ?? [] });
   const [menuBusy, setMenuBusy] = useState(false);
 
   // modal state
@@ -1632,6 +1644,15 @@ export default function MenuPage() {
                         <Plus size={13} /> Sub
                       </button>
                       <button onClick={() => setCatModal({ open: true, editing: cat })} className="btn-ghost p-1.5"><Edit2 size={13} /></button>
+                      <button
+                        onClick={() => openNodeTimings('category', cat)}
+                        className={clsx('btn-ghost p-1.5', (cat.timingSlots?.length ?? 0) > 0 ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:text-brand-600')}
+                        title={(cat.timingSlots?.length ?? 0) > 0
+                          ? `${cat.timingSlots.length} timing slot${cat.timingSlots.length === 1 ? '' : 's'} — click to edit`
+                          : 'Set availability hours (overrides outlet default)'}
+                      >
+                        <Clock size={13} />
+                      </button>
                       <button onClick={() => downloadMenuQr('category', cat.id, cat.name)} className="btn-ghost p-1.5 text-indigo-500 hover:bg-indigo-50" title="Download QR for this category"><QrCode size={13} /></button>
                       <button onClick={() => setDeleteTarget({ type: 'category', id: cat.id, name: cat.name })} className="btn-ghost p-1.5 text-red-400 hover:bg-red-50"><Trash2 size={13} /></button>
                     </div>
@@ -1676,6 +1697,15 @@ export default function MenuPage() {
                                 title="Edit subcategory"
                               >
                                 <Edit2 size={12} />
+                              </button>
+                              <button
+                                onClick={() => openNodeTimings('subcategory', sub)}
+                                className={clsx('btn-ghost p-1.5', (sub.timingSlots?.length ?? 0) > 0 ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:text-brand-600')}
+                                title={(sub.timingSlots?.length ?? 0) > 0
+                                  ? `${sub.timingSlots.length} timing slot${sub.timingSlots.length === 1 ? '' : 's'} — click to edit`
+                                  : 'Set availability hours for this subcategory'}
+                              >
+                                <Clock size={12} />
                               </button>
                               <button
                                 onClick={() => downloadMenuQr('subcategory', sub.id, sub.name)}
@@ -1839,6 +1869,15 @@ export default function MenuPage() {
                                     {item.isDisplayed ? <Eye size={14} /> : <EyeOff size={14} />}
                                   </button>
                                   <button onClick={() => setItemModal({ open: true, subcategoryId: sub.id, editing: item })} className="btn-ghost p-1.5"><Edit2 size={13} /></button>
+                                  <button
+                                    onClick={() => openNodeTimings('item', item)}
+                                    className={clsx('btn-ghost p-1.5', (item.timingSlots?.length ?? 0) > 0 ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:text-brand-600')}
+                                    title={(item.timingSlots?.length ?? 0) > 0
+                                      ? `${item.timingSlots.length} timing slot${item.timingSlots.length === 1 ? '' : 's'} — click to edit`
+                                      : 'Set availability hours for this item'}
+                                  >
+                                    <Clock size={13} />
+                                  </button>
                                   <button onClick={() => downloadMenuQr('item', item.id, item.name)} className="btn-ghost p-1.5 text-indigo-500 hover:bg-indigo-50" title="Download QR for this item"><QrCode size={13} /></button>
                                   <button onClick={() => setDeleteTarget({ type: 'item', id: item.id, name: item.name })} className="btn-ghost p-1.5 text-red-400 hover:bg-red-50"><Trash2 size={13} /></button>
                                 </div>
@@ -2843,6 +2882,18 @@ export default function MenuPage() {
         onClose={() => setTimingsModal({ open: false })}
         onSaved={() => { setTimingsModal({ open: false }); fetchMenu(); }}
       />
+
+      {/* ── Per-day availability for category / subcategory / item ─ */}
+      <NodeTimingsEditor
+        open={nodeTimingsModal.open}
+        kind={nodeTimingsModal.kind}
+        id={nodeTimingsModal.id}
+        name={nodeTimingsModal.name}
+        initial={nodeTimingsModal.slots}
+        menuBase={menuBase}
+        onClose={() => setNodeTimingsModal({ open: false })}
+        onSaved={() => { setNodeTimingsModal({ open: false }); fetchMenu(); }}
+      />
     </div>
   );
 }
@@ -3211,5 +3262,146 @@ function BundleSection({
         </div>
       )}
     </div>
+  );
+}
+
+// ── Per-day availability editor for category / subcategory / item ─
+// Mirrors TimingsEditorModal's slot UX but speaks the simpler
+// "{menuBase}/{kind}s/:id/timings" PUT contract. Empty slot list saves
+// as "no override at this level" — the node then defers to its
+// ancestors (outlet hours → menu → category → sub) via the backend
+// cascade. The label colour on the trigger button uses
+// timingSlots.length to indicate an active override.
+function NodeTimingsEditor({
+  open, kind, id, name, initial, menuBase, onClose, onSaved,
+}: {
+  open: boolean;
+  kind?: 'category' | 'subcategory' | 'item';
+  id?: string;
+  name?: string;
+  initial?: { dayOfWeek: number; startMinute: number; endMinute: number }[];
+  menuBase: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  type Slot = { dayOfWeek: number; startMinute: number; endMinute: number };
+  const [slots, setSlots] = useState<Slot[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setSlots((initial ?? []).map((s) => ({
+      dayOfWeek: s.dayOfWeek, startMinute: s.startMinute, endMinute: s.endMinute,
+    })));
+  }, [initial, open]);
+
+  const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const toMinutes = (t: string) => {
+    const [h, m] = (t || '00:00').split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+  const toTimeString = (mins: number) => {
+    const h = Math.floor(mins / 60).toString().padStart(2, '0');
+    const m = (mins % 60).toString().padStart(2, '0');
+    return `${h}:${m}`;
+  };
+
+  const save = async () => {
+    if (!kind || !id) return;
+    for (const s of slots) {
+      if (s.endMinute <= s.startMinute) {
+        toast.error('Each slot must end after it starts');
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      const path = kind === 'category' ? 'categories'
+        : kind === 'subcategory' ? 'subcategories'
+        : 'items';
+      await api.put(`${menuBase}/${path}/${id}/timings`, { slots });
+      toast.success(slots.length === 0
+        ? 'Schedule cleared — inheriting from outlet hours'
+        : 'Schedule saved');
+      onSaved();
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to save schedule');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!kind || !id) return null;
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Availability — ${name || kind}`}
+      footer={
+        <div className="flex items-center justify-between w-full">
+          <button
+            className="btn-ghost text-xs"
+            onClick={() => setSlots((s) => [...s, { dayOfWeek: 1, startMinute: 9 * 60, endMinute: 17 * 60 }])}
+          >
+            <Plus size={13} /> Add slot
+          </button>
+          <div className="flex gap-2">
+            <button className="btn-secondary" onClick={onClose}>Cancel</button>
+            <button className="btn-primary" onClick={save} disabled={busy}>
+              {busy ? 'Saving…' : 'Save schedule'}
+            </button>
+          </div>
+        </div>
+      }
+    >
+      <div className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-[11px] text-slate-600 mb-3">
+        Leave empty to inherit from the outlet's hours. Add one or more slots to restrict this {kind} to specific days &amp; times — orders outside the window will be greyed out for customers and rejected at submit.
+      </div>
+      <div className="space-y-2 max-h-96 overflow-y-auto">
+        {slots.length === 0 ? (
+          <p className="text-xs text-slate-400 italic text-center py-6">
+            No custom schedule — this {kind} follows the outlet's hours.
+          </p>
+        ) : (
+          slots.map((slot, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <select
+                value={slot.dayOfWeek}
+                onChange={(e) =>
+                  setSlots((all) => all.map((s, idx) => idx === i ? { ...s, dayOfWeek: Number(e.target.value) } : s))
+                }
+                className="input py-1.5 text-sm"
+              >
+                {[1, 2, 3, 4, 5, 6, 7].map((d) => <option key={d} value={d}>{dayNames[d]}</option>)}
+              </select>
+              <input
+                type="time"
+                value={toTimeString(slot.startMinute)}
+                onChange={(e) =>
+                  setSlots((all) => all.map((s, idx) => idx === i ? { ...s, startMinute: toMinutes(e.target.value) } : s))
+                }
+                className="input py-1.5 text-sm"
+              />
+              <span className="text-slate-400 text-xs">to</span>
+              <input
+                type="time"
+                value={toTimeString(slot.endMinute)}
+                onChange={(e) =>
+                  setSlots((all) => all.map((s, idx) => idx === i ? { ...s, endMinute: toMinutes(e.target.value) } : s))
+                }
+                className="input py-1.5 text-sm"
+              />
+              <button
+                onClick={() => setSlots((all) => all.filter((_, idx) => idx !== i))}
+                className="btn-ghost p-1.5 text-red-400 hover:bg-red-50"
+                title="Remove slot"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </Modal>
   );
 }

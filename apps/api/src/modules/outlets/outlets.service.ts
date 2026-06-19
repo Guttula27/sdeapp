@@ -71,6 +71,14 @@ export class CreateTableDto {
   @ValidateIf((o) => o.tableTypeId != null) @IsString() tableTypeId?: string | null;
 }
 
+export class UpdateTableDto {
+  @IsString() @IsOptional() number?: string;
+  @IsInt() @IsOptional() capacity?: number;
+  @ValidateIf((o) => o.sectionId !== undefined) @IsOptional() sectionId?: string | null;
+  @ValidateIf((o) => o.tableTypeId !== undefined) @IsOptional() tableTypeId?: string | null;
+  @IsOptional() isActive?: boolean;
+}
+
 @Injectable()
 export class OutletsService {
   constructor(
@@ -520,6 +528,75 @@ export class OutletsService {
   async createTable(outletId: string, data: CreateTableDto) {
     await this.assertOutletAllowsSeating(outletId);
     return this.prisma.table.create({ data: { ...data, outletId } });
+  }
+
+  async updateTable(id: string, data: UpdateTableDto) {
+    const existing = await this.prisma.table.findUnique({
+      where: { id },
+      select: { id: true, outletId: true, sectionId: true },
+    });
+    if (!existing) throw new NotFoundException('Table not found');
+
+    // If the table number changed, guard against duplicates within the
+    // same outlet+section combo — otherwise two "T01"s under one
+    // section would silently collide and confuse staff. Same-name in
+    // a *different* section is fine (sections are the natural scope).
+    if (data.number !== undefined) {
+      const nextSection = data.sectionId !== undefined
+        ? data.sectionId ?? null
+        : existing.sectionId ?? null;
+      const collision = await this.prisma.table.findFirst({
+        where: {
+          outletId: existing.outletId,
+          sectionId: nextSection,
+          number: data.number,
+          id: { not: id },
+        },
+        select: { id: true },
+      });
+      if (collision) {
+        throw new BadRequestException(
+          `Another table in this section already uses the number "${data.number}"`,
+        );
+      }
+    }
+
+    return this.prisma.table.update({
+      where: { id },
+      data: {
+        ...(data.number !== undefined ? { number: data.number } : {}),
+        ...(data.capacity !== undefined ? { capacity: data.capacity } : {}),
+        ...(data.sectionId !== undefined ? { sectionId: data.sectionId ?? null } : {}),
+        ...(data.tableTypeId !== undefined ? { tableTypeId: data.tableTypeId ?? null } : {}),
+        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+      },
+    });
+  }
+
+  async deleteTable(id: string) {
+    const table = await this.prisma.table.findUnique({
+      where: { id },
+      select: { id: true, number: true },
+    });
+    if (!table) throw new NotFoundException('Table not found');
+
+    // Block hard-delete when historical orders reference this table —
+    // dropping the row would orphan those orders. Mirror the
+    // category/item soft-delete pattern: flip isActive instead so
+    // the table disappears from QR scans and table pickers while the
+    // historical orders still resolve cleanly.
+    const orderCount = await this.prisma.order.count({ where: { tableId: id } });
+    if (orderCount > 0) {
+      return this.prisma.table.update({
+        where: { id },
+        data: { isActive: false },
+      });
+    }
+    // QR (1:1 FK with onDelete behaviour) needs to go first.
+    return this.prisma.$transaction(async (tx) => {
+      await tx.qRCode.deleteMany({ where: { tableId: id } });
+      return tx.table.delete({ where: { id } });
+    });
   }
 
   async getDashboard(outletId: string) {

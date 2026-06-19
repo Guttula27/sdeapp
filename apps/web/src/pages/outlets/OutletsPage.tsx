@@ -48,7 +48,7 @@ export default function OutletsPage() {
 
   const [outletModal, setOutletModal]   = useState(false);
   const [sectionModal, setSectionModal] = useState<{ open: boolean; outletId?: string }>({ open: false });
-  const [tableModal, setTableModal]     = useState<{ open: boolean; outletId?: string; sectionId?: string }>({ open: false });
+  const [tableModal, setTableModal]     = useState<{ open: boolean; outletId?: string; sectionId?: string; editing?: any }>({ open: false });
   const [tableTypes, setTableTypes]     = useState<any[]>([]);
   const [qrModal, setQrModal]           = useState<{ open: boolean; qr?: any }>({ open: false });
 
@@ -149,15 +149,34 @@ export default function OutletsPage() {
     const form = new FormData(e.currentTarget);
     setSaving(true);
     try {
-      await api.post(`/outlets/${tableModal.outletId}/tables`, {
+      const body = {
         number: form.get('number'),
         capacity: Number(form.get('capacity')),
-        sectionId: tableModal.sectionId,
+        sectionId: tableModal.sectionId ?? tableModal.editing?.sectionId ?? null,
         tableTypeId: (form.get('tableTypeId') as string) || null,
-      });
-      toast.success('Table added');
+      };
+      if (tableModal.editing) {
+        await api.patch(`/outlets/${tableModal.outletId}/tables/${tableModal.editing.id}`, body);
+        toast.success('Table updated');
+      } else {
+        await api.post(`/outlets/${tableModal.outletId}/tables`, body);
+        toast.success('Table added');
+      }
       setTableModal({ open: false });
       const { data } = await api.get(`/outlets/${tableModal.outletId}`);
+      setSelected(data.data);
+    } catch (e: any) { toast.error(e.response?.data?.message || 'Failed'); }
+    finally { setSaving(false); }
+  };
+
+  const deleteTable = async (outletId: string, tableId: string, label: string) => {
+    if (!confirm(`Delete table "${label}"? Past orders for this table will keep working.`)) return;
+    setSaving(true);
+    try {
+      await api.delete(`/outlets/${outletId}/tables/${tableId}`);
+      toast.success('Table deleted');
+      setTableModal({ open: false });
+      const { data } = await api.get(`/outlets/${outletId}`);
       setSelected(data.data);
     } catch (e: any) { toast.error(e.response?.data?.message || 'Failed'); }
     finally { setSaving(false); }
@@ -401,6 +420,13 @@ export default function OutletsPage() {
                               ) : null;
                             })()}
                             <button
+                              onClick={() => setTableModal({ open: true, outletId: outlet.id, sectionId: sec.id, editing: table })}
+                              className="text-slate-400 hover:text-brand-500 transition-colors"
+                              title="Edit table"
+                            >
+                              <Edit2 size={11} />
+                            </button>
+                            <button
                               onClick={() => generateTableQR(table.id, outlet.id)}
                               className="text-slate-400 hover:text-brand-500 transition-colors"
                               title="Generate QR"
@@ -490,29 +516,48 @@ export default function OutletsPage() {
         </form>
       </Modal>
 
-      {/* ── Add table modal ──────────────────────────────────── */}
-      <Modal open={tableModal.open} onClose={() => setTableModal({ open: false })} title="Add Table"
+      {/* ── Add / edit table modal ───────────────────────────── */}
+      <Modal
+        open={tableModal.open}
+        onClose={() => setTableModal({ open: false })}
+        title={tableModal.editing ? `Edit table ${tableModal.editing.number}` : 'Add Table'}
         footer={
-          <>
-            <button className="btn-secondary" onClick={() => setTableModal({ open: false })}>Cancel</button>
-            <button form="table-form" type="submit" className="btn-primary" disabled={saving}>
-              {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-              Add Table
-            </button>
-          </>
+          <div className="flex items-center justify-between w-full gap-2">
+            {tableModal.editing && tableModal.outletId ? (
+              <button
+                className="text-xs font-semibold text-red-500 hover:text-red-600"
+                onClick={() => deleteTable(tableModal.outletId!, tableModal.editing.id, tableModal.editing.number)}
+                disabled={saving}
+              >
+                Delete table
+              </button>
+            ) : <span />}
+            <div className="flex items-center gap-2">
+              <button className="btn-secondary" onClick={() => setTableModal({ open: false })}>Cancel</button>
+              <button form="table-form" type="submit" className="btn-primary" disabled={saving}>
+                {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                {tableModal.editing ? 'Save Changes' : 'Add Table'}
+              </button>
+            </div>
+          </div>
         }
       >
-        <form id="table-form" onSubmit={saveTable} className="space-y-4">
+        <form
+          id="table-form"
+          key={tableModal.editing?.id ?? 'new'}
+          onSubmit={saveTable}
+          className="space-y-4"
+        >
           <div className="grid grid-cols-2 gap-4">
             <Field label="Table Number">
-              <input name="number" required className="input" placeholder="e.g. T11" />
+              <input name="number" required className="input" placeholder="e.g. T11" defaultValue={tableModal.editing?.number ?? ''} />
             </Field>
             <Field label="Capacity (persons)">
-              <input name="capacity" type="number" min="1" max="20" required className="input" placeholder="4" defaultValue={4} />
+              <input name="capacity" type="number" min="1" max="20" required className="input" placeholder="4" defaultValue={tableModal.editing?.capacity ?? 4} />
             </Field>
           </div>
-          <Field label="Section">
-            <select name="tableTypeId" className="input">
+          <Field label="Section type">
+            <select name="tableTypeId" className="input" defaultValue={tableModal.editing?.tableTypeId ?? ''}>
               <option value="">— Standard (no section) —</option>
               {tableTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>

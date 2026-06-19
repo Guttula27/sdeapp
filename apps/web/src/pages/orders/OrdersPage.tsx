@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download, Maximize2, Minimize2, Filter, ChevronDown, ListOrdered, Save, Printer as PrinterIcon, ArrowUp, ArrowDown } from 'lucide-react';
+import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download, Maximize2, Minimize2, Filter, ChevronDown, Printer as PrinterIcon, ArrowUp, ArrowDown } from 'lucide-react';
 import { RootState } from '../../store';
 import { setOrders, updateOrder } from '../../store/slices/ordersSlice';
 import { getSocket } from '../../services/socket';
@@ -14,6 +14,7 @@ import { buildReceiptPayload } from '../../utils/receiptPayload';
 import ThermalReceipt from '../../components/receipt/ThermalReceipt';
 import { downloadReceiptPdf } from '../../components/receipt/downloadReceiptPdf';
 import Modal from '../../components/common/Modal';
+import CoursePlanner from '../../components/orders/CoursePlanner';
 
 const STATUS: Record<string, { label: string; dot: string; bg: string; text: string; border: string }> = {
   CREATED:          { label: 'Created',          dot: '#3b82f6', bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
@@ -1137,195 +1138,5 @@ function ItemStatusPanel({ orders, visibleItemsFn }: { orders: any[]; visibleIte
         )}
       </div>
     </aside>
-  );
-}
-
-/* ── Course planner ────────────────────────────────────────────
-   Groups order items into courses (Starter / Main / Dessert …)
-   that flow to the kitchen sequentially: course 2 stays held
-   until every item in course 1 is SERVED. */
-function CoursePlanner({
-  order,
-  onSaved,
-}: {
-  order: any;
-  onSaved: (updated: any) => void;
-}) {
-  const initial = useMemo(() => {
-    const labels: Record<string, string> = { ...(order.sequenceLabels || {}) };
-    const items: Record<string, number | null> = {};
-    let maxCourse = 0;
-    for (const it of order.items || []) {
-      items[it.id] = it.sequenceNumber ?? null;
-      if (it.sequenceNumber && it.sequenceNumber > maxCourse) maxCourse = it.sequenceNumber;
-    }
-    return { labels, items, courseCount: Math.max(1, maxCourse) };
-  }, [order.id, order.activeSequence, order.sequenceLabels]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const [open, setOpen] = useState<boolean>(false);
-  const [labels, setLabels] = useState<Record<string, string>>(initial.labels);
-  const [seq, setSeq] = useState<Record<string, number | null>>(initial.items);
-  const [courseCount, setCourseCount] = useState<number>(initial.courseCount);
-  const [saving, setSaving] = useState(false);
-
-  const hasSequencing = (order.items || []).some((i: any) => i.sequenceNumber != null);
-  const activeLabel = order.sequenceLabels?.[String(order.activeSequence)] || `Course ${order.activeSequence}`;
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const payloadItems = (order.items || []).map((it: any) => ({
-        itemId: it.id,
-        sequenceNumber: seq[it.id] ?? null,
-      }));
-      // Trim labels to only the courses in use
-      const cleaned: Record<string, string> = {};
-      for (let i = 1; i <= courseCount; i++) {
-        const v = (labels[String(i)] || '').trim();
-        if (v) cleaned[String(i)] = v;
-      }
-      const { data } = await api.patch(`/orders/${order.id}/sequences`, {
-        items: payloadItems,
-        labels: Object.keys(cleaned).length ? cleaned : null,
-      });
-      toast.success('Courses saved');
-      onSaved(data.data);
-      setOpen(false);
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to save courses');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const clearAll = () => {
-    const cleared: Record<string, number | null> = {};
-    for (const it of order.items || []) cleared[it.id] = null;
-    setSeq(cleared);
-    setLabels({});
-    setCourseCount(1);
-  };
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-slate-50 rounded-xl"
-      >
-        <ListOrdered size={14} className="text-indigo-500" />
-        <span className="text-sm font-bold text-slate-700">Courses</span>
-        {hasSequencing ? (
-          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
-            Now serving · {activeLabel}
-          </span>
-        ) : (
-          <span className="text-[10px] text-slate-400">Not sequenced</span>
-        )}
-        <ChevronDown size={14} className={clsx('ml-auto text-slate-400 transition-transform', open && 'rotate-180')} />
-      </button>
-
-      {open && (
-        <div className="border-t border-slate-100 px-4 py-3 space-y-3">
-          <p className="text-[11px] text-slate-500">
-            Group items into courses. The kitchen sees course 1 first; course 2 unlocks once every item in course 1 is SERVED. Already-cooking items can't be re-sequenced.
-          </p>
-
-          <div className="space-y-2">
-            {Array.from({ length: courseCount }, (_, i) => i + 1).map((c) => (
-              <div key={c} className="flex items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 w-16 shrink-0">Course {c}</span>
-                <input
-                  value={labels[String(c)] || ''}
-                  onChange={(e) => setLabels((p) => ({ ...p, [String(c)]: e.target.value }))}
-                  placeholder={c === 1 ? 'e.g. Starter' : c === 2 ? 'e.g. Main' : 'Name (optional)'}
-                  className="input text-sm py-1.5"
-                />
-                {c === order.activeSequence && hasSequencing && (
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 shrink-0">
-                    ACTIVE
-                  </span>
-                )}
-              </div>
-            ))}
-            <div className="flex gap-2">
-              <button
-                onClick={() => setCourseCount((n) => n + 1)}
-                className="text-[11px] font-semibold text-brand-800 hover:text-brand-900 inline-flex items-center gap-1"
-              >
-                <Plus size={11} /> Add a course
-              </button>
-              {courseCount > 1 && (
-                <button
-                  onClick={() => {
-                    const remove = courseCount;
-                    setCourseCount((n) => n - 1);
-                    // unassign items that were at the dropped course
-                    setSeq((p) => {
-                      const next = { ...p };
-                      for (const k of Object.keys(next)) {
-                        if (next[k] === remove) next[k] = null;
-                      }
-                      return next;
-                    });
-                    setLabels((p) => {
-                      const next = { ...p };
-                      delete next[String(remove)];
-                      return next;
-                    });
-                  }}
-                  className="text-[11px] font-semibold text-slate-500 hover:text-slate-700"
-                >
-                  Remove last course
-                </button>
-              )}
-              <button onClick={clearAll} className="text-[11px] font-semibold text-slate-400 hover:text-red-500 ml-auto">
-                Clear all
-              </button>
-            </div>
-          </div>
-
-          <div className="border-t border-slate-100 pt-3 space-y-1.5">
-            <p className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Assign items</p>
-            {(order.items || []).map((it: any) => {
-              const locked = it.status !== 'PENDING' && (seq[it.id] ?? null) === (it.sequenceNumber ?? null);
-              return (
-                <div key={it.id} className="flex items-center gap-2 text-xs">
-                  <span className="flex-1 truncate">
-                    {it.quantity}× {it.item?.name}{it.variant ? ` (${it.variant.name})` : ''}
-                  </span>
-                  <select
-                    value={seq[it.id] == null ? '' : String(seq[it.id])}
-                    onChange={(e) => {
-                      const v = e.target.value === '' ? null : Number(e.target.value);
-                      setSeq((p) => ({ ...p, [it.id]: v }));
-                    }}
-                    disabled={it.status !== 'PENDING'}
-                    title={it.status !== 'PENDING' ? `Already ${it.status} — can't reassign` : undefined}
-                    className="input text-xs py-1 w-28 disabled:opacity-60"
-                  >
-                    <option value="">None</option>
-                    {Array.from({ length: courseCount }, (_, i) => i + 1).map((c) => (
-                      <option key={c} value={c}>
-                        {labels[String(c)]?.trim() || `Course ${c}`}
-                      </option>
-                    ))}
-                  </select>
-                  {locked && it.sequenceNumber != null && (
-                    <span className="text-[9px] text-slate-400 shrink-0">locked</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="flex justify-end gap-2 pt-1">
-            <button onClick={() => setOpen(false)} className="btn-ghost text-xs">Cancel</button>
-            <button onClick={save} disabled={saving} className="btn-primary text-xs">
-              <Save size={12} /> {saving ? 'Saving…' : 'Save courses'}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
   );
 }

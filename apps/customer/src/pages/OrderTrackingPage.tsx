@@ -34,7 +34,17 @@ const STATUS_MSG: Record<string, { title: string; sub: string; emoji: string; cl
   RESOLVED:        { title: 'Dispute resolved',       sub: 'Thanks for your patience.',         emoji: '✅', cls: 'bg-sky-50 border-sky-200 text-sky-800' },
   FOR_REFUND:      { title: 'Refund pending',         sub: 'Your refund is being processed.',   emoji: '💸', cls: 'bg-pink-50 border-pink-200 text-pink-800' },
   REFUND_COMPLETE: { title: 'Refund complete',        sub: 'Money returned to your account.',   emoji: '✅', cls: 'bg-purple-50 border-purple-200 text-purple-800' },
+  // Parcel-path counterpart to OUT_FOR_SERVICE — kitchen is done,
+  // parcel station is staging it. Customer sees a "ready for pickup"
+  // line. Missing this map entry was crashing the whole tracking
+  // page when a parcel order hit this state.
+  READY_FOR_PICKUP: { title: 'Ready for pickup',      sub: 'Collect it at the parcel desk.',    emoji: '🛍️', cls: 'bg-emerald-50 border-emerald-200 text-emerald-800' },
 };
+
+// Last-line fallback for any future status the server adds before
+// the client catches up. The render would otherwise crash on the
+// next `msg.cls` / `msg.emoji` dereference.
+const FALLBACK_STATUS_MSG = { title: 'Order in progress', sub: 'Hang tight — we\'ll update you shortly.', emoji: '⏳', cls: 'bg-slate-50 border-slate-200 text-slate-700' };
 
 const DISPUTE_STATUS_STYLE: Record<string, { cls: string; label: string }> = {
   OPEN:      { cls: 'bg-red-100 text-red-700 border-red-200',    label: 'Open' },
@@ -222,7 +232,16 @@ export default function OrderTrackingPage() {
   const isDone      = ['SERVED', 'CANCELLED', 'DISPUTED', 'RESOLVED', 'REFUND_COMPLETE'].includes(order.status);
   const canDispute  = order.status === 'SERVED' && disputes.every(d => ['RESOLVED', 'CLOSED'].includes(d.status));
   const activeDispute = disputes.find(d => !['RESOLVED', 'CLOSED'].includes(d.status));
-  const msg         = STATUS_MSG[order.status];
+  const msg         = STATUS_MSG[order.status] || FALLBACK_STATUS_MSG;
+  // Bill status — for postpaid orders we surface a Pending / Paid pill
+  // so the diner sees clearly that the tab is still open even after
+  // food is served. Feedback prompts are gated on isPaid so the diner
+  // is only asked to rate after they've actually closed the bill,
+  // which prevents the staff-served-the-food-but-customer-walked-out
+  // scenario from leaking partial reviews.
+  const isPaid = Array.isArray(order.payments) && order.payments.some(
+    (p: any) => p?.status === 'SUCCESS' && !p?.isRefund,
+  );
 
   return (
     <div className="min-h-dvh bg-slate-50 flex flex-col">
@@ -247,6 +266,19 @@ export default function OrderTrackingPage() {
           <span className="inline-flex items-center gap-1 text-slate-300 bg-white/10 border border-white/20 rounded-full px-3 py-1 text-xs font-semibold">
             <Clock size={11} /> Placed {elapsed(order.createdAt)} ago
           </span>
+          {order.isPostpaid && (
+            <span
+              className={clsx(
+                'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold border',
+                isPaid
+                  ? 'text-emerald-200 bg-emerald-500/15 border-emerald-400/40'
+                  : 'text-amber-200 bg-amber-500/15 border-amber-400/40',
+              )}
+              title={isPaid ? 'Payment received — order closed' : 'Bill is still open at the table'}
+            >
+              Bill {isPaid ? 'paid' : 'pending'}
+            </span>
+          )}
         </div>
         {order.table && <p className="text-slate-400 text-sm mt-1">Table {order.table.number}</p>}
 
@@ -378,6 +410,7 @@ export default function OrderTrackingPage() {
                           <ItemProgressRow
                             key={child.id}
                             item={child}
+                            feedbackUnlocked={!order.isPostpaid || isPaid}
                             onReviewSaved={(review) => {
                               setOrder((prev: any) => prev ? ({
                                 ...prev,
@@ -394,6 +427,7 @@ export default function OrderTrackingPage() {
                     <ItemProgressRow
                       key={item.id}
                       item={item}
+                      feedbackUnlocked={!order.isPostpaid || isPaid}
                       onReviewSaved={(review) => {
                         setOrder((prev: any) => prev ? ({
                           ...prev,
@@ -440,6 +474,7 @@ export default function OrderTrackingPage() {
                       <ItemProgressRow
                         key={item.id}
                         item={item}
+                        feedbackUnlocked={!order.isPostpaid || isPaid}
                         onReviewSaved={(review) => {
                           setOrder((prev: any) => prev ? ({
                             ...prev,
@@ -712,7 +747,7 @@ function DisputeStatusCard({ dispute }: { dispute: any }) {
 }
 
 /* ── Per-item progress row ───────────────────────────────── */
-type ItemStatus = 'PENDING' | 'PREPARING' | 'READY' | 'SERVED' | 'CANCELLED';
+type ItemStatus = 'PENDING_VERIFICATION' | 'PENDING' | 'PREPARING' | 'READY' | 'SERVED' | 'CANCELLED';
 
 const ITEM_STEPS: { key: ItemStatus; label: string; color: string }[] = [
   { key: 'PENDING',   label: 'Queued',    color: '#94a3b8' },
@@ -721,7 +756,14 @@ const ITEM_STEPS: { key: ItemStatus; label: string; color: string }[] = [
   { key: 'SERVED',    label: 'Served',    color: '#14b8a6' },
 ];
 
+// Neutral fallback used both as the explicit PENDING_VERIFICATION
+// badge (postpaid adds where the service desk hasn't confirmed yet)
+// AND as a safety net for any future status the server adds before
+// the client catches up — better than crashing the whole page render.
+const FALLBACK_BADGE = { bg: '#fefce8', text: '#854d0e', border: '#fde68a', label: 'Awaiting confirmation', emoji: '🕒' };
+
 const ITEM_BADGE: Record<ItemStatus, { bg: string; text: string; border: string; label: string; emoji: string }> = {
+  PENDING_VERIFICATION: FALLBACK_BADGE,
   PENDING:   { bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', label: 'Queued',    emoji: '⏳' },
   PREPARING: { bg: '#e8efef', text: '#04181a', border: '#D2E5DF', label: 'Cooking',   emoji: '🍳' },
   READY:     { bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', label: 'Ready',     emoji: '🔔' },
@@ -729,11 +771,28 @@ const ITEM_BADGE: Record<ItemStatus, { bg: string; text: string; border: string;
   CANCELLED: { bg: '#fff1f2', text: '#be123c', border: '#fecdd3', label: 'Cancelled', emoji: '✕'  },
 };
 
-function ItemProgressRow({ item, onReviewSaved }: { item: any; onReviewSaved?: (review: any) => void }) {
+function ItemProgressRow({ item, onReviewSaved, feedbackUnlocked = true }: {
+  item: any;
+  onReviewSaved?: (review: any) => void;
+  // Defaults true so prepaid orders (no bill flow) keep their
+  // existing behaviour — once served, the rating form shows.
+  // Postpaid orders pass false until the bill is paid so the
+  // diner is asked for feedback only after they've closed out.
+  feedbackUnlocked?: boolean;
+}) {
   const status = (item.status || 'PENDING') as ItemStatus;
-  const badge = ITEM_BADGE[status];
+  // Always have a valid badge object so a server-added status the
+  // client doesn't know yet doesn't blow up the whole page render
+  // (which is what made the tracking page go blank on postpaid
+  // table orders before service desk confirmation).
+  const badge = ITEM_BADGE[status] || FALLBACK_BADGE;
   const idx = ITEM_STEPS.findIndex(s => s.key === status);
-  const canReview = status === 'SERVED';
+  const isServed = status === 'SERVED';
+  const canReview = isServed && feedbackUnlocked;
+  // PENDING_VERIFICATION sits *before* the four-step bar — leave the
+  // progress strip empty so the customer sees "Awaiting confirmation"
+  // without a misleading partial-progress line.
+  const isPreConfirmation = status === 'PENDING_VERIFICATION';
   // Blink the row while this specific item has a fresh unread
   // ITEM_READY alert AND the item itself is still in an active state.
   // Once status moves to SERVED or CANCELLED, blinking stops regardless
@@ -760,7 +819,7 @@ function ItemProgressRow({ item, onReviewSaved }: { item: any; onReviewSaved?: (
         </span>
       </div>
 
-      {status !== 'CANCELLED' && (
+      {status !== 'CANCELLED' && !isPreConfirmation && (
         <div className="flex items-center gap-1 mt-3">
           {ITEM_STEPS.map((step, i) => (
             <div key={step.key} className="flex-1 flex items-center gap-1">
@@ -770,7 +829,7 @@ function ItemProgressRow({ item, onReviewSaved }: { item: any; onReviewSaved?: (
           ))}
         </div>
       )}
-      {status !== 'CANCELLED' && (
+      {status !== 'CANCELLED' && !isPreConfirmation && (
         <div className="flex justify-between mt-1.5">
           {ITEM_STEPS.map((step, i) => (
             <span key={step.key} className="text-[9px] font-semibold"
@@ -780,12 +839,22 @@ function ItemProgressRow({ item, onReviewSaved }: { item: any; onReviewSaved?: (
           ))}
         </div>
       )}
+      {isPreConfirmation && (
+        <p className="text-[11px] text-amber-700 mt-2 leading-snug">
+          Service desk hasn't confirmed this line yet. It'll move to the kitchen as soon as they do.
+        </p>
+      )}
 
       {/* Inline rating form — appears once this individual item is served. */}
       {canReview && onReviewSaved && (
         <div className="mt-3 pt-3 border-t border-slate-100">
           <RateItemRow orderItem={item} onSaved={onReviewSaved} />
         </div>
+      )}
+      {isServed && !feedbackUnlocked && (
+        <p className="mt-3 pt-3 border-t border-slate-100 text-[11px] text-slate-500">
+          We'll ask for your rating once the bill is settled.
+        </p>
       )}
     </div>
   );

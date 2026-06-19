@@ -257,6 +257,11 @@ export default function PlaceOrderPage() {
   // Dine-in Postpaid is the only outlet type that gets the open-tab UX.
   const isPostpaidTableFlow = bookingMode === 'table' && outlet?.outletType === 'DINE_IN_POSTPAID';
   const [openOrder, setOpenOrder] = useState<any | null>(null);
+  // Every open (unpaid postpaid) tab at the currently-selected table.
+  // Drives the picker so the service desk can see all of "what's
+  // running" on this table without having to type each customer's
+  // phone number to find it.
+  const [tableOpenTabs, setTableOpenTabs] = useState<any[]>([]);
   // 'idle' = adding items / placing; 'billing' = Bill Now pressed, show Cash/UPI.
   const [billingState, setBillingState] = useState<'idle' | 'billing'>('idle');
 
@@ -280,6 +285,40 @@ export default function PlaceOrderPage() {
     }
   }, [isPostpaidTableFlow, tableId, outletId, customerPhone]);
   useEffect(() => { refreshOpenOrder(); setBillingState('idle'); }, [refreshOpenOrder]);
+
+  // Whenever the table changes (or one of the table's tabs gets billed
+  // / paid / cancelled), refresh the list of open tabs at this table so
+  // the picker stays current. The endpoint is the same one the service
+  // desk uses, scoped by tableId.
+  const refreshTableTabs = useCallback(async () => {
+    if (!isPostpaidTableFlow || !tableId) { setTableOpenTabs([]); return; }
+    try {
+      const { data } = await api.get(`/outlets/${outletId}/orders/service-desk/open-tabs`, {
+        params: { tableId },
+      });
+      setTableOpenTabs((data.data as any[]) || []);
+    } catch {
+      setTableOpenTabs([]);
+    }
+  }, [isPostpaidTableFlow, tableId, outletId]);
+  useEffect(() => { refreshTableTabs(); }, [refreshTableTabs]);
+
+  // Pick one of the listed tabs → make it the active order for further
+  // edits. Pulls phone + customer name into the form so the staff
+  // doesn't have to retype, and clears the cart so the next add lands
+  // on the correct line.
+  const selectTab = (tab: any) => {
+    setOpenOrder(tab);
+    if (tab?.customer?.phone) setCustomerPhone(tab.customer.phone);
+    setBillingState('idle');
+  };
+  // Start a fresh tab on the same table — clears openOrder and the
+  // phone field so staff can enter a new customer.
+  const startNewTab = () => {
+    setOpenOrder(null);
+    setCustomerPhone('');
+    setBillingState('idle');
+  };
 
   // If the outlet type later changes such that seating is no longer allowed
   // (or types/tables vanish), keep the booking mode coherent.
@@ -581,6 +620,9 @@ export default function PlaceOrderPage() {
       setCart([]);
       try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
       await refreshOpenOrder();
+      // Tab list also needs to refresh — a new tab just joined it,
+      // or an existing tab's total just changed.
+      await refreshTableTabs();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to place order');
     } finally {
@@ -595,6 +637,7 @@ export default function PlaceOrderPage() {
       const { data } = await api.patch(`/outlets/${outletId}/orders/${openOrder.id}/bill-request`);
       setOpenOrder(data.data);
       setBillingState('billing');
+      await refreshTableTabs();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to request bill');
     } finally {
@@ -972,16 +1015,16 @@ export default function PlaceOrderPage() {
                 <span className="text-xs font-semibold text-slate-700">Parcel / takeaway</span>
               </label>
             ) : (
-              <div className="space-y-2.5 bg-slate-50 rounded-xl px-3 py-2.5">
-                {/* Section pills — sections are typically just a handful
-                    (Indoor, AC, Outdoor, ...) so a button row reads faster
-                    than a dropdown. Active = outlined brand pill. */}
-                <div>
+              <div className="grid grid-cols-2 gap-2 bg-slate-50 rounded-xl px-3 py-2.5">
+                {/* Section pills + table dropdown share a row. Each
+                    column holds its own label so the pair stays
+                    readable inside the narrow cart sidebar. */}
+                <div className="min-w-0">
                   <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Section</label>
                   {visibleTableTypes.length === 0 ? (
-                    <p className="text-[11px] text-slate-400 italic">No sections configured</p>
+                    <p className="text-[11px] text-slate-400 italic">No sections</p>
                   ) : (
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-1">
                       {visibleTableTypes.map((tt) => {
                         const active = tt.id === tableTypeId;
                         return (
@@ -990,7 +1033,7 @@ export default function PlaceOrderPage() {
                             type="button"
                             onClick={() => { setTableTypeId(tt.id); setTableId(''); }}
                             className={clsx(
-                              'px-3 py-1.5 rounded-full text-xs font-bold transition-all border-[1.5px]',
+                              'px-2.5 py-1 rounded-full text-[11px] font-bold transition-all border-[1.5px]',
                               active
                                 ? 'border-brand-500 bg-brand-50 text-brand-700'
                                 : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
@@ -1003,39 +1046,110 @@ export default function PlaceOrderPage() {
                     </div>
                   )}
                 </div>
-                {/* Tables — kept as a dropdown because a section can hold
-                    many tables (15–30 in a typical restaurant); a button
-                    grid would crowd the cart sidebar. */}
-                <div>
+                <div className="min-w-0">
                   <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Table</label>
                   <select
                     value={tableId}
                     onChange={(e) => setTableId(e.target.value)}
                     disabled={!tableTypeId}
-                    className="input text-xs"
+                    className="input text-xs w-full"
                   >
                     <option value="">
-                      {!tableTypeId ? 'Pick a section first' : tablesForType.length ? 'Select a table…' : 'No tables in this section yet'}
+                      {!tableTypeId ? 'Pick section' : tablesForType.length ? 'Select…' : 'No tables'}
                     </option>
                     {tablesForType.map((t: any) => (
-                      <option key={t.id} value={t.id}>Table {t.number} · {t.capacity} pax</option>
+                      <option key={t.id} value={t.id}>Table {t.number} · {t.capacity}p</option>
                     ))}
                   </select>
                 </div>
               </div>
             )}
 
-            <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 flex items-center gap-1">
-                <Phone size={10} /> Customer phone <span className="text-slate-400 font-normal">(optional)</span>
+            {/* Open tabs at this table — only visible on the postpaid
+                table flow once a table is picked. Lets the staff pick
+                an existing tab to add items / bill, or start a new
+                tab without having to remember each customer's phone
+                number. */}
+            {isPostpaidTableFlow && tableId && (
+              <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-2">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
+                    Open tabs at this table
+                    <span className="text-[10px] font-semibold text-slate-400">
+                      · {tableOpenTabs.length}
+                    </span>
+                  </p>
+                  <button
+                    onClick={startNewTab}
+                    title="New tab (different customer)"
+                    className="inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-500 hover:text-brand-700 hover:bg-brand-50 border border-slate-200 transition-colors"
+                  >
+                    <Plus size={12} />
+                  </button>
+                </div>
+                {tableOpenTabs.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 italic py-2 text-center">
+                    No open tabs yet. Add items below to start one.
+                  </p>
+                ) : (
+                  <ul className="space-y-1">
+                    {tableOpenTabs.map((tab: any) => {
+                      const billed = !!tab.billRequestedAt;
+                      const active = openOrder?.id === tab.id;
+                      return (
+                        <li key={tab.id}>
+                          <button
+                            onClick={() => selectTab(tab)}
+                            className={clsx(
+                              'w-full text-left px-2 py-1.5 rounded-lg border transition-colors flex items-center justify-between gap-2',
+                              active
+                                ? 'bg-brand-50 border-brand-200 text-brand-900'
+                                : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700',
+                            )}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-bold flex items-center gap-1.5">
+                                <span>#{tab.orderNumber}</span>
+                                {billed && (
+                                  <span className="text-[9px] font-bold bg-violet-100 text-violet-800 border border-violet-200 px-1 py-0.5 rounded">
+                                    Bill requested
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-[10px] text-slate-500 truncate">
+                                {tab.customer?.name || '—'}
+                                {tab.customer?.phone ? ` · ${tab.customer.phone}` : ''}
+                              </p>
+                            </div>
+                            <span className="text-xs font-bold text-slate-700 shrink-0">
+                              ₹{Number(tab.totalAmount ?? 0).toFixed(0)}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {/* Customer phone — label + input on the same line so the
+                postpaid sidebar doesn't sprawl. Hint below in a
+                single inline line. */}
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="customer-phone-input"
+                className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1 shrink-0"
+              >
+                <Phone size={10} /> Phone
               </label>
               <input
+                id="customer-phone-input"
                 value={customerPhone}
                 onChange={e => setCustomerPhone(e.target.value)}
-                placeholder="+91 ..."
-                className="input text-xs"
+                placeholder="+91 ... (optional)"
+                className="input text-xs flex-1 min-w-0"
               />
-              <p className="text-[10px] text-slate-400 mt-1">For SMS updates if provided.</p>
             </div>
 
             <div className="flex flex-col gap-2">

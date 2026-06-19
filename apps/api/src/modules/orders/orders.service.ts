@@ -3,7 +3,7 @@ import { PrismaService } from '../../config/prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersGateway } from './orders.gateway';
-import { OrderStatus, OrderItemStatus, OutletType } from '@prisma/client';
+import { OrderStatus, OrderItemStatus, OutletType, PaymentStatus } from '@prisma/client';
 import { AuditLogService } from '../../config/logger/audit-log.service';
 import { EncryptionService } from '../../config/crypto/encryption.service';
 import { UserLookupService } from '../../config/crypto/user-lookup.service';
@@ -12,6 +12,11 @@ import { LifecycleDispatcherService } from '../customer-alerts/lifecycle-dispatc
 import { PricingService } from '../pricing/pricing.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { ServiceStationsService } from '../service-stations/service-stations.service';
+import {
+  evaluateCascade,
+  nowInOutletTz,
+  TimingSlot,
+} from '../../common/timing/timing-slots';
 
 @Injectable()
 export class OrdersService {
@@ -1204,19 +1209,14 @@ export class OrdersService {
         itemName: item.item?.name,
       }).catch(() => {});
 
-      // Order-level READY rollup fires its own event so customers also see a
-      // distinct "your full order is ready" alert.
-      if (rolledUp && updated.status === OrderStatus.READY) {
-        this.dispatcher.fire('ORDER_READY', {
-          customerId: updated.customerId,
-          customerName: updated.customer?.name,
-          businessId: outletForBiz?.businessId ?? null,
-          outletId: updated.outletId,
-          outletName: outletForBiz?.name,
-          orderId: updated.id,
-          orderNumber: updated.orderNumber,
-        }).catch(() => {});
-      }
+      // The order-level rollup ORDER_READY used to fire here too, which
+      // meant the customer got two loud alerts back-to-back when the
+      // last item flipped (one for the item, one for the order). The
+      // per-item alert already conveys "everything's ready" because
+      // it's the last unready item turning. ORDER_READY from this path
+      // is intentionally suppressed; ORDER_READY still fires from
+      // updateStatus() (line ~936) when the kitchen marks the whole
+      // order ready in one shot without going item-by-item.
     }
 
     // Parcel: when the rollup advances the order to READY_FOR_PICKUP
@@ -1523,6 +1523,56 @@ export class OrdersService {
     return { offerNames };
   }
 
+  /**
+   * Build the schedule chain for an item — outlet → menu (with outlet
+   * override) → category → subcategory → item — for the order-time
+   * cascade check. Mirrors the same cascade menu.service.getMenu uses
+   * so a stale cart can't slip through after the customer's window
+   * closed.
+   */
+  private async buildItemScheduleChain(itemId: string): Promise<
+    Array<{ slots: TimingSlot[]; label?: string }>
+  > {
+    const item = await this.prisma.item.findUnique({
+      where: { id: itemId },
+      include: {
+        timingSlots: true,
+        subcategory: {
+          include: {
+            timingSlots: true,
+            category: {
+              include: {
+                timingSlots: true,
+                menu: {
+                  include: {
+                    timingSlots: true,
+                    outletLinks: { include: { timingSlots: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!item) return [];
+    const cat = item.subcategory?.category;
+    const menu = cat?.menu;
+    const outletLink = menu?.outletLinks?.[0];
+    const shape = (rows: any[]): TimingSlot[] => (rows ?? []).map((r) => ({
+      dayOfWeek: r.dayOfWeek, startMinute: r.startMinute, endMinute: r.endMinute,
+    }));
+    const menuSlots = outletLink?.overrideTimings && outletLink.timingSlots.length
+      ? shape(outletLink.timingSlots)
+      : shape(menu?.timingSlots ?? []);
+    return [
+      { slots: menuSlots, label: menu?.name || 'Menu' },
+      { slots: shape(cat?.timingSlots), label: cat?.name },
+      { slots: shape(item.subcategory?.timingSlots), label: item.subcategory?.name },
+      { slots: shape(item.timingSlots), label: item.name },
+    ];
+  }
+
   private async resolveOrderItems(
     items: CreateOrderDto['items'],
     ctx: {
@@ -1556,6 +1606,17 @@ export class OrdersService {
         });
         if (!item) throw new NotFoundException(`Item ${i.itemId} not found`);
         if (!item.isAvailable) throw new BadRequestException(`Item "${item.name}" is not available`);
+
+        // Schedule check — the same cascade the customer menu shows is
+        // re-evaluated server-side so a stale cart from earlier in the
+        // day can't slip an out-of-window item through. Outlet hours
+        // (open-status) are enforced separately by the caller.
+        const scheduleChain = await this.buildItemScheduleChain(item.id);
+        const scheduleEval = evaluateCascade(scheduleChain, nowInOutletTz());
+        if (!scheduleEval.inSchedule) {
+          const blocker = scheduleEval.blockedBy?.label || item.name;
+          throw new BadRequestException(`"${blocker}" is not available right now`);
+        }
 
         // Limited-stock check: reject up-front (before the order is created) so
         // the customer sees a clean error and we don't have to roll anything
@@ -2106,6 +2167,115 @@ export class OrdersService {
     return { order: updated, verifiedCount: eligible.length, action };
   }
 
+  /**
+   * Adjust the quantity of a single line *while the service desk is
+   * verifying the order*. Only allowed while the line is in
+   * PENDING_VERIFICATION — once a line has gone to the kitchen, quantity
+   * changes go through the normal item-level cancel + re-add path so
+   * stock decrements and KOT history stay correct.
+   *
+   * Recomputes line total and rolls the change up into the order's
+   * subtotal / taxAmount / totalAmount so the customer's tracking
+   * page sees the new total immediately. GST-inclusive vs exclusive
+   * pricing on the outlet is respected.
+   */
+  async updateItemQuantityAtVerify(
+    orderId: string,
+    itemId: string,
+    quantity: number,
+    userId?: string,
+  ) {
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      throw new BadRequestException('Quantity must be a positive integer');
+    }
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        outlet: { select: { priceIncludesGst: true } },
+        items: true,
+      },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    const item = order.items.find((i) => i.id === itemId);
+    if (!item) throw new NotFoundException('Order item not found');
+    if (item.status !== OrderItemStatus.PENDING_VERIFICATION) {
+      throw new BadRequestException(
+        'Quantity can only be adjusted while the line is awaiting service-desk verification',
+      );
+    }
+
+    const unit = Number(item.unitPrice);
+    const gstRate = Number(item.gstRate ?? 0);
+    const inclusive = order.outlet?.priceIncludesGst ?? false;
+    // Mirror what pricing.service produces at order time: when prices
+    // include GST, totalPrice is the *net* (pre-tax) value and
+    // gstAmount the portion baked out; when exclusive, totalPrice is
+    // unit*qty and gstAmount is added on top.
+    let nextTotal: number;
+    let nextGst: number;
+    if (inclusive) {
+      const gross = unit * quantity;
+      const net = gross / (1 + gstRate / 100);
+      nextTotal = Math.round(net * 100) / 100;
+      nextGst = Math.round((gross - net) * 100) / 100;
+    } else {
+      nextTotal = Math.round(unit * quantity * 100) / 100;
+      nextGst = Math.round(nextTotal * (gstRate / 100) * 100) / 100;
+    }
+
+    // Recompute the order roll-up from every non-cancelled line, with
+    // the edited one's new figures patched in. Mirrors how
+    // pricing.service sums lines so the totals stay consistent.
+    const liveLines = order.items
+      .filter((i) => i.status !== OrderItemStatus.CANCELLED)
+      .map((i) => i.id === itemId
+        ? { totalPrice: nextTotal, gstAmount: nextGst }
+        : { totalPrice: Number(i.totalPrice), gstAmount: Number(i.gstAmount ?? 0) },
+      );
+    const subtotal = liveLines.reduce((s, l) => s + l.totalPrice, 0);
+    const taxAmount = liveLines.reduce((s, l) => s + l.gstAmount, 0);
+    const half = Math.round((taxAmount / 2) * 100) / 100;
+    // discount, parcelCharge, etc. stay as-is — we're not changing
+    // those here. totalAmount = subtotal + tax + parcel - discount.
+    const orderDiscount = Number(order.discountAmount ?? 0);
+    const orderParcel = Number((order as any).parcelCharge ?? 0);
+    const totalAmount = Math.round((subtotal + taxAmount + orderParcel - orderDiscount) * 100) / 100;
+
+    await this.prisma.$transaction([
+      this.prisma.orderItem.update({
+        where: { id: itemId },
+        data: { quantity, totalPrice: nextTotal, gstAmount: nextGst },
+      }),
+      this.prisma.order.update({
+        where: { id: orderId },
+        data: {
+          subtotal,
+          taxAmount,
+          sgstAmount: half,
+          cgstAmount: half,
+          totalAmount,
+        },
+      }),
+    ]);
+
+    const updated = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        items: { include: { item: true, variant: true } },
+        table: true,
+        outlet: { select: { id: true, name: true, outletType: true } },
+      },
+    });
+    if (updated) this.ordersGateway.emitOrderStatusUpdated(updated.outletId, updated);
+    this.audit.postpaidVerification({
+      actorId: userId ?? null,
+      orderId,
+      action: `qty:${quantity}`,
+      itemCount: 1,
+    });
+    return updated;
+  }
+
   // ─── Parcel desk: queue read for the parcel dashboard ──────────────────
   // Two lanes:
   //   pack     — parcel orders at READY (kitchen done, awaiting packaging)
@@ -2154,6 +2324,47 @@ export class OrdersService {
   //   release — self-service orders sitting at OUT_FOR_SERVICE
   //   pickup  — table-service orders sitting at READY
   // Parcel orders ride in their own UI (parcel station), not this queue.
+  /**
+   * "Open tabs" view for the service desk — every postpaid order at
+   * this outlet whose payment hasn't completed yet. Stays visible
+   * across the whole table lifecycle (verify → preparing → ready →
+   * served → bill requested → payment), only disappearing once the
+   * payment lands. Returns flat — client groups by section / table.
+   */
+  async getOpenServiceTabs(outletId: string, tableId?: string) {
+    // "Paid" means at least one Payment row exists with status=SUCCESS
+    // and isRefund=false. Anything else is an open tab — including
+    // orders where the bill was requested but payment hasn't settled
+    // and orders that are still verifying / cooking.
+    return this.prisma.order.findMany({
+      where: {
+        outletId,
+        isPostpaid: true,
+        status: { notIn: [OrderStatus.CANCELLED, OrderStatus.REFUND_COMPLETE] },
+        ...(tableId ? { tableId } : {}),
+        NOT: {
+          payments: {
+            some: { status: PaymentStatus.SUCCESS, isRefund: false },
+          },
+        },
+      },
+      include: {
+        items: { include: { item: true, variant: true } },
+        table: {
+          select: {
+            id: true,
+            number: true,
+            sectionId: true,
+            section: { select: { id: true, name: true } },
+          },
+        },
+        customer: { select: { id: true, name: true, phone: true } },
+        payments: { select: { id: true, status: true, isRefund: true, mode: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
   async getServiceDeskQueue(outletId: string) {
     const include = {
       items:    { include: { item: true, variant: true } },

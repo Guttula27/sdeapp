@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Param, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { MenuService } from './menu.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -114,5 +114,29 @@ export class BusinessMenuController {
     @Body() body: { orderedIds: string[] },
   ) {
     return this.menuService.reorderItems(subcategoryId, body?.orderedIds ?? []);
+  }
+
+  @Put('categories/:id/timings')
+  replaceCategoryTimings(
+    @Param('id') id: string,
+    @Body() body: { slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }> },
+  ) {
+    return this.menuService.replaceCategoryTimings(id, body?.slots ?? []);
+  }
+
+  @Put('subcategories/:id/timings')
+  replaceSubcategoryTimings(
+    @Param('id') id: string,
+    @Body() body: { slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }> },
+  ) {
+    return this.menuService.replaceSubcategoryTimings(id, body?.slots ?? []);
+  }
+
+  @Put('items/:id/timings')
+  replaceItemTimings(
+    @Param('id') id: string,
+    @Body() body: { slots: Array<{ dayOfWeek: number; startMinute: number; endMinute: number }> },
+  ) {
+    return this.menuService.replaceItemTimings(id, body?.slots ?? []);
   }
 }

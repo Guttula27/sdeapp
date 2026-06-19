@@ -31,6 +31,7 @@ import { TranslationsModule } from './modules/translations/translations.module';
 import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { MessageTemplatesModule } from './modules/message-templates/message-templates.module';
 import { CustomerAlertsModule } from './modules/customer-alerts/customer-alerts.module';
+import { PushModule } from './modules/push/push.module';
 import { ReviewsModule } from './modules/reviews/reviews.module';
 import { ClustersModule } from './modules/clusters/clusters.module';
 import { ClusterOrdersModule } from './modules/cluster-orders/cluster-orders.module';
@@ -44,6 +45,7 @@ import { PlatformSettingsModule } from './modules/platform-settings/platform-set
 import { LoggerModule } from './config/logger/logger.module';
 import { RequestLogMiddleware } from './config/logger/request-log.middleware';
 import { CryptoModule } from './config/crypto/crypto.module';
+import { RedisModule } from './config/redis/redis.module';
 
 @Module({
   imports: [
@@ -54,6 +56,7 @@ import { CryptoModule } from './config/crypto/crypto.module';
     }),
     LoggerModule,
     CryptoModule,
+    RedisModule,
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -83,6 +86,7 @@ import { CryptoModule } from './config/crypto/crypto.module';
     IntegrationsModule,
     MessageTemplatesModule,
     CustomerAlertsModule,
+    PushModule,
     ReviewsModule,
     ClustersModule,
     ClusterOrdersModule,

@@ -3,6 +3,7 @@ import { TemplateChannel } from '@prisma/client';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OrdersGateway } from '../orders/orders.gateway';
+import { PushService } from '../push/push.service';
 
 /**
  * Lifecycle triggers — keep in sync with the seeded platform template names.
@@ -80,6 +81,7 @@ export class LifecycleDispatcherService {
     private prisma: PrismaService,
     private notifications: NotificationsService,
     private ordersGateway: OrdersGateway,
+    private push: PushService,
   ) {}
 
   /**
@@ -180,6 +182,40 @@ export class LifecycleDispatcherService {
       }
     }
 
+    // Decide whether this alert should be "loud" (ringtone + popup +
+    // FCM push) or "quiet" (toast + bell-list entry only). The split
+    // mirrors the physical fulfilment model:
+    //
+    //   table-service (DINE_IN_*, HYBRID + tableId set)
+    //     → waiter walks the food over. Ringing the customer is
+    //       annoying and unnecessary; the tracking page status
+    //       update is enough.
+    //   self-service / pickup / parcel / counter
+    //     → customer has to act. Ring them.
+    //
+    // ORDER_PLACED / PAYMENT_RECEIVED / ORDER_SERVED are never loud
+    // regardless — those are informational. Only the "ready" set
+    // ever ring even on the self-service path.
+    const READY_TRIGGERS: LifecycleTrigger[] = ['ITEM_READY', 'ORDER_READY', 'PICKUP_READY'];
+    let isLoud = (READY_TRIGGERS as string[]).includes(trigger);
+    if (isLoud && ctx.orderId) {
+      const order = await this.prisma.order.findUnique({
+        where: { id: ctx.orderId },
+        select: { tableId: true, outlet: { select: { outletType: true } } },
+      });
+      const tableServiceOutlet = !!order && (
+        order.outlet?.outletType === 'DINE_IN_PREPAID'
+        || order.outlet?.outletType === 'DINE_IN_POSTPAID'
+        || order.outlet?.outletType === 'HYBRID'
+      );
+      // A table-service outlet AND a tableId on the order → waiter
+      // path. HYBRID outlets can do both, so we only suppress when a
+      // table is actually attached.
+      if (tableServiceOutlet && order?.tableId) {
+        isLoud = false;
+      }
+    }
+
     const alert = await this.prisma.customerAlert.create({
       data: {
         customerId: ctx.customerId,
@@ -191,12 +227,40 @@ export class LifecycleDispatcherService {
         ringtone: ctx.ringtone || customer.alertRingtone || 'chime',
         sentVia,
         whatsappError,
+        isLoud,
       },
     });
 
     // Push to the customer's socket room and the order's room so the customer
     // app can ring the ringtone + flash a toast in real time.
     this.ordersGateway.emitCustomerAlert(alert);
+
+    // Fan out to every push subscription this customer has registered
+    // (FCM tokens on Capacitor APKs today; Web Push subscriptions for
+    // browser PWAs once the SW handler lands). Fire-and-forget — the
+    // socket emit + in-app retry path above is already best-effort,
+    // and a push failure shouldn't fail the calling order flow.
+    // Quiet alerts skip the push pathway entirely — the customer
+    // already sees the status update on the tracking page; no need
+    // to wake their device.
+    if (isLoud) {
+      void this.push.sendToUser(ctx.customerId, {
+        title: alert.title,
+        body: alert.body,
+        ringtone: alert.ringtone,
+        data: {
+          // Keep the keys short and primitive — FCM data payload is a
+          // flat string→string map. The customer client uses these to
+          // deep-link into the right page when the user taps the
+          // notification.
+          alertId: alert.id,
+          trigger: alert.trigger,
+          ...(alert.orderId ? { orderId: alert.orderId } : {}),
+          ...(alert.orderItemId ? { orderItemId: alert.orderItemId } : {}),
+        },
+      }).catch((e) => this.logger.warn(`Push fan-out failed for ${ctx.customerId}: ${e?.message}`));
+    }
+
     return alert;
   }
 }

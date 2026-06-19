@@ -197,6 +197,7 @@ model User {
   customerClusterOrders  ClusterOrder[]          @relation("CustomerClusterOrders")
   customerAlerts         CustomerAlert[]
   sessions               Session[]
+  pushSubscriptions      PushSubscription[]
   auditLogs              AuditLog[]
   kitchenStations        KitchenStation[]        @relation("StationWorker")
   serviceStationWorkers  ServiceStationWorker[]
@@ -335,6 +336,37 @@ model Session {
   createdAt DateTime @default(now())
 
   @@map("paynpik_sessions")
+}
+
+// One row per (user, device) so the push fan-out hits every installed
+// PWA / Capacitor APK the customer has signed in on. token is the
+// FCM registration id for Android; for browser Web Push (added later)
+// we'll either reuse this column with kind=WEBPUSH + a separate JSON
+// blob for the keys, or add a dedicated WebPushSubscription model.
+//
+// platform is a free-text tag (`android`, `ios`, `web`) so analytics
+// can later answer "what % of our customers are on the APK." The
+// composite unique on (userId, token) makes re-registration cheap —
+// the same device reuses the same row.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      PushKind @default(FCM)
+  token     String   @db.VarChar(500)
+  platform  String?  @db.VarChar(32)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, token])
+  @@index([userId])
+  @@map("paynpik_push_subscriptions")
+}
+
+enum PushKind {
+  FCM     // Firebase Cloud Messaging (Capacitor Android, iOS, web Chrome via FCM gateway)
+  WEBPUSH // VAPID Web Push (browser PWAs that opted out of FCM gateway)
 }
 
 model AuditLog {
@@ -686,6 +718,10 @@ model Category {
   discounts     Discount[]
   // Offers that target this category as the freebie pool (scope=CATEGORY).
   offerGets     Offer[]       @relation("OfferGetCategory")
+  // Optional per-day availability windows. Absent = no constraint at this
+  // level; the outlet hours and any parent-level slots still apply
+  // (cascading semantics — see menu.service.getMenu).
+  timingSlots   CategoryTimingSlot[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -694,6 +730,21 @@ model Category {
   @@index([businessId])
   @@index([menuId])
   @@map("paynpik_categories")
+}
+
+// Per-day-of-week availability slot at the category level. Same shape as
+// MenuTimingSlot (dayOfWeek 1=Mon..7=Sun, minutes-since-midnight 0..1440).
+// Multiple rows per day are allowed for split shifts.
+model CategoryTimingSlot {
+  id          String   @id @default(cuid())
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int
+  startMinute Int
+  endMinute   Int
+
+  @@index([categoryId, dayOfWeek])
+  @@map("paynpik_category_timing_slots")
 }
 
 model Subcategory {
@@ -705,13 +756,27 @@ model Subcategory {
   categoryId   String
   category     Category @relation(fields: [categoryId], references: [id])
 
-  items     Item[]
-  discounts Discount[]
+  items       Item[]
+  discounts   Discount[]
+  // Optional per-day availability windows (see CategoryTimingSlot).
+  timingSlots SubcategoryTimingSlot[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("paynpik_subcategories")
+}
+
+model SubcategoryTimingSlot {
+  id            String      @id @default(cuid())
+  subcategoryId String
+  subcategory   Subcategory @relation(fields: [subcategoryId], references: [id], onDelete: Cascade)
+  dayOfWeek     Int
+  startMinute   Int
+  endMinute     Int
+
+  @@index([subcategoryId, dayOfWeek])
+  @@map("paynpik_subcategory_timing_slots")
 }
 
 // ─── Menus ─────────────────────────────────────────────────────
@@ -872,11 +937,25 @@ model Item {
   bundleParentLinks  ItemBundleChild[]  @relation("BundleChildItem")
   offerBuyFor        Offer[]            @relation("OfferBuyItem")
   offerGetFor        Offer[]            @relation("OfferGetItem")
+  // Optional per-day availability windows (see CategoryTimingSlot).
+  timingSlots        ItemTimingSlot[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("paynpik_items")
+}
+
+model ItemTimingSlot {
+  id          String @id @default(cuid())
+  itemId      String
+  item        Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int
+  startMinute Int
+  endMinute   Int
+
+  @@index([itemId, dayOfWeek])
+  @@map("paynpik_item_timing_slots")
 }
 
 model ItemImage {
@@ -1856,6 +1935,14 @@ model CustomerAlert {
   sentVia       String   @default("IN_APP") // IN_APP | WHATSAPP | BOTH
   whatsappError String?
   isRead        Boolean  @default(false)
+  // Whether this alert should ring + vibrate + push.
+  //   true  → full loud-alert UX (modal + ringtone + FCM push)
+  //   false → quiet — toast + bell-list entry only, no sound / push
+  // Set false for table-service ready events where a waiter is
+  // walking the food over and the customer doesn't need to be
+  // hailed. Set true for self-service / pickup / parcel where the
+  // customer has to act.
+  isLoud        Boolean  @default(true)
   createdAt     DateTime @default(now())
 
   @@index([customerId])
