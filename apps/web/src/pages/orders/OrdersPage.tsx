@@ -246,8 +246,10 @@ export default function OrdersPage() {
   // scope for the modal — staff can run UPI shares through the
   // regular pay flow individually until the balance reaches zero.
   const [splitTarget, setSplitTarget] = useState<any>(null);
-  const [splitRows, setSplitRows] = useState<Array<{ amount: string; label: string }>>([]);
+  const [splitRows, setSplitRows] = useState<Array<{ amount: string; label: string; phone: string }>>([]);
   const [splitSubmitting, setSplitSubmitting] = useState(false);
+  // Reload trigger for the per-share status panel below the detail.
+  const [shareReload, setShareReload] = useState(0);
   const splitOutstanding = (() => {
     if (!splitTarget) return 0;
     const total = Number(splitTarget.totalAmount ?? 0);
@@ -273,6 +275,7 @@ export default function OrdersPage() {
         ? (outstanding - evenShare * (ways - 1)).toFixed(2)
         : evenShare.toFixed(2)),
       label: '',
+      phone: '',
     }));
     setSplitTarget(order);
     setSplitRows(rows);
@@ -1241,6 +1244,18 @@ export default function OrdersPage() {
               );
             })() : null}
 
+            {/* Split-bill per-share status panel — only renders when
+                the order has at least one share (splitTotalShares > 0).
+                Live progress + Resend / Cancel / Mark cash actions. */}
+            {Number(detail.splitTotalShares ?? 0) > 0 && (
+              <SplitSharesPanel
+                outletId={detail.outletId || outletId}
+                orderId={detail.id}
+                reloadKey={shareReload}
+                onChange={() => setShareReload((r) => r + 1)}
+              />
+            )}
+
             {/* Course planner */}
             <CoursePlanner
               order={detail}
@@ -1547,47 +1562,46 @@ export default function OrdersPage() {
               disabled={
                 splitSubmitting
                 || splitRows.length === 0
-                || splitRows.some((r) => !r.amount || Number(r.amount) <= 0)
+                || splitRows.some((r) => !r.amount || Number(r.amount) <= 0 || !r.phone?.trim())
                 || Math.abs(splitSumAssigned - splitOutstanding) > 0.005
               }
               onClick={async () => {
                 if (!splitTarget) return;
                 setSplitSubmitting(true);
                 try {
-                  // Fire payments in series so a failure mid-flight
-                  // doesn't leave the order half-split with no
-                  // diagnostic — toast shows what worked + what didn't.
-                  let ok = 0;
-                  for (const row of splitRows) {
-                    try {
-                      await api.post('/payments/initiate', {
-                        orderId: splitTarget.id,
-                        mode: 'CASH',
-                        amount: Number(row.amount),
-                      });
-                      ok += 1;
-                    } catch (err: any) {
-                      toast.error(`Share ${ok + 1} failed: ${err?.response?.data?.message || err?.message}`);
-                      break;
-                    }
-                  }
-                  if (ok === splitRows.length) {
-                    toast.success(`${ok} shares collected`);
-                    setSplitTarget(null);
-                    setSplitRows([]);
-                    // Refresh the detail to show new payments.
-                    try {
-                      const { data } = await api.get(`/outlets/${splitTarget.outletId || outletId}/orders/${splitTarget.id}`);
-                      setDetail(data.data);
-                      dispatch(updateOrder(data.data));
-                    } catch { /* best-effort */ }
-                  }
+                  // One round-trip — server creates N SplitShare rows
+                  // + dispatches WhatsApp per share inside a single
+                  // transaction. Replaces the previous "fire N cash
+                  // payments in series" behaviour.
+                  await api.post(
+                    `/outlets/${splitTarget.outletId || outletId}/orders/${splitTarget.id}/split-shares`,
+                    {
+                      shares: splitRows.map((r) => ({
+                        amount: Number(r.amount),
+                        customerName: r.label?.trim() || undefined,
+                        customerPhone: r.phone.trim(),
+                      })),
+                    },
+                  );
+                  toast.success(`${splitRows.length} share${splitRows.length === 1 ? '' : 's'} sent`);
+                  setSplitTarget(null);
+                  setSplitRows([]);
+                  // Refresh the detail to show split counters + the
+                  // per-share status panel below.
+                  try {
+                    const { data } = await api.get(`/outlets/${splitTarget.outletId || outletId}/orders/${splitTarget.id}`);
+                    setDetail(data.data);
+                    dispatch(updateOrder(data.data));
+                  } catch { /* best-effort */ }
+                  setShareReload((r) => r + 1);
+                } catch (err: any) {
+                  toast.error(err?.response?.data?.message || err?.message || 'Failed to create split');
                 } finally {
                   setSplitSubmitting(false);
                 }
               }}
             >
-              <UsersIcon size={13} /> Collect {splitRows.length} share{splitRows.length === 1 ? '' : 's'}
+              <UsersIcon size={13} /> Send {splitRows.length} share{splitRows.length === 1 ? '' : 's'}
             </button>
           </>
         }
@@ -1627,8 +1641,8 @@ export default function OrdersPage() {
 
             <div className="space-y-2">
               {splitRows.map((row, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold w-12 shrink-0">
+                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                  <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold col-span-1">
                     #{idx + 1}
                   </span>
                   <input
@@ -1636,7 +1650,15 @@ export default function OrdersPage() {
                     value={row.label}
                     onChange={(e) => setSplitRows((p) => p.map((r, i) => i === idx ? { ...r, label: e.target.value } : r))}
                     placeholder="Name (optional)"
-                    className="input text-sm flex-1"
+                    className="input text-sm col-span-3"
+                  />
+                  <input
+                    type="tel"
+                    value={row.phone}
+                    onChange={(e) => setSplitRows((p) => p.map((r, i) => i === idx ? { ...r, phone: e.target.value } : r))}
+                    placeholder="Phone (required)"
+                    className="input text-sm col-span-4 tabular-nums"
+                    inputMode="tel"
                   />
                   <input
                     type="number"
@@ -1644,12 +1666,12 @@ export default function OrdersPage() {
                     min="0"
                     value={row.amount}
                     onChange={(e) => setSplitRows((p) => p.map((r, i) => i === idx ? { ...r, amount: e.target.value } : r))}
-                    className="input text-sm w-28 tabular-nums"
+                    className="input text-sm col-span-3 tabular-nums"
                   />
                   <button
                     type="button"
                     onClick={() => setSplitRows((p) => p.filter((_, i) => i !== idx))}
-                    className="text-slate-400 hover:text-rose-600"
+                    className="text-slate-400 hover:text-rose-600 col-span-1 justify-self-end"
                     disabled={splitRows.length <= 1}
                     title="Remove share"
                   >
@@ -1669,7 +1691,7 @@ export default function OrdersPage() {
                   const nextCount = p.length + 1;
                   const evenShare = Math.floor((splitOutstanding / nextCount) * 100) / 100;
                   const last = Math.round((splitOutstanding - evenShare * (nextCount - 1)) * 100) / 100;
-                  return p.concat({ amount: '0', label: '' }).map((r, i, arr) => ({
+                  return p.concat({ amount: '0', label: '', phone: '' }).map((r, i, arr) => ({
                     ...r,
                     amount: (i === arr.length - 1 ? last : evenShare).toFixed(2),
                   }));
@@ -1681,8 +1703,9 @@ export default function OrdersPage() {
             </div>
 
             <p className="text-[11px] text-slate-400">
-              All shares are recorded as CASH payments and auto-confirm immediately. For mixed cash + UPI splits,
-              run the UPI shares through the regular Pay flow individually until the balance reaches zero.
+              Each share gets a WhatsApp message with a deep link to their personal bill — the diner pays through
+              the customer app via UPI or Razorpay. Use Resend / Cancel / Mark cash on the per-share panel below
+              the order detail to chase unpaid shares.
             </p>
           </div>
         )}
@@ -1818,6 +1841,134 @@ function AggregatorCustomerPill({ customer, channel }: { customer: any; channel:
         </span>
         {lastVisitText && <span className="text-slate-500">· {lastVisitText}</span>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Per-share status panel for split-billed orders. Renders inside
+ * the OrdersPage detail modal. Each row shows the diner's name +
+ * phone + amount + lifecycle status, with Resend / Cancel / Mark
+ * cash actions for unsettled shares. Fetched on mount + every time
+ * the reloadKey bumps (parent toggles it after a new send or after
+ * a per-row action).
+ */
+function SplitSharesPanel({
+  outletId,
+  orderId,
+  reloadKey,
+  onChange,
+}: {
+  outletId: string;
+  orderId: string;
+  reloadKey: number;
+  onChange: () => void;
+}) {
+  const [shares, setShares] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.get(`/outlets/${outletId}/orders/${orderId}/split-shares`)
+      .then((r) => { if (!cancelled) setShares(r.data?.data ?? []); })
+      .catch(() => { if (!cancelled) setShares([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [outletId, orderId, reloadKey]);
+
+  const STATUS_CFG: Record<string, { bg: string; text: string; icon: any; label: string }> = {
+    PENDING:   { bg: 'bg-slate-100',   text: 'text-slate-600',  icon: Clock,         label: 'Pending' },
+    SENT:      { bg: 'bg-amber-50',    text: 'text-amber-800',  icon: Clock,         label: 'Sent' },
+    VIEWED:    { bg: 'bg-sky-50',      text: 'text-sky-800',    icon: Eye,           label: 'Viewed' },
+    PAID:      { bg: 'bg-emerald-50',  text: 'text-emerald-700',icon: ArrowRight,    label: 'Paid' },
+    CANCELLED: { bg: 'bg-slate-100',   text: 'text-slate-500',  icon: X,             label: 'Cancelled' },
+    EXPIRED:   { bg: 'bg-slate-100',   text: 'text-slate-500',  icon: X,             label: 'Expired' },
+  };
+
+  const act = async (id: string, action: 'resend' | 'cancel' | 'mark-cash') => {
+    setBusy(id + action);
+    try {
+      await api.post(`/split-shares/${id}/${action}`, {});
+      toast.success(action === 'resend' ? 'Resent' : action === 'cancel' ? 'Cancelled' : 'Marked paid as cash');
+      onChange();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || `${action} failed`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (loading) return <div className="text-xs text-slate-400 py-3">Loading split shares…</div>;
+  if (!shares.length) return null;
+
+  const paid = shares.filter((s) => s.status === 'PAID').length;
+  const total = shares.length;
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+      <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+        <UsersIcon size={12} className="text-slate-500" />
+        <span className="text-[10px] uppercase tracking-wider font-bold text-slate-600">Split shares</span>
+        <span className="ml-auto text-[11px] font-semibold text-slate-900 tabular-nums">
+          {paid} of {total} paid
+        </span>
+      </div>
+      <ul className="divide-y divide-slate-100">
+        {shares.map((s) => {
+          const cfg = STATUS_CFG[s.status] ?? STATUS_CFG.PENDING;
+          const Icon = cfg.icon;
+          const live = !['PAID', 'CANCELLED', 'EXPIRED'].includes(s.status);
+          return (
+            <li key={s.id} className="px-3 py-2 flex items-center gap-2 text-xs">
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-slate-900 truncate">
+                  {s.customerName || 'Guest'} · {s.customerPhone}
+                </p>
+                <p className="text-[10px] text-slate-500">
+                  {s.sentAt && <>Sent {new Date(s.sentAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>}
+                  {s.paidAt && <> · Paid {new Date(s.paidAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>}
+                </p>
+              </div>
+              <span className="font-semibold text-slate-900 tabular-nums w-16 text-right shrink-0">
+                ₹{Number(s.amount).toFixed(2)}
+              </span>
+              <span className={`inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${cfg.bg} ${cfg.text}`}>
+                <Icon size={9} /> {cfg.label}
+              </span>
+              {live && (
+                <div className="flex items-center gap-1 ml-1">
+                  <button
+                    onClick={() => act(s.id, 'resend')}
+                    disabled={!!busy}
+                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+                    title="Resend the WhatsApp link"
+                  >
+                    Resend
+                  </button>
+                  <button
+                    onClick={() => act(s.id, 'mark-cash')}
+                    disabled={!!busy}
+                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-40"
+                    title="Collected cash directly — settle without the customer pay flow"
+                  >
+                    Mark cash
+                  </button>
+                  <button
+                    onClick={() => act(s.id, 'cancel')}
+                    disabled={!!busy}
+                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-40"
+                    title="Cancel this share — diner can no longer pay it"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
