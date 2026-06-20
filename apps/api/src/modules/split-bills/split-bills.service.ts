@@ -55,7 +55,8 @@ export class SplitBillsService {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, outletId },
       include: {
-        outlet: { select: { id: true, name: true } },
+        // Outlet's Phase B knobs drive expiresAt at create time.
+        outlet: { select: { id: true, name: true, splitExpireAfterMinutes: true } },
         payments: {
           where: { status: PaymentStatus.SUCCESS, isRefund: false },
           select: { amount: true },
@@ -107,6 +108,13 @@ export class SplitBillsService {
 
     // Materialise + dispatch in one transaction so the Order counters
     // reflect what was actually persisted.
+    // Phase B: precompute expiresAt from the outlet's expiry window so
+    // the Bull job can compare against a stamped value without
+    // re-reading the config on every scan.
+    const expiresAt = new Date(
+      Date.now() + (order.outlet?.splitExpireAfterMinutes ?? 1440) * 60_000,
+    );
+
     const created = await this.prisma.$transaction(async (tx) => {
       const rows: Array<Awaited<ReturnType<typeof tx.splitShare.create>>> = [];
       for (const s of shares) {
@@ -117,6 +125,7 @@ export class SplitBillsService {
             customerName: s.customerName?.trim() || null,
             customerPhone: s.customerPhone.trim(),
             createdById,
+            expiresAt,
           },
         });
         rows.push(row);

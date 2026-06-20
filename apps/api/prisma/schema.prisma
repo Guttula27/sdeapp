@@ -132,6 +132,11 @@ enum SplitShareStatus {
   EXPIRED         // Auto-expired by the reminder/expiry job (Phase B)
 }
 
+enum SplitFeeAbsorption {
+  OUTLET          // Default — outlet eats the Razorpay fee, diner pays exactly their share
+  CUSTOMER        // Diner pays share + Razorpay convenience fee + GST on the fee
+}
+
 // Order origin / aggregator channel. DIRECT = walk-in, customer PWA,
 // QR scan — the existing flow. Other values mark orders that came
 // inbound from a third-party marketplace, so reports + the kitchen
@@ -682,6 +687,23 @@ model Outlet {
   discounts Discount[]
   offers    Offer[]
   printers  Printer[]
+
+  // Split-bill Phase B knobs.
+  //   splitReminderEveryMinutes — gap between auto-reminders to a
+  //     pending share. Default 60 min.
+  //   splitMaxReminders — caps the resend loop so a diner who's
+  //     ignoring the message doesn't get spammed indefinitely. Default 3.
+  //   splitExpireAfterMinutes — total window from share creation;
+  //     once crossed without payment, the share auto-EXPIREs. Default
+  //     1440 (24h).
+  //   splitFeesAbsorbedBy — who pays the Razorpay convenience fee
+  //     when the diner chooses Razorpay. CUSTOMER adds the fee to the
+  //     payment-link total + shows a Convenience Fee line on the
+  //     BillSharePage breakdown. OUTLET (default) eats the fee.
+  splitReminderEveryMinutes Int                @default(60)
+  splitMaxReminders         Int                @default(3)
+  splitExpireAfterMinutes   Int                @default(1440)
+  splitFeesAbsorbedBy       SplitFeeAbsorption @default(OUTLET)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1736,6 +1758,15 @@ model SplitShare {
   // on shift X" so the audit trail explains why a share didn't
   // settle through the gateway.
   notes           String?
+  // Phase B fields. remindersSent caps the auto-resend job; once it
+  // hits the outlet's splitMaxReminders the share is left alone.
+  // lastReminderAt is the throttle anchor — the job only sends the
+  // next reminder when (now - lastReminderAt) >= splitReminderEvery.
+  // expiresAt is computed at create-time from outlet.splitExpireAfter;
+  // when crossed without a payment, the share auto-flips to EXPIRED.
+  remindersSent   Int       @default(0)
+  lastReminderAt  DateTime?
+  expiresAt       DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
