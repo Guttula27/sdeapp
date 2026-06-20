@@ -56,6 +56,12 @@ export class SwiggyAdapter implements AggregatorAdapter {
       channel: AggregatorChannel.SWIGGY,
       externalOrderId: String(order.order_id),
       customer: {
+        // Swiggy exposes customer_id at the order level (flat shape,
+        // unlike Zomato's nested customer object). Fall back to the
+        // masked phone when missing.
+        externalCustomerId: order.customer_id
+          ? String(order.customer_id)
+          : undefined,
         name: order.customer_name,
         phone: order.customer_phone,
       },

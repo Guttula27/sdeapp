@@ -60,6 +60,13 @@ export class ZomatoAdapter implements AggregatorAdapter {
       channel: AggregatorChannel.ZOMATO,
       externalOrderId: String(order.order_id),
       customer: {
+        // Zomato exposes a stable per-customer id on the customer
+        // object. When the field is absent (very early integration
+        // payloads, partner-test orders) the service falls back to
+        // the masked phone.
+        externalCustomerId: order.customer?.customer_id
+          ? String(order.customer.customer_id)
+          : undefined,
         name: order.customer?.name,
         phone: order.customer?.phone,
       },

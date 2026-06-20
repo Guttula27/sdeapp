@@ -618,6 +618,7 @@ model Outlet {
   orders                 Order[]
   outletShifts           OutletShift[]
   aggregatorIntegrations AggregatorIntegration[]
+  aggregatorCustomers    AggregatorCustomer[]
   tables                 Table[]
   qrCodes                QRCode[]
   kitchenStations        KitchenStation[]
@@ -1717,12 +1718,67 @@ model AggregatorOrder {
   // operator can see why a status push didn't land.
   lastSyncError   String?             @db.Text
 
+  // Marketplace customer link. Nullable because the aggregator may
+  // not expose a stable customer id on every payload, and historical
+  // rows from before this column existed have no link. The Order's
+  // own customerId stays null for aggregator orders — we don't
+  // pollute the User table with synthetic rows for masked phones.
+  aggregatorCustomerId String?
+  aggregatorCustomer   AggregatorCustomer? @relation(fields: [aggregatorCustomerId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([channel, externalOrderId])
   @@index([channel, status])
+  @@index([aggregatorCustomerId])
   @@map("paynpik_aggregator_orders")
+}
+
+// Per-marketplace customer record. Separate from User because:
+//   • Aggregators mask phone numbers, so we can't reliably join to
+//     User by phone — the same real person ordering on Zomato vs
+//     direct gives us two different "phones" that we shouldn't
+//     auto-merge.
+//   • The aggregator's stable customer_id (when exposed by the
+//     provider) is a far better identity anchor than the masked phone.
+//   • Reports + the recognition pill on OrdersPage need a clean way
+//     to say "Repeat Swiggy customer · 5th order" without polluting
+//     direct-customer counts.
+//
+// Scoped per-outlet so the recognition counters stay local to where
+// the customer actually orders. A chain with one Swiggy customer
+// across three outlets gets three rows, which is what we want for
+// per-location loyalty/recognition.
+model AggregatorCustomer {
+  id                  String              @id @default(cuid())
+  outletId            String
+  outlet              Outlet              @relation(fields: [outletId], references: [id])
+  channel             AggregatorChannel
+  // The aggregator's stable per-customer identifier. Falls back to
+  // the masked phone when the provider doesn't expose this (rare but
+  // possible). The @@unique below uses outletId+channel+this so the
+  // upsert path can land on a stable row.
+  externalCustomerId  String
+  displayName         String?
+  // Aggregator-proxied phone — typically a number that connects to
+  // the real customer via the aggregator's call-masking service.
+  // Stored for the packing slip and the rider-callback flow.
+  maskedPhone         String?
+  // Denormalised aggregates so the recognition pill can render
+  // without a follow-up COUNT/MAX query per order.
+  firstOrderAt        DateTime            @default(now())
+  lastOrderAt         DateTime            @default(now())
+  orderCount          Int                 @default(0)
+
+  orders              AggregatorOrder[]
+
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@unique([outletId, channel, externalCustomerId])
+  @@index([channel, externalCustomerId])
+  @@map("paynpik_aggregator_customers")
 }
 
 model AggregatorItemMapping {

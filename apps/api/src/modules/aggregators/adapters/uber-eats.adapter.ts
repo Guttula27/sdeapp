@@ -57,8 +57,13 @@ export class UberEatsAdapter implements AggregatorAdapter {
       channel: AggregatorChannel.UBER_EATS,
       externalOrderId: String(order.id),
       customer: {
-        name: order.customer?.name,
-        phone: order.customer?.phone,
+        // Uber Eats uses "eater" for the customer entity. The eater.id
+        // is stable per customer per restaurant.
+        externalCustomerId: order.eater?.id
+          ? String(order.eater.id)
+          : undefined,
+        name: order.customer?.name ?? order.eater?.first_name,
+        phone: order.customer?.phone ?? order.eater?.phone,
       },
       items,
       reportedTotal: order.payment?.charges?.total?.amount

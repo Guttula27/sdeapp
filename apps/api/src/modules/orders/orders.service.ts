@@ -816,8 +816,26 @@ export class OrdersService {
         // Aggregator side-table — when present, the packing slip
         // printer surfaces the external order id alongside our
         // orderNumber so the rider's app and our parcel agree.
+        // Includes the marketplace customer link so OrdersPage can
+        // render a "Repeat Swiggy customer · 5th order" recognition
+        // pill (the regular customer-pill query is User-bound and
+        // won't fire for these — Order.customerId is null).
         aggregatorOrder: {
-          select: { channel: true, externalOrderId: true, status: true },
+          select: {
+            channel: true,
+            externalOrderId: true,
+            status: true,
+            aggregatorCustomer: {
+              select: {
+                id: true,
+                displayName: true,
+                maskedPhone: true,
+                orderCount: true,
+                firstOrderAt: true,
+                lastOrderAt: true,
+              },
+            },
+          },
         },
       },
     });

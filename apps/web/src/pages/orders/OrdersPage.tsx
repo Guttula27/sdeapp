@@ -1182,8 +1182,13 @@ export default function OrdersPage() {
               <span className="text-sm font-semibold" style={{ color: STATUS[detail.status]?.text }}>{STATUS[detail.status]?.label}</span>
             </div>
 
-            {/* Customer + tag + recognition insights */}
-            {detail.customer && (() => {
+            {/* Customer + tag + recognition insights. Direct customers
+                render the User chip + the per-outlet insights pill;
+                aggregator orders (Order.customerId is always null —
+                marketplace phones are masked) render a parallel chip
+                fed by AggregatorCustomer so staff still see "5th order
+                from this Swiggy customer". */}
+            {detail.customer ? (() => {
               const tag = detail.customer.customerTagAssignments?.find((a: any) => a.outletId === detail.outletId)?.customerTag;
               return (
                 <div className="space-y-2">
@@ -1210,7 +1215,31 @@ export default function OrdersPage() {
                   />
                 </div>
               );
-            })()}
+            })() : detail.aggregatorOrder?.aggregatorCustomer ? (() => {
+              const ac = detail.aggregatorOrder.aggregatorCustomer;
+              const channel = detail.aggregatorOrder.channel ?? detail.channel ?? '';
+              return (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-100">
+                    <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-slate-500 shrink-0 border border-slate-200">
+                      <User size={14} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">
+                        {ac.displayName || `${channel} customer`}
+                      </p>
+                      {ac.maskedPhone && (
+                        <p className="text-xs text-slate-500 truncate">{ac.maskedPhone}</p>
+                      )}
+                    </div>
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-rose-700 bg-rose-50 border border-rose-100 px-2 py-1 rounded-full shrink-0">
+                      {channel}
+                    </span>
+                  </div>
+                  <AggregatorCustomerPill customer={ac} channel={channel} />
+                </div>
+              );
+            })() : null}
 
             {/* Course planner */}
             <CoursePlanner
@@ -1734,6 +1763,49 @@ function ordinalSuffix(n: number): string {
     case 3: return 'rd';
     default: return 'th';
   }
+}
+
+/**
+ * Marketplace-customer recognition pill. Reads straight off the
+ * embedded aggregatorCustomer object on the order — no extra fetch
+ * since findOne already hydrates it. Hides on first-time customers
+ * (orderCount <= 1) so single-order strangers don't get an awkward
+ * "1st order" badge.
+ *
+ * Doesn't show favourites or spend stats because:
+ *   1. Marketplace prices differ from our outlet price; "avg ticket"
+ *      from our basePrice would mislead.
+ *   2. Repeat-item analysis would need a separate query against
+ *      aggregator-channel OrderItems. Easy follow-up if it's useful.
+ */
+function AggregatorCustomerPill({ customer, channel }: { customer: any; channel: string }) {
+  if (!customer || (customer.orderCount ?? 0) <= 1) return null;
+  const lastVisit = customer.lastOrderAt ? new Date(customer.lastOrderAt) : null;
+  const daysSince = lastVisit ? Math.floor((Date.now() - lastVisit.getTime()) / (1000 * 60 * 60 * 24)) : null;
+  const lastVisitText = daysSince == null
+    ? null
+    : daysSince === 0
+      ? 'ordered earlier today'
+      : daysSince === 1
+        ? 'ordered yesterday'
+        : daysSince < 7
+          ? `last ordered ${daysSince}d ago`
+          : daysSince < 30
+            ? `last ordered ${Math.floor(daysSince / 7)}w ago`
+            : `last ordered ${Math.floor(daysSince / 30)}mo ago`;
+  return (
+    <div className="px-4 py-2.5 rounded-xl border border-rose-100 bg-gradient-to-br from-rose-50 to-amber-50/30 text-[12px] text-slate-700">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-rose-800 bg-white/70 border border-rose-200 px-2 py-0.5 rounded-full">
+          <Bell size={10} /> Repeat {channel.replace('_', ' ').toLowerCase()}
+        </span>
+        <span className="font-bold text-slate-900 tabular-nums">
+          {customer.orderCount}{ordinalSuffix(customer.orderCount)} order
+        </span>
+        {lastVisitText && <span className="text-slate-500">· {lastVisitText}</span>}
+      </div>
+    </div>
+  );
 }
 
 function ItemStatusPanel({ orders, visibleItemsFn }: { orders: any[]; visibleItemsFn: (items: any[]) => any[] }) {

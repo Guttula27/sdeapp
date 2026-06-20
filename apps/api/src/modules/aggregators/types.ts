@@ -19,12 +19,17 @@ import {
 export interface InboundOrder {
   channel: AggregatorChannel;
   externalOrderId: string;
-  // Customer info as the aggregator provided it. Phone is the join
-  // key against our User table (existing menu/auth flows already
-  // resolve customers by phone hash).
+  // Customer info as the aggregator provided it. The stable
+  // externalCustomerId (when present) is the join key against our
+  // AggregatorCustomer table — we deliberately don't try to match
+  // marketplace customers against our User table because the phone
+  // is masked. When the aggregator doesn't expose a customer id, the
+  // service falls back to maskedPhone as the key so the recognition
+  // counter still works within a single channel.
   customer?: {
+    externalCustomerId?: string;
     name?: string;
-    phone?: string;
+    phone?: string;        // Masked/proxied by the aggregator
   };
   items: Array<{
     itemId: string;

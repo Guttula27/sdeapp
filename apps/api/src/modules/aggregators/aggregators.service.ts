@@ -274,25 +274,33 @@ export class AggregatorsService {
   }
 
   /**
-   * Build the Order + AggregatorOrder + Payment rows in one txn.
-   * Pricing is recomputed locally from current Item.basePrice so the
-   * kitchen receipt + reports reflect what we'd charge — adapter's
-   * reportedTotal is captured on the AggregatorOrder.rawPayload for
-   * reconciliation when there's a delta.
+   * Build the Order + AggregatorOrder + Payment rows in one txn,
+   * plus an upserted AggregatorCustomer when the inbound payload
+   * carries customer info. Pricing is recomputed locally from
+   * current Item.basePrice so the kitchen receipt + reports reflect
+   * what we'd charge — adapter's reportedTotal is captured on the
+   * AggregatorOrder.rawPayload for reconciliation when there's a
+   * delta.
+   *
+   * Why we don't try to populate Order.customerId for aggregator
+   * orders: phones are masked, so any "match" against an existing
+   * User row by phone would be either false-positive (different
+   * customers sharing the same masked proxy) or false-negative (the
+   * same real person ordering direct vs marketplace). Better to keep
+   * them in their own AggregatorCustomer table and leave Order's
+   * direct-customer link clean.
    */
   private async materialiseInboundOrder(outletId: string, inbound: InboundOrder) {
-    // Resolve / link the customer by phone. Reuse the existing
-    // OutletCustomer pattern if a User exists.
-    let customerId: string | null = null;
-    if (inbound.customer?.phone) {
-      // Lookup by hashed phone — keeps the encryption boundary clean.
-      // For now we skip hashing and use plaintext phone for the
-      // lookup (existing User table allows it).
-      const user = await this.prisma.user.findFirst({
-        where: { phone: inbound.customer.phone },
-      });
-      customerId = user?.id ?? null;
-    }
+    // Upsert the marketplace customer record, if the payload carries
+    // anything we can use as a join key. Stable external_customer_id
+    // wins; falls back to the masked phone (prefixed so it can't
+    // collide with a real external id). When neither is present
+    // (rare — partner-test payloads, anonymised refund webhooks) we
+    // skip the link and accept the order as customerless.
+    const aggregatorCustomerId = await this.upsertAggregatorCustomer(
+      outletId,
+      inbound,
+    );
 
     // Resolve items + compute totals.
     const items = await this.prisma.item.findMany({
@@ -334,7 +342,10 @@ export class AggregatorsService {
         data: {
           orderNumber,
           outletId,
-          customerId,
+          // Order.customerId stays null for aggregator orders — see
+          // the doc-block above. Marketplace customer lives on the
+          // AggregatorOrder side-table via aggregatorCustomerId.
+          customerId: null,
           status: OrderStatus.CREATED,
           channel: inbound.channel,
           isParcel: inbound.isParcel,
@@ -371,11 +382,81 @@ export class AggregatorsService {
           externalOrderId: inbound.externalOrderId,
           status: AggregatorOrderStatus.RECEIVED,
           rawPayload: inbound.rawPayload ?? Prisma.JsonNull,
+          aggregatorCustomerId,
         },
       });
+      // Bump the marketplace customer's order counter + last-order
+      // stamp. Done inside the same transaction so a webhook retry
+      // that re-fires the same order doesn't double-increment — the
+      // (channel, externalOrderId) unique check would have rolled
+      // the whole tx back before reaching here.
+      if (aggregatorCustomerId) {
+        await tx.aggregatorCustomer.update({
+          where: { id: aggregatorCustomerId },
+          data: {
+            orderCount: { increment: 1 },
+            lastOrderAt: new Date(),
+          },
+        });
+      }
 
       return order;
     });
+  }
+
+  /**
+   * Upserts the marketplace customer record. Identity key precedence:
+   *   1. external_customer_id (stable per customer per restaurant on
+   *      every provider we support — the right anchor when present).
+   *   2. masked phone, prefixed `phone:` so it can never collide with
+   *      a real external id from path 1.
+   *   3. Neither → returns null. The order still saves; the marketplace
+   *      customer link is simply absent.
+   *
+   * Display name + masked phone refresh on every order so the latest
+   * payload's info wins. Counters bump in the caller's transaction.
+   */
+  private async upsertAggregatorCustomer(
+    outletId: string,
+    inbound: InboundOrder,
+  ): Promise<string | null> {
+    const cust = inbound.customer;
+    if (!cust) return null;
+    const key = cust.externalCustomerId
+      ? cust.externalCustomerId
+      : cust.phone
+        ? `phone:${cust.phone}`
+        : null;
+    if (!key) return null;
+    const now = new Date();
+    const upserted = await this.prisma.aggregatorCustomer.upsert({
+      where: {
+        outletId_channel_externalCustomerId: {
+          outletId,
+          channel: inbound.channel,
+          externalCustomerId: key,
+        },
+      },
+      update: {
+        // Keep the most recent name/phone on file. Aggregators
+        // sometimes update the masked phone proxy when their call-
+        // masking number rotates; we want the latest one for the
+        // packing slip / rider callback.
+        displayName: cust.name ?? undefined,
+        maskedPhone: cust.phone ?? undefined,
+      },
+      create: {
+        outletId,
+        channel: inbound.channel,
+        externalCustomerId: key,
+        displayName: cust.name ?? null,
+        maskedPhone: cust.phone ?? null,
+        firstOrderAt: now,
+        lastOrderAt: now,
+        orderCount: 0,
+      },
+    });
+    return upserted.id;
   }
 
   /**
