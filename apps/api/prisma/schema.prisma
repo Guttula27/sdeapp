@@ -121,6 +121,29 @@ enum RefundStatus {
   CANCELLED       // Cancelled before completion
 }
 
+// Order origin / aggregator channel. DIRECT = walk-in, customer PWA,
+// QR scan — the existing flow. Other values mark orders that came
+// inbound from a third-party marketplace, so reports + the kitchen
+// header can call them out and we can sync status back to the right
+// provider.
+enum AggregatorChannel {
+  DIRECT
+  ZOMATO
+  SWIGGY
+  UBER_EATS
+}
+
+enum AggregatorOrderStatus {
+  RECEIVED       // Inbound webhook fired; we've recorded it
+  ACCEPTED       // We accepted; the kitchen is on it
+  REJECTED       // We declined (out of stock, closed, etc.)
+  PREPARING
+  READY
+  DISPATCHED     // Rider picked up
+  DELIVERED      // Aggregator told us delivery happened
+  CANCELLED
+}
+
 enum SubscriptionStatus {
   TRIAL
   ACTIVE
@@ -594,6 +617,7 @@ model Outlet {
   categories             Category[]
   orders                 Order[]
   outletShifts           OutletShift[]
+  aggregatorIntegrations AggregatorIntegration[]
   tables                 Table[]
   qrCodes                QRCode[]
   kitchenStations        KitchenStation[]
@@ -964,6 +988,8 @@ model Item {
   offerGetFor        Offer[]            @relation("OfferGetItem")
   // Optional per-day availability windows (see CategoryTimingSlot).
   timingSlots        ItemTimingSlot[]
+  // Per-aggregator-channel external id mapping (Zomato/Swiggy/etc).
+  aggregatorMappings AggregatorItemMapping[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1208,6 +1234,14 @@ model Order {
   // shift can be paid in another (postpaid tabs spanning shift change).
   cashierShiftId String?
   cashierShift   CashierShift? @relation(fields: [cashierShiftId], references: [id])
+
+  // Channel the order came in through. DIRECT covers walk-in / QR /
+  // customer PWA. ZOMATO / SWIGGY / UBER_EATS mark inbound marketplace
+  // orders so reports can split revenue by channel and the kitchen
+  // display can call out where the order originated. The
+  // AggregatorOrder side-table holds the external IDs + raw payload.
+  channel        AggregatorChannel @default(DIRECT)
+  aggregatorOrder AggregatorOrder?
 
   // When non-null, this Order is a child of a ClusterOrder — created as part
   // of a cluster checkout where the customer placed one cart with items from
@@ -1616,6 +1650,104 @@ model Refund {
   @@index([status])
   @@index([cashierShiftId])
   @@map("paynpik_refunds")
+}
+
+// ─── Aggregator integrations (Zomato / Swiggy / Uber Eats) ────────
+//
+// The three records below form the framework for inbound + outbound
+// aggregator support. Per outlet, an AggregatorIntegration row holds
+// the credentials (encrypted JSON) and the per-channel restaurant id
+// the aggregator assigns. AggregatorOrder maps an inbound order to
+// our Order record + holds the raw payload for audit. AggregatorItemMapping
+// maps our Item ids to the per-channel external ids so menu sync /
+// item availability toggles can target the right marketplace row.
+//
+// The actual API calls are implemented per adapter under
+// src/modules/aggregators/adapters; until credentials are configured,
+// the adapters log + no-op (safe to ship without breaking the
+// existing direct-channel flow).
+model AggregatorIntegration {
+  id              String              @id @default(cuid())
+  outletId        String
+  outlet          Outlet              @relation(fields: [outletId], references: [id])
+  channel         AggregatorChannel
+  isActive        Boolean             @default(false)
+  // Encrypted credentials JSON — shape varies per provider
+  // (e.g. Zomato: api_key + restaurant_id; Swiggy: similar with menu_id;
+  // UberEats: client_id + client_secret + store_id).
+  credentialsEnc  String?             @db.Text
+  // Per-channel restaurant identifier, surfaced separately for UI
+  // convenience (the operator pastes this from the aggregator dashboard).
+  externalRestaurantId String?
+  // HMAC secret used to validate inbound webhook signatures.
+  // Stored encrypted; the channel-specific adapter re-encrypts/decrypts.
+  webhookSecretEnc String?            @db.Text
+  // Last successful menu sync to this channel. Drives the "sync menu"
+  // pill on the integrations page so operators see when it last ran.
+  lastMenuSyncAt  DateTime?
+  notes           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([outletId, channel])
+  @@index([channel, isActive])
+  @@map("paynpik_aggregator_integrations")
+}
+
+model AggregatorOrder {
+  id              String              @id @default(cuid())
+  // One-to-one with Order; the inbound webhook creates both rows in
+  // the same transaction. Use the @unique to enforce this at the DB.
+  orderId         String              @unique
+  order           Order               @relation(fields: [orderId], references: [id])
+  channel         AggregatorChannel
+  // The aggregator's order id (Zomato's order_id, Swiggy's order_id,
+  // Uber's order.id). Per-channel-unique with the @@unique below.
+  externalOrderId String
+  // Last status we pushed back to the aggregator. The adapter's
+  // syncStatus is idempotent — re-firing this with the same value is
+  // a no-op on the provider side.
+  status          AggregatorOrderStatus @default(RECEIVED)
+  // Raw inbound payload (encrypted at rest? No — these are inbound
+  // marketplace payloads, not customer PII). Used for audit + replay
+  // when an adapter changes shape.
+  rawPayload      Json?
+  // Last sync attempt response — error message for failures so the
+  // operator can see why a status push didn't land.
+  lastSyncError   String?             @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([channel, externalOrderId])
+  @@index([channel, status])
+  @@map("paynpik_aggregator_orders")
+}
+
+model AggregatorItemMapping {
+  id              String              @id @default(cuid())
+  itemId          String
+  item            Item                @relation(fields: [itemId], references: [id])
+  channel         AggregatorChannel
+  // The aggregator's per-item identifier — populated from the menu
+  // sync response or pasted in from the aggregator dashboard.
+  externalItemId  String
+  // Optional channel-specific price override. When set, the menu
+  // sync pushes this instead of Item.basePrice (aggregator commission
+  // structures often require a bumped price on the marketplace side).
+  externalPrice   Decimal?            @db.Decimal(10, 2)
+  // When false the item is hidden on this channel even if isAvailable
+  // is true. Lets staff stop accepting marketplace orders for a dish
+  // without affecting the dine-in menu.
+  isEnabled       Boolean             @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([itemId, channel])
+  @@index([channel, externalItemId])
+  @@map("paynpik_aggregator_item_mappings")
 }
 
 model Dispute {

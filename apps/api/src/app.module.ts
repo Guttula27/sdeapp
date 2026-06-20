@@ -44,6 +44,7 @@ import { PrintersModule } from './modules/printers/printers.module';
 import { PlatformSettingsModule } from './modules/platform-settings/platform-settings.module';
 import { ShiftsModule } from './modules/shifts/shifts.module';
 import { RefundsModule } from './modules/refunds/refunds.module';
+import { AggregatorsModule } from './modules/aggregators/aggregators.module';
 import { LoggerModule } from './config/logger/logger.module';
 import { RequestLogMiddleware } from './config/logger/request-log.middleware';
 import { CryptoModule } from './config/crypto/crypto.module';
@@ -118,6 +119,7 @@ import { RedisModule } from './config/redis/redis.module';
     PlatformSettingsModule,
     ShiftsModule,
     RefundsModule,
+    AggregatorsModule,
   ],
 })
 export class AppModule implements NestModule {

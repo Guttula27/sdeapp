@@ -101,6 +101,7 @@ const SETTINGS_CHILDREN: Record<UserTier, NavItem[]> = {
     { to: '/service-stations', icon: ConciergeBell, label: 'Service Stations' },
     { to: '/toppings',    icon: Sandwich,   label: 'Toppings' },
     { to: '/messaging',   icon: MessageCircle, label: 'Messaging' },
+    { to: '/aggregators', icon: Plug,       label: 'Aggregators' },
   ],
   kitchen: [{ to: '/settings', icon: User, label: 'Account' }],
   counter: [{ to: '/settings', icon: User, label: 'Account' }],
