@@ -1659,7 +1659,21 @@ export default function OrdersPage() {
               ))}
               <button
                 type="button"
-                onClick={() => setSplitRows((p) => [...p, { amount: splitRemaining.toFixed(2), label: '' }])}
+                onClick={() => setSplitRows((p) => {
+                  // Adding a share re-divides the OUTSTANDING amount
+                  // evenly across the new total count, preserving any
+                  // names already typed. Previously the new row just
+                  // got the leftover (often ₹0 when the existing rows
+                  // already summed to the total), which surprised
+                  // operators expecting a fresh even split.
+                  const nextCount = p.length + 1;
+                  const evenShare = Math.floor((splitOutstanding / nextCount) * 100) / 100;
+                  const last = Math.round((splitOutstanding - evenShare * (nextCount - 1)) * 100) / 100;
+                  return p.concat({ amount: '0', label: '' }).map((r, i, arr) => ({
+                    ...r,
+                    amount: (i === arr.length - 1 ? last : evenShare).toFixed(2),
+                  }));
+                })}
                 className="text-[11px] font-semibold text-brand-700 hover:text-brand-900 inline-flex items-center gap-1"
               >
                 <Plus size={11} /> Add a share
