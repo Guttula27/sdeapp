@@ -15,10 +15,10 @@ export class PaymentsController {
   @UseGuards(JwtAuthGuard)
   @Post('initiate')
   initiate(
-    @Body() body: { orderId: string; mode: PaymentMode; amount: number },
+    @Body() body: { orderId: string; mode: PaymentMode; amount: number; splitShareId?: string },
     @CurrentUser('id') userId: string,
   ) {
-    return this.service.initiatePayment(body.orderId, body.mode, body.amount, userId);
+    return this.service.initiatePayment(body.orderId, body.mode, body.amount, userId, body.splitShareId);
   }
 
   @ApiBearerAuth()

@@ -6,6 +6,7 @@ import { OrdersModule } from '../orders/orders.module';
 import { CustomerAlertsModule } from '../customer-alerts/customer-alerts.module';
 import { PlatformSettingsModule } from '../platform-settings/platform-settings.module';
 import { RefundsModule } from '../refunds/refunds.module';
+import { SplitBillsModule } from '../split-bills/split-bills.module';
 
 @Module({
   imports: [
@@ -17,6 +18,9 @@ import { RefundsModule } from '../refunds/refunds.module';
     // circular module graph (RefundsModule imports PaymentsModule for
     // RazorpayService).
     forwardRef(() => RefundsModule),
+    // confirmPayment hooks SplitBillsService.applyShareSettled when
+    // splitShareId is present. Same forwardRef pattern.
+    forwardRef(() => SplitBillsModule),
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService, RazorpayService],

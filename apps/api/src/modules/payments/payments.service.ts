@@ -12,6 +12,7 @@ import {
 import { AuditLogService } from '../../config/logger/audit-log.service';
 import { EncryptionService } from '../../config/crypto/encryption.service';
 import { RefundsService } from '../refunds/refunds.service';
+import { SplitBillsService } from '../split-bills/split-bills.service';
 
 @Injectable()
 export class PaymentsService {
@@ -28,6 +29,10 @@ export class PaymentsService {
     // module (RazorpayService). See the module wiring for the cycle.
     @Inject(forwardRef(() => RefundsService))
     private refunds: RefundsService,
+    // Same forwardRef pattern — SplitBillsService listens for share
+    // settlements via this service's confirmPayment hook below.
+    @Inject(forwardRef(() => SplitBillsService))
+    private splitBills: SplitBillsService,
   ) {}
 
   async initiatePayment(
@@ -35,9 +40,36 @@ export class PaymentsService {
     mode: PaymentMode,
     amount: number,
     userId?: string,
+    splitShareId?: string,
   ) {
     const order = await this.prisma.order.findUnique({ where: { id: orderId } });
     if (!order) throw new NotFoundException('Order not found');
+
+    // Split-share payment guardrails. The customer PWA's split pay
+    // page passes splitShareId so the Payment row links back to the
+    // share via @@unique Payment.splitShareId. Reject duplicates +
+    // mismatched amounts to keep reconciliation honest.
+    if (splitShareId) {
+      const share = await this.prisma.splitShare.findUnique({
+        where: { id: splitShareId },
+        select: { orderId: true, status: true, amount: true, paymentId: true },
+      });
+      if (!share) throw new NotFoundException('Split share not found');
+      if (share.orderId !== orderId) {
+        throw new BadRequestException('Split share does not belong to this order');
+      }
+      if (share.status === 'PAID' || share.paymentId) {
+        throw new BadRequestException('Split share already paid');
+      }
+      if (share.status === 'CANCELLED' || share.status === 'EXPIRED') {
+        throw new BadRequestException(`Split share is ${share.status}`);
+      }
+      if (Math.abs(Number(share.amount) - amount) > 0.005) {
+        throw new BadRequestException(
+          `Payment amount ₹${amount.toFixed(2)} does not match share amount ₹${Number(share.amount).toFixed(2)}`,
+        );
+      }
+    }
     // Truly terminal states — payment makes no sense once the order
     // was cancelled or fully refunded.
     if (['CANCELLED', 'RESOLVED', 'REFUND_COMPLETE'].includes(order.status)) {
@@ -88,7 +120,7 @@ export class PaymentsService {
     }
 
     const payment = await this.prisma.payment.create({
-      data: { orderId, mode, amount, status: 'PENDING', cashierShiftId },
+      data: { orderId, mode, amount, status: 'PENDING', cashierShiftId, splitShareId: splitShareId ?? null },
     });
 
     // For cash payments, auto-confirm
@@ -111,12 +143,30 @@ export class PaymentsService {
     // at initiate-time when the cashier triggers the flow, so the
     // webhook (which has no user context) doesn't need to know who
     // owns the drawer.
-    const updated = await this.prisma.payment.update({
-      where: { id: paymentId },
-      data: {
-        status: 'SUCCESS',
-        gatewayRef: this.encryption.encrypt(gatewayRef),
-      },
+    //
+    // When the Payment is settling a split-bill share (splitShareId
+    // set at initiate time by the customer PWA's split-share pay
+    // flow), the share row + parent order's denormalised counters
+    // are updated inside the same transaction. Doing the writes
+    // inline here also means SPLIT_ALL_PAID fires from
+    // SplitBillsService.applyShareSettled before the response returns,
+    // so the diner who just paid the final share gets their
+    // "all paid" confirmation in the same WhatsApp round-trip.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const u = await tx.payment.update({
+        where: { id: paymentId },
+        data: {
+          status: 'SUCCESS',
+          gatewayRef: this.encryption.encrypt(gatewayRef),
+        },
+      });
+      if (u.splitShareId) {
+        const share = await tx.splitShare.findUnique({ where: { id: u.splitShareId } });
+        if (share) {
+          await this.splitBills.applyShareSettled(tx, share, u.id);
+        }
+      }
+      return u;
     });
 
     // Order status is driven by the kitchen/service workflow, not by payment.
