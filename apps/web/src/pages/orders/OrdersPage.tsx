@@ -172,8 +172,16 @@ export default function OrdersPage() {
   // existing fetch useEffect chain so we don't get TDZ-on-use.
   const [outletPrint, setOutletPrint] = useState<{
     allowManual: boolean;
+    auto: boolean;
     printerId: string | null;
-  }>({ allowManual: false, printerId: null });
+  }>({ allowManual: false, auto: false, printerId: null });
+
+  // Tracks aggregator-order ids we've already auto-printed slips for
+  // this session — guards against double-prints from re-emits on
+  // socket reconnect or an updated-then-updated-again rollup. Cleared
+  // on page reload (which is fine; the slip was physically printed
+  // and the operator can reprint manually if needed).
+  const autoPrintedSlipsRef = useRef<Set<string>>(new Set());
 
   const [printing, setPrinting] = useState(false);
   const printDetailReceipt = async () => {
@@ -344,10 +352,54 @@ export default function OrdersPage() {
     api.get(`/outlets/${outletId}`).then(({ data }) => {
       setOutletPrint({
         allowManual: !!data.data?.receiptAllowManualPrint,
+        // Auto-print flag — used here to auto-fire the aggregator
+        // packing slip when an inbound order reaches READY. Same flag
+        // PlaceOrderPage uses to auto-print a direct order's receipt
+        // at placement time, so the operator config is one switch.
+        auto: !!data.data?.receiptAutoPrint,
         printerId: data.data?.receiptPrinterId ?? null,
       });
     }).catch(() => {});
   }, [outletId, tier]);
+
+  // Auto-print the packing slip for aggregator orders the moment they
+  // reach READY. Fires once per order id per session (autoPrintedSlipsRef
+  // dedupes), and is fully best-effort — print failures toast but don't
+  // disrupt the order flow. The staff still has the manual "Print
+  // Packing Slip" button on the detail modal as a fallback. Why READY
+  // specifically:
+  //   - Inbound aggregator order arrives → CREATED. Kitchen starts on
+  //     it → PREPARING. Once every item is done → rollup to READY.
+  //   - That READY transition is the right moment to print: the food
+  //     is cooked, ready to bag, and the rider may already be at the
+  //     counter waiting for the parcel.
+  const autoPrintAggregatorSlip = useCallback(async (order: any) => {
+    if (!order || order.status !== 'READY') return;
+    if (!isAggregatorOrder(order)) return;
+    if (!outletPrint.auto || !outletPrint.printerId) return;
+    if (!isBluetoothSupported()) return;
+    if (autoPrintedSlipsRef.current.has(order.id)) return;
+    autoPrintedSlipsRef.current.add(order.id);
+    try {
+      // Hit the detail endpoint so we have the aggregatorOrder.externalOrderId
+      // and the full item/variant/topping fan-out. The socket payload
+      // is the lighter list shape and may not include all of that.
+      const { data } = await api.get(`/outlets/${order.outletId || outletId}/orders/${order.id}`);
+      const full = data?.data ?? order;
+      if (!isPrinterConnected(outletPrint.printerId)) {
+        // Don't pop the BT chooser unannounced for an auto-print;
+        // staff would think the page is hijacking input. Skip
+        // silently — they'll get the slip via the manual button.
+        return;
+      }
+      await printPackingSlip(outletPrint.printerId, buildPackingSlipPayload(full));
+      toast.success(`Slip printed for ${order.orderNumber}`, { icon: '🖨️' });
+    } catch (e: any) {
+      // Let the dedupe stand even on failure — repeated failed prints
+      // create noise without value. Operator can manual-print.
+      toast.error(e?.message || 'Auto-print failed — use the manual button');
+    }
+  }, [outletPrint.auto, outletPrint.printerId, outletId]);
 
   // Debounced needle + sort key. The `search` state already exists
   // (used by the existing client-side filter); we lift its value to
@@ -441,10 +493,18 @@ export default function OrdersPage() {
     fetchOrders();
     if (isReadOnly) return; // no per-outlet socket for cross-outlet views
     const socket = getSocket(outletId);
-    socket.on('orderCreated', (o: any) => { dispatch(setOrders([o, ...orders])); toast.success(`New order — ${o.orderNumber}`); });
-    socket.on('orderStatusUpdated', (o: any) => dispatch(updateOrder(o)));
+    socket.on('orderCreated', (o: any) => {
+      dispatch(setOrders([o, ...orders]));
+      toast.success(`New order — ${o.orderNumber}`);
+    });
+    socket.on('orderStatusUpdated', (o: any) => {
+      dispatch(updateOrder(o));
+      // Fire-and-forget — autoPrintAggregatorSlip dedupes internally
+      // and only runs for aggregator orders that just hit READY.
+      void autoPrintAggregatorSlip(o);
+    });
     return () => { socket.off('orderCreated'); socket.off('orderStatusUpdated'); };
-  }, [tier, outletId, businessId, selectedOutletId, debouncedSearch, sortBy, sortDir]);
+  }, [tier, outletId, businessId, selectedOutletId, debouncedSearch, sortBy, sortDir, autoPrintAggregatorSlip]);
 
   // Socket state + auto-backfill. The orders page is the cashier's main
   // view; missing a new order because the socket silently dropped is the
