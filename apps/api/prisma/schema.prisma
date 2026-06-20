@@ -121,6 +121,17 @@ enum RefundStatus {
   CANCELLED       // Cancelled before completion
 }
 
+// Lifecycle of a single split-bill share. Each share is independent —
+// one diner's WhatsApp-delivered sub-bill against a parent Order.
+enum SplitShareStatus {
+  PENDING         // Row created; WhatsApp not yet dispatched
+  SENT            // WhatsApp delivered to the diner's phone
+  VIEWED          // Diner opened the share detail in the customer PWA
+  PAID            // Payment row materialised against the share
+  CANCELLED       // Operator cancelled before payment
+  EXPIRED         // Auto-expired by the reminder/expiry job (Phase B)
+}
+
 // Order origin / aggregator channel. DIRECT = walk-in, customer PWA,
 // QR scan — the existing flow. Other values mark orders that came
 // inbound from a third-party marketplace, so reports + the kitchen
@@ -259,6 +270,8 @@ model User {
   cashierShifts          CashierShift[]          @relation("CashierShifts")
   refundsInitiated       Refund[]                @relation("RefundsInitiated")
   refundsApproved        Refund[]                @relation("RefundsApproved")
+  splitShares            SplitShare[]            @relation("SplitShareCustomer")
+  splitSharesCreated     SplitShare[]            @relation("SplitShareCreatedBy")
   preferredUpiApp        String?
   profileImageUrl        String?                 @db.MediumText
   alertRingtone          String?                 @default("chime")
@@ -1244,6 +1257,15 @@ model Order {
   channel        AggregatorChannel @default(DIRECT)
   aggregatorOrder AggregatorOrder?
 
+  // Split-bill denormalised counters. Updated inside the same
+  // transaction as SplitShare row mutations so the OrdersPage detail
+  // and the customer PWA progress pill never need a sub-query to
+  // know "3 of 4 paid".  Zero when the order isn't split-billed.
+  splitTotalShares Int     @default(0)
+  splitPaidShares  Int     @default(0)
+  splitPaidAmount  Decimal @default(0) @db.Decimal(10, 2)
+  splitShares      SplitShare[]
+
   // When non-null, this Order is a child of a ClusterOrder — created as part
   // of a cluster checkout where the customer placed one cart with items from
   // multiple outlets. The parent ClusterOrder holds the unified payment;
@@ -1515,6 +1537,12 @@ model Payment {
   reviewPayback OrderItemReview?
   refunds       Refund[]            @relation("RefundFromPayment")
 
+  // When this Payment settles a split-bill share, the share row points
+  // back here via SplitShare.paymentId and we mirror the link here so
+  // reports can group payments by share without a reverse join.
+  splitShareId  String?            @unique
+  splitShare    SplitShare?        @relation(fields: [splitShareId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1651,6 +1679,72 @@ model Refund {
   @@index([status])
   @@index([cashierShiftId])
   @@map("paynpik_refunds")
+}
+
+// ─── Split bill shares ────────────────────────────────────
+//
+// Each row is one diner's sub-bill against a parent Order. The
+// operator creates N shares from the OrdersPage split modal; WhatsApp
+// fires to each phone; the diner taps the deep link, lands on the
+// customer PWA's bill detail, and pays through the existing payment
+// page (UPI or Razorpay) — same flow they'd use for any direct
+// order. We don't model a "primary" share — the operator chases via
+// the per-share Resend / Cancel / Mark cash buttons on the order
+// detail.
+//
+// On payment, Payment.splitShareId points at this row and the parent
+// Order's denormalised splitPaidShares / splitPaidAmount counters
+// bump inside the same transaction. Refunds against a share use the
+// existing Refund flow against the Payment row — no SplitShare-aware
+// changes needed.
+model SplitShare {
+  id              String           @id @default(cuid())
+  orderId         String
+  order           Order            @relation(fields: [orderId], references: [id])
+  // Share amount in rupees. The sum of all non-CANCELLED shares
+  // should equal Order.totalAmount for a fully-split bill; the
+  // operator can underallocate (and pay the rest as cash directly
+  // on the order) but never overallocate — server validates on
+  // create.
+  amount          Decimal          @db.Decimal(10, 2)
+  // Diner identity. Phone is required (it's the delivery channel for
+  // the WhatsApp message); name is optional. customerId is null
+  // until the diner taps the WhatsApp link and the auth/OTP flow
+  // resolves them to a real User row — at which point the existing
+  // phone-hash lookup finds (or creates) the User.
+  customerPhone   String
+  customerName    String?
+  customerId      String?
+  customer        User?            @relation("SplitShareCustomer", fields: [customerId], references: [id])
+  status          SplitShareStatus @default(PENDING)
+  // Settlement link. Populated when the diner pays through the
+  // customer PWA's standard payment page, OR when the operator
+  // clicks "Mark cash" on the per-share action.
+  paymentId       String?          @unique
+  payment         Payment?         @relation
+  // Operator who created the share — recorded for the order log so
+  // staff can trace which cashier filed the split.
+  createdById     String
+  createdBy       User             @relation("SplitShareCreatedBy", fields: [createdById], references: [id])
+  // Lifecycle timestamps for the customer-facing progress display
+  // and the Phase-B reminders job.
+  sentAt          DateTime?
+  viewedAt        DateTime?
+  paidAt          DateTime?
+  cancelledAt     DateTime?
+  // Free-text notes — used today to record "marked cash by operator
+  // on shift X" so the audit trail explains why a share didn't
+  // settle through the gateway.
+  notes           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([customerPhone])
+  @@index([customerId])
+  @@index([status])
+  @@map("paynpik_split_shares")
 }
 
 // ─── Aggregator integrations (Zomato / Swiggy / Uber Eats) ────────
