@@ -193,7 +193,15 @@ export default function PaymentPage() {
   })();
   const baseTotal = subTotal + tipAmount;
 
-  const gatewayChargePct = gateway?.charges?.[gatewayMode] ?? 0;
+  // Split-share Phase B: when the outlet's splitFeesAbsorbedBy is
+  // OUTLET (default), the outlet eats the Razorpay surcharge so the
+  // diner pays exactly their share amount. CUSTOMER keeps the
+  // existing direct-order behaviour where the surcharge is added.
+  // Pure direct-order flows (no splitShareId) keep their current
+  // customer-absorbed behaviour untouched.
+  const isSplitShare = !!state?.splitShareId;
+  const splitFeesAbsorbedByOutlet = isSplitShare && outlet?.splitFeesAbsorbedBy === 'OUTLET';
+  const gatewayChargePct = splitFeesAbsorbedByOutlet ? 0 : (gateway?.charges?.[gatewayMode] ?? 0);
   const gatewayCharge = useMemo(
     () => Math.round((baseTotal * gatewayChargePct) / 100 * 100) / 100,
     [baseTotal, gatewayChargePct],
