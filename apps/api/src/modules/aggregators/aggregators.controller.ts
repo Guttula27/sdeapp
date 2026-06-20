@@ -72,4 +72,36 @@ export class AggregatorsController {
   ) {
     return this.service.deleteIntegration(outletId, channel);
   }
+
+  // ── Item mappings (admin) ────────────────────────────────
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Get('outlets/:outletId/aggregators-mappings/items')
+  listItemMappings(@Param('outletId') outletId: string) {
+    return this.service.listItemMappings(outletId);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Put('outlets/:outletId/aggregators-mappings/items/:itemId/:channel')
+  upsertItemMapping(
+    @Param('outletId') outletId: string,
+    @Param('itemId') itemId: string,
+    @Param('channel') channel: AggregatorChannel,
+    @Body() body: { externalItemId: string; externalPrice?: number | null; isEnabled?: boolean },
+  ) {
+    return this.service.upsertItemMapping(outletId, itemId, channel, body);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Delete('outlets/:outletId/aggregators-mappings/items/:itemId/:channel')
+  deleteItemMapping(
+    @Param('outletId') outletId: string,
+    @Param('itemId') itemId: string,
+    @Param('channel') channel: AggregatorChannel,
+  ) {
+    return this.service.deleteItemMapping(outletId, itemId, channel);
+  }
 }

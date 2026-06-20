@@ -24,6 +24,7 @@ import OfflineOrdersPage from './pages/offline-orders/OfflineOrdersPage';
 import ShiftsPage from './pages/shifts/ShiftsPage';
 import RefundsPage from './pages/refunds/RefundsPage';
 import AggregatorsPage from './pages/aggregators/AggregatorsPage';
+import MappingsPage from './pages/aggregators/MappingsPage';
 import TagsPage from './pages/tags/TagsPage';
 import CustomersPage from './pages/customers/CustomersPage';
 import ToppingsPage from './pages/toppings/ToppingsPage';
@@ -120,6 +121,7 @@ export default function App() {
           <Route path="shifts" element={<ShiftsPage />} />
           <Route path="refunds" element={<RefundsPage />} />
           <Route path="aggregators" element={<AggregatorsPage />} />
+          <Route path="aggregators/mappings" element={<MappingsPage />} />
           <Route path="stations"   element={<StationsPage />} />
           <Route path="service-stations" element={<ServiceStationsPage />} />
           <Route path="tags"       element={<TagsPage />} />

@@ -117,6 +117,106 @@ export class AggregatorsService {
     });
   }
 
+  // ─── Item mappings ────────────────────────────────────────
+
+  /**
+   * Returns every item on this outlet's menu alongside its current
+   * per-channel external-id mappings. Powers the bulk mappings table
+   * in the admin — staff paste in the IDs from each provider's
+   * dashboard against the rows they care about.
+   *
+   * Performance note: capped at the outlet's own items (excludes
+   * business-template rows) and includes only the menu-tree fields
+   * the UI needs. For a 500-item outlet this is one indexed join.
+   */
+  async listItemMappings(outletId: string) {
+    const items = await this.prisma.item.findMany({
+      where: { subcategory: { category: { outletId } } },
+      select: {
+        id: true,
+        name: true,
+        basePrice: true,
+        isAvailable: true,
+        subcategory: {
+          select: {
+            id: true,
+            name: true,
+            category: { select: { id: true, name: true, displayOrder: true } },
+          },
+        },
+        aggregatorMappings: {
+          select: {
+            id: true,
+            channel: true,
+            externalItemId: true,
+            externalPrice: true,
+            isEnabled: true,
+          },
+        },
+      },
+      orderBy: [
+        { subcategory: { category: { displayOrder: 'asc' } } },
+        { subcategory: { displayOrder: 'asc' } },
+        { displayOrder: 'asc' },
+      ],
+    });
+    return items;
+  }
+
+  async upsertItemMapping(
+    outletId: string,
+    itemId: string,
+    channel: AggregatorChannel,
+    data: {
+      externalItemId: string;
+      externalPrice?: number | null;
+      isEnabled?: boolean;
+    },
+  ) {
+    if (channel === AggregatorChannel.DIRECT) {
+      throw new BadRequestException('DIRECT channel cannot be mapped per-item');
+    }
+    // Guard: item must belong to this outlet — prevents a tenant
+    // boundary leak via the URL parameter.
+    const item = await this.prisma.item.findFirst({
+      where: { id: itemId, subcategory: { category: { outletId } } },
+      select: { id: true },
+    });
+    if (!item) throw new NotFoundException('Item not found on this outlet');
+
+    if (!data.externalItemId?.trim()) {
+      throw new BadRequestException('externalItemId is required');
+    }
+
+    return this.prisma.aggregatorItemMapping.upsert({
+      where: { itemId_channel: { itemId, channel } },
+      update: {
+        externalItemId: data.externalItemId.trim(),
+        ...(data.externalPrice !== undefined ? { externalPrice: data.externalPrice ?? null } : {}),
+        ...(data.isEnabled !== undefined ? { isEnabled: data.isEnabled } : {}),
+      },
+      create: {
+        itemId,
+        channel,
+        externalItemId: data.externalItemId.trim(),
+        externalPrice: data.externalPrice ?? null,
+        isEnabled: data.isEnabled ?? true,
+      },
+    });
+  }
+
+  async deleteItemMapping(outletId: string, itemId: string, channel: AggregatorChannel) {
+    // Same tenant boundary check as upsert.
+    const item = await this.prisma.item.findFirst({
+      where: { id: itemId, subcategory: { category: { outletId } } },
+      select: { id: true },
+    });
+    if (!item) throw new NotFoundException('Item not found on this outlet');
+    await this.prisma.aggregatorItemMapping.deleteMany({
+      where: { itemId, channel },
+    });
+  }
+
   // ─── Webhook entry ────────────────────────────────────────
 
   /**
@@ -154,7 +254,7 @@ export class AggregatorsService {
 
     const inbound = await adapter.parseInboundOrder(payload, {
       outletId,
-      resolveItemByExternalId: (externalItemId) => this.resolveItemId(channel, externalItemId),
+      resolveItemByExternalId: (externalItemId) => this.resolveItemId(outletId, channel, externalItemId),
     });
     if (!inbound) {
       this.logger.log(`Inbound ${channel} payload acknowledged with no actionable order`);
@@ -278,9 +378,35 @@ export class AggregatorsService {
     });
   }
 
-  private async resolveItemId(channel: AggregatorChannel, externalItemId: string): Promise<string | null> {
+  /**
+   * Resolves an external item id to our internal Item id. Both the
+   * per-mapping isEnabled flag AND the parent integration's isActive
+   * must be on — turning off the channel on the Aggregators page
+   * effectively dark-flips every mapping for that channel without
+   * forcing the operator to clear them individually. Also scopes to
+   * the outlet so a mapping defined on outlet A can't be picked up
+   * by an inbound webhook addressed to outlet B (e.g. shared external
+   * IDs across a chain).
+   */
+  private async resolveItemId(
+    outletId: string,
+    channel: AggregatorChannel,
+    externalItemId: string,
+  ): Promise<string | null> {
+    // Cheap pre-check: is the integration on at all? Saves the bigger
+    // join below when the channel is dark.
+    const integration = await this.prisma.aggregatorIntegration.findUnique({
+      where: { outletId_channel: { outletId, channel } },
+      select: { isActive: true },
+    });
+    if (!integration?.isActive) return null;
     const mapping = await this.prisma.aggregatorItemMapping.findFirst({
-      where: { channel, externalItemId, isEnabled: true },
+      where: {
+        channel,
+        externalItemId,
+        isEnabled: true,
+        item: { subcategory: { category: { outletId } } },
+      },
       select: { itemId: true },
     });
     return mapping?.itemId ?? null;

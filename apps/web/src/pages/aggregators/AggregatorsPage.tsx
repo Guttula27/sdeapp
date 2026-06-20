@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
+import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import {
-  Plug, Copy, RefreshCw, CheckCircle2, AlertCircle, Power, Save,
+  Plug, Copy, RefreshCw, CheckCircle2, AlertCircle, Power, Save, Tags,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import api from '../../services/api';
@@ -130,9 +131,14 @@ export default function AggregatorsPage() {
             webhook URL, copy the one shown on each card.
           </p>
         </div>
-        <button className="btn-ghost text-xs" onClick={refresh}>
-          <RefreshCw size={12} /> Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <Link to="/aggregators/mappings" className="btn-secondary text-xs">
+            <Tags size={12} /> Item mappings
+          </Link>
+          <button className="btn-ghost text-xs" onClick={refresh}>
+            <RefreshCw size={12} /> Refresh
+          </button>
+        </div>
       </header>
 
       {loading ? (
