@@ -46,6 +46,10 @@ them on the `Ctx` object before calling `dispatcher.fire(trigger, ctx)`.
 | `{{total}}` | `ctx.totalAmount` | Pre-formatted with ₹ prefix when present |
 | `{{token_number}}` | `ctx.tokenNumber` | Order pickup / counter token |
 | `{{receipt_url}}` | `ctx.receiptUrl` | Deep-link to the hosted receipt page |
+| `{{share_amount}}` | `ctx.shareAmount` | Single diner's share amount; used by SPLIT_SHARE_DUE |
+| `{{order_total}}` | `ctx.orderTotal` | Parent order total when split-billed; used by SPLIT_* templates |
+| `{{share_count}}` | `ctx.shareCount` | Number of shares the bill was split into |
+| `{{share_link}}` | `ctx.shareLink` | Customer PWA deep-link to the share detail / pay page |
 
 ---
 
@@ -151,6 +155,41 @@ Your parcel order {{order_number}} is packed and ready for pickup at {{outlet_na
 
 ```
 Order {{order_number}} has been served. Enjoy!
+```
+
+---
+
+### `SPLIT_SHARE_DUE`
+
+| | |
+|---|---|
+| **Category** | UTILITY |
+| **Fires when** | Operator creates a split-bill — one message per share, delivered to each diner's phone. Also re-fires when the operator clicks "Resend" on the per-share row in the OrdersPage detail. |
+| **Code path** | `SplitBillsService.createSplit` → `LifecycleDispatcherService.fire('SPLIT_SHARE_DUE', ...)` |
+| **Markers required** | `customer_name`, `outlet_name`, `order_number`, `share_amount`, `order_total`, `share_count`, `share_link` |
+| **Loudness** | Quiet (the customer PWA push handles loud alerts on the diner's device once they're authenticated) |
+
+```
+Hi {{customer_name}}, you have a ₹{{share_amount}} share of a ₹{{order_total}} bill from {{outlet_name}} (split {{share_count}} ways).
+
+Tap to view + pay:
+{{share_link}}
+```
+
+---
+
+### `SPLIT_ALL_PAID`
+
+| | |
+|---|---|
+| **Category** | UTILITY |
+| **Fires when** | Every share against a split-billed order has settled (last share's payment confirms). One message to each diner so they all know the bill is closed. |
+| **Code path** | `SplitBillsService.markShareSettled` (after counter bump) → `LifecycleDispatcherService.fire('SPLIT_ALL_PAID', ...)` |
+| **Markers required** | `customer_name`, `outlet_name`, `order_total` |
+| **Loudness** | Quiet |
+
+```
+Hi {{customer_name}}, the ₹{{order_total}} split bill at {{outlet_name}} is fully settled. Thanks!
 ```
 
 ---
