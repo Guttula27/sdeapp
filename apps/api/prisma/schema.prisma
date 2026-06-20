@@ -1776,8 +1776,12 @@ model AggregatorCustomer {
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
 
-  @@unique([outletId, channel, externalCustomerId])
-  @@index([channel, externalCustomerId])
+  // map: explicitly shortens the index names so MySQL's 64-char
+  // identifier limit doesn't reject them. The default Prisma-generated
+  // names (paynpik_aggregator_customers_outletId_channel_externalCustomerId_key)
+  // were 68 chars and tripped ERROR 1059 on the first deploy attempt.
+  @@unique([outletId, channel, externalCustomerId], map: "paynpik_agg_cust_outlet_chan_ext_key")
+  @@index([channel, externalCustomerId], map: "paynpik_agg_cust_channel_ext_idx")
   @@map("paynpik_aggregator_customers")
 }
 

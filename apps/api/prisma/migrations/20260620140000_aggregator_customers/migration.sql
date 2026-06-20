@@ -23,8 +23,12 @@ CREATE TABLE `paynpik_aggregator_customers` (
   `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updatedAt` DATETIME(3) NOT NULL,
 
-  UNIQUE INDEX `paynpik_aggregator_customers_outletId_channel_externalCustomerId_key`(`outletId`, `channel`, `externalCustomerId`),
-  INDEX `paynpik_aggregator_customers_channel_externalCustomerId_idx`(`channel`, `externalCustomerId`),
+  -- Index name shortened to fit MySQL's 64-char identifier cap. The
+  -- previous auto-generated name (paynpik_aggregator_customers_outletId_
+  -- channel_externalCustomerId_key) was 68 chars and broke migration on
+  -- the first deploy attempt with "Identifier name ... too long".
+  UNIQUE INDEX `paynpik_agg_cust_outlet_chan_ext_key`(`outletId`, `channel`, `externalCustomerId`),
+  INDEX `paynpik_agg_cust_channel_ext_idx`(`channel`, `externalCustomerId`),
 
   PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
