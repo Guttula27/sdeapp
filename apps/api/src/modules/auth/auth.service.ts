@@ -249,8 +249,11 @@ export class AuthService {
         business: { select: { id: true, name: true, isCluster: true } },
         // Outlet's type drives client-side feature gating — self-service
         // outlets hide dine-in sections, service stations and the
-        // service desk nav since none of them apply.
-        outlet: { select: { id: true, name: true, outletType: true } },
+        // service desk nav since none of them apply. aggregatorEnabled
+        // is the per-outlet feature toggle the business admin owns;
+        // the outlet-tier sidebar reads it to decide whether to show
+        // the Aggregators settings sub-page.
+        outlet: { select: { id: true, name: true, outletType: true, aggregatorEnabled: true } },
         role: {
           include: { responsibilities: { include: { responsibility: true } } },
         },

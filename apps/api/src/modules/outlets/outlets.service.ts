@@ -3,7 +3,7 @@ import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, ValidateIf } from 'class-validator';
 import { PrismaService } from '../../config/prisma/prisma.service';
-import { OutletType } from '@prisma/client';
+import { OutletType, SplitFeeAbsorption } from '@prisma/client';
 import { TranslationsService } from '../translations/translations.service';
 import { EncryptionService } from '../../config/crypto/encryption.service';
 import { UserLookupService } from '../../config/crypto/user-lookup.service';
@@ -58,6 +58,18 @@ export class CreateOutletDto {
   // (platform retains the gateway fee). Leave blank to disable Razorpay
   // for this outlet entirely — the customer PWA hides the option.
   @IsString() @IsOptional() razorpayLinkedAccountId?: string;
+
+  // Split-bill Phase B knobs. Edited from the Outlet profile page;
+  // the sweep in SplitBillsService reads them per share.
+  @IsEnum(SplitFeeAbsorption) @IsOptional() splitFeesAbsorbedBy?: SplitFeeAbsorption;
+  @IsInt() @IsOptional() splitReminderEveryMinutes?: number;
+  @IsInt() @IsOptional() splitMaxReminders?: number;
+  @IsInt() @IsOptional() splitExpireAfterMinutes?: number;
+
+  // Per-outlet feature toggle owned by the business admin. Drives
+  // sidebar visibility of the Aggregators settings page on the
+  // outlet-tier nav.
+  @IsBoolean() @IsOptional() aggregatorEnabled?: boolean;
 }
 
 export class CreateSectionDto {

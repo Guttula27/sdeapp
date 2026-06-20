@@ -705,6 +705,14 @@ model Outlet {
   splitExpireAfterMinutes   Int                @default(1440)
   splitFeesAbsorbedBy       SplitFeeAbsorption @default(OUTLET)
 
+  // Business-admin-controlled feature toggle. When false, the
+  // outlet admin doesn't see the Aggregators sub-page under
+  // Settings, and inbound webhooks for this outlet keep working
+  // only via integrations that were already set up before the flag
+  // was flipped (the AggregatorIntegration table is independent of
+  // this flag). Default false so the toggle is opt-in per outlet.
+  aggregatorEnabled         Boolean            @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

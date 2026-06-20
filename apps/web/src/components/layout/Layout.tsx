@@ -41,6 +41,26 @@ function scrubSeatingNav(items: NavItem[]): NavItem[] {
     .filter((x): x is NavItem => x !== null);
 }
 
+// Removes the Aggregators settings sub-page (+ any future top-level
+// aggregator entry) from the nav when the outlet's business admin
+// hasn't enabled the feature. Walks top-level + Settings children
+// like scrubSeatingNav does; "/aggregators/*" matches the bulk
+// mappings page too.
+function stripAggregatorsNav(items: NavItem[]): NavItem[] {
+  const isAggregator = (path: string) =>
+    path === '/aggregators' || path.startsWith('/aggregators/');
+  return items
+    .map((it): NavItem | null => {
+      if (isAggregator(it.to)) return null;
+      if (it.children) {
+        const kept = it.children.filter((c) => !isAggregator(c.to));
+        return { ...it, children: kept };
+      }
+      return it;
+    })
+    .filter((x): x is NavItem => x !== null);
+}
+
 // Service Stations are an extension of Dine-In Sections — a service
 // station maps staff to a set of tables inside a section. With zero
 // sections, the Service Stations form has nothing to assign to, so we
@@ -465,12 +485,18 @@ export default function Layout() {
   const scrubbed = !!user?.outletId && outletType && !allowsSeating(outletType)
     ? scrubSeatingNav(rawNav)
     : rawNav;
+  // Per-outlet aggregator feature toggle owned by the business admin
+  // (paynpik_outlets.aggregatorEnabled). When false, the outlet admin
+  // shouldn't even see the Aggregators settings sub-page, let alone
+  // configure integrations.
+  const aggregatorEnabled = !!(user?.outlet as any)?.aggregatorEnabled;
+  const afterAggregatorGate = aggregatorEnabled ? scrubbed : stripAggregatorsNav(scrubbed);
   // Dine-in outlet with no sections yet → grey out the Service
   // Stations nav row (still visible so the operator can see it's a
   // future step, but non-clickable with a tooltip explaining why).
   const navItems = hasSections === false
-    ? disableServiceStationsIfNoSections(scrubbed, false)
-    : scrubbed;
+    ? disableServiceStationsIfNoSections(afterAggregatorGate, false)
+    : afterAggregatorGate;
   // Label = the user's actual role name. When the user has no role assigned
   // we hide the badge entirely instead of falling back to a misleading tier
   // label like "Outlet Admin". Tier still drives the color palette.
