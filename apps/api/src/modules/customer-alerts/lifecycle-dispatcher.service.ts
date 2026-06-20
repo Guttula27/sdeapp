@@ -19,7 +19,8 @@ export type LifecycleTrigger =
   | 'PICKUP_READY'
   | 'ORDER_SERVED'
   | 'SPLIT_SHARE_DUE'
-  | 'SPLIT_ALL_PAID';
+  | 'SPLIT_ALL_PAID'
+  | 'SPLIT_SHARE_EXPIRED';
 
 const FALLBACK_BODIES: Record<LifecycleTrigger, string> = {
   ORDER_PLACED:
@@ -37,6 +38,8 @@ const FALLBACK_BODIES: Record<LifecycleTrigger, string> = {
     'Tap to view + pay:\n{{share_link}}',
   SPLIT_ALL_PAID:
     'Hi {{customer_name}}, the ₹{{order_total}} split bill at {{outlet_name}} is fully settled. Thanks!',
+  SPLIT_SHARE_EXPIRED:
+    'Hi {{customer_name}}, your ₹{{share_amount}} share of the ₹{{order_total}} bill at {{outlet_name}} has expired without payment. Please reach out to the outlet to settle.',
 };
 
 const TITLES: Record<LifecycleTrigger, string> = {
@@ -48,6 +51,7 @@ const TITLES: Record<LifecycleTrigger, string> = {
   ORDER_SERVED: 'Order served',
   SPLIT_SHARE_DUE: 'Your share is due',
   SPLIT_ALL_PAID: 'Split bill settled',
+  SPLIT_SHARE_EXPIRED: 'Your split share has expired',
 };
 
 type OrderLine = { name: string; quantity: number; total: number | string };

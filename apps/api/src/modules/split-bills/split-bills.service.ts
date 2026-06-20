@@ -2,7 +2,10 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 import {
   PaymentMode,
@@ -19,12 +22,206 @@ export interface SplitShareInput {
   customerPhone: string;
 }
 
+// Sweep cadence — every 5 minutes is fine for human-scale reminder
+// throttles (60 minutes default) and 24h-window expiry. Tight enough
+// that an operator changing the outlet's splitReminderEveryMinutes
+// to 5 still sees actual sends in roughly that window.
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
 @Injectable()
-export class SplitBillsService {
+export class SplitBillsService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(SplitBillsService.name);
+  // setInterval handle for the reminder + expiry sweep. Kept here so
+  // OnModuleDestroy can clear it cleanly on Nest shutdown.
+  private sweepTimer: NodeJS.Timeout | null = null;
+  // Skip the in-flight sweep entirely while another sweep is still
+  // running so a slow WhatsApp dispatch can't pile up reentrant calls.
+  private sweepInFlight = false;
+
   constructor(
     private prisma: PrismaService,
     private dispatcher: LifecycleDispatcherService,
   ) {}
+
+  // ─── Bull-style sweep lifecycle ──────────────────────────
+
+  onModuleInit() {
+    // Kick the first sweep on a 30s delay so the API is fully booted
+    // (Prisma client warm, dispatcher ready) before we start hitting
+    // the DB. After that, normal cadence.
+    this.sweepTimer = setTimeout(() => {
+      void this.runSweep();
+      this.sweepTimer = setInterval(() => void this.runSweep(), SWEEP_INTERVAL_MS);
+    }, 30_000);
+    this.sweepTimer?.unref?.();
+  }
+
+  onModuleDestroy() {
+    if (this.sweepTimer) {
+      clearTimeout(this.sweepTimer);
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
+    }
+  }
+
+  /**
+   * One pass — reminder fires + expiry flips. Public so tests / ops
+   * tools can kick it manually without waiting for the interval.
+   * Re-entrant calls are no-ops via the sweepInFlight gate.
+   */
+  async runSweep() {
+    if (this.sweepInFlight) return;
+    this.sweepInFlight = true;
+    try {
+      await this.sweepReminders();
+      await this.sweepExpiredShares();
+    } catch (e: any) {
+      this.logger.warn(`Sweep failed: ${e?.message ?? e}`);
+    } finally {
+      this.sweepInFlight = false;
+    }
+  }
+
+  /**
+   * Resends SPLIT_SHARE_DUE to shares that have gone quiet beyond the
+   * outlet's splitReminderEveryMinutes. Respects splitMaxReminders so
+   * a non-responsive diner doesn't get spammed indefinitely.
+   *
+   * Uses a single query that joins the outlet's settings via the
+   * order relation; per-share send happens sequentially so a flaky
+   * WhatsApp provider doesn't have us hammering it with a parallel
+   * burst.
+   */
+  private async sweepReminders() {
+    const now = new Date();
+    // Cap the batch so a backlog doesn't blow a single sweep's time
+    // budget — we'll catch up over the next ticks.
+    const candidates = await this.prisma.splitShare.findMany({
+      where: {
+        status: { in: [SplitShareStatus.SENT, SplitShareStatus.VIEWED] },
+        // expiresAt null = legacy row; treat as already-handled and
+        // skip rather than blasting reminders forever.
+        expiresAt: { not: null, gt: now },
+      },
+      include: {
+        order: {
+          select: {
+            outletId: true,
+            orderNumber: true,
+            totalAmount: true,
+            splitTotalShares: true,
+            outlet: {
+              select: {
+                name: true,
+                businessId: true,
+                splitReminderEveryMinutes: true,
+                splitMaxReminders: true,
+              },
+            },
+          },
+        },
+      },
+      take: 200,
+      orderBy: { sentAt: 'asc' },
+    });
+
+    for (const share of candidates) {
+      const outlet = share.order.outlet;
+      if (!outlet) continue;
+      if (share.remindersSent >= outlet.splitMaxReminders) continue;
+      // Throttle anchor — use the more recent of lastReminderAt or sentAt.
+      const anchor = share.lastReminderAt ?? share.sentAt;
+      if (!anchor) continue;
+      const gapMs = outlet.splitReminderEveryMinutes * 60_000;
+      if (now.getTime() - anchor.getTime() < gapMs) continue;
+
+      const baseUrl = (process.env.CUSTOMER_URL || '').replace(/\/$/, '');
+      const shareLink = `${baseUrl}/bills/${share.id}`;
+      try {
+        const customerId = share.customerId ?? (await this.ensureUserByPhone(share.customerPhone, share.customerName));
+        await this.dispatcher.fire('SPLIT_SHARE_DUE', {
+          customerId,
+          customerName: share.customerName,
+          customerPhone: share.customerPhone,
+          outletId: share.order.outletId,
+          outletName: outlet.name,
+          businessId: outlet.businessId ?? null,
+          orderId: share.orderId,
+          orderNumber: share.order.orderNumber,
+          shareAmount: Number(share.amount),
+          orderTotal: Number(share.order.totalAmount),
+          shareCount: share.order.splitTotalShares,
+          shareLink,
+        });
+        await this.prisma.splitShare.update({
+          where: { id: share.id },
+          data: {
+            remindersSent: { increment: 1 },
+            lastReminderAt: now,
+          },
+        });
+      } catch (e: any) {
+        this.logger.warn(`Reminder dispatch failed for share ${share.id}: ${e?.message}`);
+      }
+    }
+  }
+
+  /**
+   * Flips overdue unpaid shares to EXPIRED and fires
+   * SPLIT_SHARE_EXPIRED to the diner. Operator-facing visibility
+   * comes from the in-app CustomerAlert that LifecycleDispatcher
+   * always writes.
+   */
+  private async sweepExpiredShares() {
+    const now = new Date();
+    const expired = await this.prisma.splitShare.findMany({
+      where: {
+        status: { in: [SplitShareStatus.SENT, SplitShareStatus.VIEWED, SplitShareStatus.PENDING] },
+        expiresAt: { not: null, lte: now },
+      },
+      include: {
+        order: {
+          select: {
+            outletId: true,
+            orderNumber: true,
+            totalAmount: true,
+            outlet: { select: { name: true, businessId: true } },
+          },
+        },
+      },
+      take: 200,
+    });
+
+    for (const share of expired) {
+      try {
+        const customerId = share.customerId ?? (await this.ensureUserByPhone(share.customerPhone, share.customerName));
+        await this.dispatcher.fire('SPLIT_SHARE_EXPIRED', {
+          customerId,
+          customerName: share.customerName,
+          customerPhone: share.customerPhone,
+          outletId: share.order.outletId,
+          outletName: share.order.outlet?.name ?? null,
+          businessId: share.order.outlet?.businessId ?? null,
+          orderId: share.orderId,
+          orderNumber: share.order.orderNumber,
+          shareAmount: Number(share.amount),
+          orderTotal: Number(share.order.totalAmount),
+        });
+      } catch (e: any) {
+        this.logger.warn(`Expiry dispatch failed for share ${share.id}: ${e?.message}`);
+      }
+      // Always flip the status — the WhatsApp send is best-effort.
+      await this.prisma.splitShare.update({
+        where: { id: share.id },
+        data: {
+          status: SplitShareStatus.EXPIRED,
+          notes: share.notes
+            ? `${share.notes}\nAuto-expired at ${now.toISOString()}`
+            : `Auto-expired at ${now.toISOString()}`,
+        },
+      });
+    }
+  }
 
   // ─── Operator actions ────────────────────────────────────
 

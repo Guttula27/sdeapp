@@ -194,6 +194,22 @@ Hi {{customer_name}}, the ₹{{order_total}} split bill at {{outlet_name}} is fu
 
 ---
 
+### `SPLIT_SHARE_EXPIRED`
+
+| | |
+|---|---|
+| **Category** | UTILITY |
+| **Fires when** | Phase B's reminder job marks a share EXPIRED because the diner didn't pay within `outlet.splitExpireAfterMinutes`. One message to the diner, plus an in-app alert to the operator who created the share. |
+| **Code path** | `SplitBillsService.sweepExpiredShares` → `LifecycleDispatcherService.fire('SPLIT_SHARE_EXPIRED', ...)` |
+| **Markers required** | `customer_name`, `outlet_name`, `share_amount`, `order_total` |
+| **Loudness** | Quiet |
+
+```
+Hi {{customer_name}}, your ₹{{share_amount}} share of the ₹{{order_total}} bill at {{outlet_name}} has expired without payment. Please reach out to the outlet to settle.
+```
+
+---
+
 ## Submitting for WABA approval — checklist
 
 For each template above, the Meta Business Manager template form needs:
