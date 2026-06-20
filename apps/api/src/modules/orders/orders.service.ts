@@ -2519,10 +2519,16 @@ export class OrdersService {
 
     // Terminal / refund / dispute statuses — once an order lands here
     // the service desk has nothing left to do regardless of item state.
+    // READY_FOR_PICKUP is included because that's the post-release
+    // state — the operator already clicked Release for pickup, the
+    // food's on the counter, customer's been pinged. Keeping the
+    // order in the lane after release made the button look broken
+    // (status changed in DB but the row didn't disappear).
     const terminalOrderStatuses: OrderStatus[] = [
       OrderStatus.SERVED, OrderStatus.CANCELLED,
       OrderStatus.DISPUTED, OrderStatus.RESOLVED,
       OrderStatus.FOR_REFUND, OrderStatus.REFUND_COMPLETE,
+      OrderStatus.READY_FOR_PICKUP,
     ];
 
     const [verifyRows, partialReadyRows] = await Promise.all([
