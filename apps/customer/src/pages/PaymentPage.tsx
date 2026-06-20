@@ -53,6 +53,10 @@ interface NavState {
   // Postpaid Bill Now path: billOrderId set, cart unset. We settle the
   // existing order (plus optional tip) instead of creating a new one.
   billOrderId?: string;
+  // Split-share pay path: splitShareId set so the Payment row links
+  // back to the share at server side; billOrderId set to the parent
+  // order so the server can validate; total = the share amount.
+  splitShareId?: string;
   outletName?: string;
 }
 
@@ -233,11 +237,23 @@ export default function PaymentPage() {
           orderId: state.billOrderId,
           mode: extra.paymentMode,
           amount: baseTotal,
+          // When the customer paid a split-bill share, pass the
+          // shareId through so the server's confirmPayment hook
+          // settles the share + bumps the order counters + fires
+          // SPLIT_ALL_PAID inside one transaction.
+          splitShareId: state.splitShareId,
         });
         if (extra.paymentMode !== 'CASH' && pay?.data?.paymentId) {
           await api.post(`/payments/${pay.data.paymentId}/confirm`, { gatewayRef: '' });
         }
-        navigate(`/receipt/${state.billOrderId}`, { replace: true });
+        // Land back on the bill detail for split shares (so the
+        // diner sees their share marked Paid + the live progress);
+        // direct Bill Now keeps its existing receipt redirect.
+        if (state.splitShareId) {
+          navigate(`/bills/${state.splitShareId}`, { replace: true });
+        } else {
+          navigate(`/receipt/${state.billOrderId}`, { replace: true });
+        }
         return;
       }
       const { data } = await api.post(`/outlets/${state.outletId}/orders`, {
