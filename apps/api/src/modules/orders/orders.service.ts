@@ -813,6 +813,12 @@ export class OrdersService {
         couponUsages: {
           select: { discountAmount: true, coupon: { select: { code: true, name: true } } },
         },
+        // Aggregator side-table — when present, the packing slip
+        // printer surfaces the external order id alongside our
+        // orderNumber so the rider's app and our parcel agree.
+        aggregatorOrder: {
+          select: { channel: true, externalOrderId: true, status: true },
+        },
       },
     });
     if (!order) throw new NotFoundException('Order not found');

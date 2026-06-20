@@ -9,8 +9,8 @@ import { getSocket } from '../../services/socket';
 import { useSocketStatus } from '../../hooks/useSocketStatus';
 import { useUserRole } from '../../hooks/useUserRole';
 import api from '../../services/api';
-import { isPrinterConnected, isBluetoothSupported, connectPrinter, printCustomerReceipt } from '../../utils/bluetoothPrinter';
-import { buildReceiptPayload } from '../../utils/receiptPayload';
+import { isPrinterConnected, isBluetoothSupported, connectPrinter, printCustomerReceipt, printPackingSlip } from '../../utils/bluetoothPrinter';
+import { buildReceiptPayload, buildPackingSlipPayload, isAggregatorOrder } from '../../utils/receiptPayload';
 import { getOpenOrdersSnapshot, setOpenOrdersSnapshot } from '../../utils/idb';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import ThermalReceipt from '../../components/receipt/ThermalReceipt';
@@ -203,8 +203,19 @@ export default function OrdersPage() {
         // is sufficient for an itemised receipt.
         payload = detail;
       }
-      await printCustomerReceipt(outletPrint.printerId, buildReceiptPayload(payload));
-      toast.success('Receipt sent to printer');
+      // Aggregator orders get a packing slip instead of the customer
+      // receipt — the customer paid the marketplace at a different
+      // price and GST was collected by the aggregator, so showing our
+      // pricing on the parcel would mislead. The slip is items +
+      // quantities + variants/toppings + customer notes, ready to
+      // staple to the delivery bag.
+      if (isAggregatorOrder(payload)) {
+        await printPackingSlip(outletPrint.printerId, buildPackingSlipPayload(payload));
+        toast.success('Packing slip sent to printer');
+      } else {
+        await printCustomerReceipt(outletPrint.printerId, buildReceiptPayload(payload));
+        toast.success('Receipt sent to printer');
+      }
     } catch (e: any) {
       toast.error(e?.message || 'Print failed');
     } finally {
@@ -1090,10 +1101,12 @@ export default function OrdersPage() {
                   onClick={printDetailReceipt}
                   disabled={printing}
                   className="btn-secondary"
-                  title="Send the receipt to the configured bluetooth printer"
+                  title={isAggregatorOrder(detail)
+                    ? 'Print a packing slip (items + quantities, no prices) for the delivery parcel'
+                    : 'Send the receipt to the configured bluetooth printer'}
                 >
                   {printing && <span className="w-3 h-3 border-2 border-slate-300 border-t-slate-700 rounded-full animate-spin" />}
-                  <PrinterIcon size={14} /> Print Receipt
+                  <PrinterIcon size={14} /> {isAggregatorOrder(detail) ? 'Print Packing Slip' : 'Print Receipt'}
                 </button>
               )}
               <button onClick={() => setDetail(null)} className="btn-secondary">Close</button>

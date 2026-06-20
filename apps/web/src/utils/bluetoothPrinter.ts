@@ -334,3 +334,112 @@ export async function printCustomerReceipt(
   const bytes = buildCustomerEscPos(receipt);
   await writeBytes(printerId, bytes);
 }
+
+// ── Aggregator packing slip ────────────────────────────────────────
+// Used for delivery orders that came in via Zomato / Swiggy / Uber Eats.
+// Two reasons we don't print the regular customer receipt here:
+//   1. The customer already paid the aggregator at a marketplace price
+//      that's typically different from our outlet price (commissions /
+//      menu markups). Showing OUR price on the parcel would confuse the
+//      customer at delivery.
+//   2. GST on aggregator orders is collected by the marketplace, not us.
+//      Putting our GSTIN + tax breakup on a parcel is misleading.
+//
+// The slip is a packing checklist — items, variants, toppings, quantities,
+// customer notes. It's stapled to the bag so the delivery rider and the
+// customer can verify the parcel without seeing prices.
+export type PackingSlipItemLine = {
+  itemName: string;
+  variantName?: string | null;
+  toppings?: string | null;
+  quantity: number;
+  notes?: string | null;
+};
+
+export type PackingSlipPayload = {
+  orderNumber: string;
+  channel: string;                 // ZOMATO / SWIGGY / UBER_EATS — shown bold at the top
+  tokenNumber?: number | null;
+  externalOrderId?: string | null; // The aggregator's order id — what the rider's app shows
+  printedAt: string;
+  outletName: string;
+  customerName?: string | null;
+  customerPhone?: string | null;   // Usually masked by the aggregator (e.g. "+91 99999XXXXX")
+  items: PackingSlipItemLine[];
+  customerNotes?: string | null;   // "Less spicy", "no onion" etc. — surfaces on its own line
+};
+
+function buildPackingSlipEscPos(r: PackingSlipPayload): Uint8Array {
+  const enc = new TextEncoder();
+  const ESC = 0x1b;
+  const GS = 0x1d;
+  const buf: number[] = [];
+  const push = (s: string) => { for (const c of enc.encode(asAscii(s))) buf.push(c); };
+  const cmd = (...b: number[]) => { for (const c of b) buf.push(c); };
+
+  cmd(ESC, 0x40);          // init
+  cmd(ESC, 0x61, 0x01);    // center
+  cmd(ESC, 0x21, 0x30);    // double w/h
+  push(r.channel.toUpperCase() + '\n');
+  cmd(ESC, 0x21, 0x00);
+  push(r.outletName + '\n');
+  push(dash() + '\n');
+  cmd(ESC, 0x21, 0x30);
+  if (r.tokenNumber != null) push(`TOKEN #${r.tokenNumber}\n`);
+  cmd(ESC, 0x21, 0x00);
+  cmd(ESC, 0x61, 0x00);    // left
+  push(`Order: ${r.orderNumber}\n`);
+  if (r.externalOrderId) push(`${r.channel} ID: ${r.externalOrderId}\n`);
+  if (r.customerName) push(`Customer: ${r.customerName}\n`);
+  if (r.customerPhone) push(`Phone: ${r.customerPhone}\n`);
+  push(`Time: ${new Date(r.printedAt).toLocaleTimeString()}\n`);
+  push(dash() + '\n');
+
+  // Items — same emphasis as the kitchen ticket since this slip
+  // doubles as a packing checklist. Quantity is the eye-catching part.
+  for (const li of r.items) {
+    cmd(ESC, 0x21, 0x10);  // double height
+    push(`${li.quantity} x ${li.itemName}\n`);
+    cmd(ESC, 0x21, 0x00);
+    if (li.variantName) push(`   ${li.variantName}\n`);
+    if (li.toppings) push(`   + ${li.toppings}\n`);
+    if (li.notes) push(`   * ${li.notes}\n`);
+  }
+  push(dash() + '\n');
+
+  if (r.customerNotes) {
+    cmd(ESC, 0x21, 0x10);
+    push('NOTE:\n');
+    cmd(ESC, 0x21, 0x00);
+    // Word-wrap to the receipt width so long notes don't get clipped
+    // by the printer's hard line break.
+    const words = r.customerNotes.split(/\s+/);
+    let line = '';
+    for (const w of words) {
+      if ((line + ' ' + w).trim().length > W) {
+        push(line + '\n');
+        line = w;
+      } else {
+        line = (line ? line + ' ' : '') + w;
+      }
+    }
+    if (line) push(line + '\n');
+    push(dash() + '\n');
+  }
+
+  cmd(ESC, 0x61, 0x01);    // center
+  push('Attach this slip to the parcel.\n');
+  push('Prices are with the aggregator app.\n');
+
+  cmd(ESC, 0x64, 0x04);    // feed 4 lines
+  cmd(GS, 0x56, 0x00);     // full cut
+  return new Uint8Array(buf);
+}
+
+export async function printPackingSlip(
+  printerId: string,
+  slip: PackingSlipPayload,
+): Promise<void> {
+  const bytes = buildPackingSlipEscPos(slip);
+  await writeBytes(printerId, bytes);
+}
