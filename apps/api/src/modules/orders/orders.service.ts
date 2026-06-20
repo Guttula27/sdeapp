@@ -1925,8 +1925,18 @@ export class OrdersService {
     let readyNext: OrderStatus[];
     let outForServiceNext: OrderStatus[];
     if (shape === 'self-service') {
-      preparingNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED];
-      readyNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED]; // legacy in-flight orders
+      // PREPARING → READY_FOR_PICKUP supports the partial-release
+      // case: some items are READY, others still being prepared,
+      // staff wants to call the customer to the counter to pick up
+      // what's done while the rest cooks. Without this transition,
+      // staff had to wait until every item was ready before
+      // releasing — which is the wrong UX for self-service.
+      preparingNext = [
+        OrderStatus.OUT_FOR_SERVICE,
+        OrderStatus.READY_FOR_PICKUP,
+        OrderStatus.CANCELLED,
+      ];
+      readyNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.READY_FOR_PICKUP, OrderStatus.CANCELLED];
       // Self-service collapses the manual flow: from OUT_FOR_SERVICE staff
       // can either go through READY_FOR_PICKUP (customer-ping lane) or
       // jump straight to SERVED — which is what the admin "Mark Served"
