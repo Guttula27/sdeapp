@@ -885,14 +885,33 @@ export default function ServiceDeskPage() {
                                 </button>
                               </>
                             )}
-                            {lane === 'release' && (
-                              <button
-                                onClick={() => advanceStatus(o.id, 'READY_FOR_PICKUP')}
-                                className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
-                              >
-                                <Bell size={13} /> Release for pickup
-                              </button>
-                            )}
+                            {lane === 'release' && (() => {
+                              // "Release" in self-service IS "served" — the
+                              // food's on the pickup counter and the customer's
+                              // already been pinged via the per-item ITEM_READY
+                              // notification. Mark every currently-READY item
+                              // as SERVED; the per-item rollup auto-advances
+                              // the order to SERVED when all items are done,
+                              // or leaves it open (partly-served) when other
+                              // items are still cooking.
+                              const readyCount = items.filter((i) => i.status === 'READY').length;
+                              const totalCount = items.length;
+                              const isPartial = readyCount < totalCount;
+                              return (
+                                <button
+                                  onClick={() => serveReadyItems(o)}
+                                  className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
+                                  title={isPartial
+                                    ? `Release ${readyCount} of ${totalCount} items — rest stay open until cooked`
+                                    : 'Release for pickup — closes the order'}
+                                >
+                                  <Bell size={13} />
+                                  {isPartial
+                                    ? `Release ${readyCount} of ${totalCount}`
+                                    : 'Release for pickup'}
+                                </button>
+                              );
+                            })()}
                             {lane === 'pickup' && (() => {
                               const readyCount = items.filter((i) => i.status === 'READY').length;
                               // Single "Serve N ready" works whether 1 of 5
