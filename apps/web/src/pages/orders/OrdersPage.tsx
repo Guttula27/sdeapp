@@ -1920,6 +1920,19 @@ function SplitSharesPanel({
           const cfg = STATUS_CFG[s.status] ?? STATUS_CFG.PENDING;
           const Icon = cfg.icon;
           const live = !['PAID', 'CANCELLED', 'EXPIRED'].includes(s.status);
+          // Humanised "expires in 3h" / "expired 1h ago" for the
+          // status sub-line — read off the row's expiresAt (Phase B).
+          const expiresAt = s.expiresAt ? new Date(s.expiresAt).getTime() : null;
+          const expiresInMs = expiresAt ? expiresAt - Date.now() : null;
+          const expiresText = expiresInMs == null
+            ? null
+            : expiresInMs > 0
+              ? expiresInMs < 60 * 60 * 1000
+                ? `expires in ${Math.max(1, Math.floor(expiresInMs / 60_000))}m`
+                : expiresInMs < 24 * 60 * 60 * 1000
+                  ? `expires in ${Math.floor(expiresInMs / (60 * 60 * 1000))}h`
+                  : `expires in ${Math.floor(expiresInMs / (24 * 60 * 60 * 1000))}d`
+              : null;
           return (
             <li key={s.id} className="px-3 py-2 flex items-center gap-2 text-xs">
               <div className="flex-1 min-w-0">
@@ -1929,6 +1942,8 @@ function SplitSharesPanel({
                 <p className="text-[10px] text-slate-500">
                   {s.sentAt && <>Sent {new Date(s.sentAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>}
                   {s.paidAt && <> · Paid {new Date(s.paidAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit' })}</>}
+                  {live && (s.remindersSent ?? 0) > 0 && <> · {s.remindersSent} reminder{s.remindersSent === 1 ? '' : 's'} sent</>}
+                  {live && expiresText && <> · <span className={expiresInMs! < 60 * 60 * 1000 ? 'text-amber-700 font-semibold' : ''}>{expiresText}</span></>}
                 </p>
               </div>
               <span className="font-semibold text-slate-900 tabular-nums w-16 text-right shrink-0">
