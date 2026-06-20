@@ -1149,15 +1149,24 @@ export class OrdersService {
     if (!item || item.orderId !== orderId) throw new NotFoundException('Order item not found');
 
     // Station-scoped enforcement: if the caller is currently a station worker,
-    // they can only touch items routed to their station — unless their station
-    // is a master station, which sees everything.
+    // they can only touch items routed to their station(s). Master stations
+    // see everything. A staff member can be the currentWorker on multiple
+    // stations at once (covering tandoor + curry during a shift), so we
+    // fetch the full set and allow the update when:
+    //   • caller works no stations (admin / non-station-bound role)
+    //   • caller works at least one master station
+    //   • the item's kitchenStationId matches any of the caller's stations
     if (userId) {
-      const workerStation = await this.prisma.kitchenStation.findFirst({
+      const workerStations = await this.prisma.kitchenStation.findMany({
         where: { currentWorkerId: userId, outletId: item.order.outletId, isActive: true },
         select: { id: true, isMaster: true },
       });
-      if (workerStation && !workerStation.isMaster && item.item.kitchenStationId !== workerStation.id) {
-        throw new ForbiddenException('You can only update items assigned to your station');
+      if (workerStations.length > 0) {
+        const isMaster = workerStations.some((s) => s.isMaster);
+        const stationIds = new Set(workerStations.map((s) => s.id));
+        if (!isMaster && !stationIds.has(item.item.kitchenStationId ?? '')) {
+          throw new ForbiddenException('You can only update items assigned to your station');
+        }
       }
     }
 
