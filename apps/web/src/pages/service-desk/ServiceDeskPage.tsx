@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 import { Navigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
-import { CheckCircle2, XCircle, ChefHat, Bell, Truck, Utensils, Clock, ChevronDown, Maximize2, Minus, Plus, Armchair, Edit2, Banknote, Smartphone } from 'lucide-react';
+import { CheckCircle2, XCircle, ChefHat, Bell, Truck, Utensils, Clock, ChevronDown, ChevronUp, Maximize2, Minus, Plus, Armchair, Edit2, Banknote, Smartphone } from 'lucide-react';
 import { RootState } from '../../store';
 import { getSocket } from '../../services/socket';
 import { useUserRole } from '../../hooks/useUserRole';
@@ -117,6 +117,22 @@ export default function ServiceDeskPage() {
   // primarily from this surface; the original verify/release/pickup
   // lanes below stay for the task-focused views.
   const [openTabs, setOpenTabs] = useState<OrderRow[]>([]);
+
+  // Outlet type drives which lanes render + whether Open Tabs is
+  // populated at all. Self-service outlets don't have postpaid tabs
+  // (no tables) and only need the Release lane — verify and pickup
+  // are noise for them.
+  const [outletType, setOutletType] = useState<string | null>(null);
+  useEffect(() => {
+    if (!outletId) return;
+    api.get(`/outlets/${outletId}`)
+      .then(({ data }) => setOutletType(data.data?.outletType ?? null))
+      .catch(() => setOutletType(null));
+  }, [outletId]);
+  const isSelfService = outletType === 'SELF_SERVICE' || outletType === 'SELF_SERVICE_PARCEL';
+  // Lanes to render for this outlet. Self-service collapses to a
+  // single Release lane; the others stay hidden.
+  const visibleLanes: Lane[] = isSelfService ? ['release'] : (['verify', 'release', 'pickup'] as Lane[]);
   // Add-item modal target. When non-null, the AddItemModal renders for
   // this specific order. Set from each tab card's "Add item" button —
   // also from the per-line "Replace" affordance, in which case
@@ -395,6 +411,29 @@ export default function ServiceDeskPage() {
   // spines. Click a tab to swap focus; click the expanded lane's
   // header chevron to collapse back to the equal-column layout.
   const [expandedLane, setExpandedLane] = useState<Lane | null>(null);
+
+  // Vertical accordion focus — whichever section the operator is
+  // working in expands to fill the available height, the other
+  // collapses to a header strip they can click to swap focus. Keeps
+  // the whole service desk fitting in one viewport without page
+  // scrolling, which the operator asked for so they don't lose
+  // either surface when they're moving between them.
+  //
+  // Default = 'tabs' on table-service outlets (Open Tabs is the
+  // primary working surface) and 'lanes' on self-service (no postpaid
+  // tabs, so Release is the only thing they touch).
+  const [focused, setFocused] = useState<'tabs' | 'lanes'>(() =>
+    (outletType === 'SELF_SERVICE' || outletType === 'SELF_SERVICE_PARCEL') ? 'lanes' : 'tabs',
+  );
+  // Re-anchor the default when outletType comes in async — only on
+  // the first resolution, so manual operator clicks aren't overridden.
+  const didAnchorFocusRef = useRef(false);
+  useEffect(() => {
+    if (didAnchorFocusRef.current) return;
+    if (outletType == null) return;
+    setFocused(isSelfService ? 'lanes' : 'tabs');
+    didAnchorFocusRef.current = true;
+  }, [outletType, isSelfService]);
   // Compact-card behaviour — every card is collapsed by default
   // (header only) and toggles its body on click. Same pattern as the
   // Orders page so staff who jump between the two have one mental
@@ -420,23 +459,33 @@ export default function ServiceDeskPage() {
     <div
       ref={pageRef}
       className={clsx(
-        'mx-auto',
-        // In fullscreen we drop the page chrome's max-width so the
-        // three lanes get every available pixel — same trick the
-        // Kitchen + Orders pages use.
-        isFullscreen ? 'p-4 bg-slate-50 h-screen overflow-auto' : 'p-4 lg:p-6 max-w-[1600px]',
+        'mx-auto flex flex-col',
+        // Fullscreen takes the whole viewport; the normal-mode layout
+        // sits inside the admin shell — h-[calc(100dvh-64px)] matches
+        // PlaceOrderPage's trick of claiming all remaining space below
+        // the global header. Either way the page itself never
+        // scrolls; each accordion section handles its own overflow.
+        isFullscreen
+          ? 'p-3 bg-slate-50 h-screen'
+          : 'p-3 lg:p-4 max-w-[1600px] h-[calc(100dvh-64px)]',
       )}
     >
-      <header className="flex items-center justify-between mb-4 gap-2">
+      <header className="flex items-center justify-between mb-3 gap-2 shrink-0">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Service desk</h1>
           <p className="text-xs text-slate-500">
-            Verify postpaid lines, release self-service orders, and run table-service pickups.
+            {isSelfService
+              ? 'Release self-service orders as they come off the kitchen.'
+              : 'Verify postpaid lines, release self-service orders, and run table-service pickups.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <div className="text-xs text-slate-400">
-            {loading ? 'Loading…' : `${counts.verify + counts.release + counts.pickup} open`}
+            {loading
+              ? 'Loading…'
+              : isSelfService
+                ? `${counts.release} open`
+                : `${counts.verify + counts.release + counts.pickup} open`}
           </div>
           <FullscreenToggle active={isFullscreen} onClick={toggleFullscreen} />
         </div>
@@ -447,19 +496,42 @@ export default function ServiceDeskPage() {
           tab lifecycle until payment lands. Each table card shows
           the order and surfaces the actions a server would take
           (add an item, request the bill). The lanes below remain
-          for task-focused views. */}
-      <section className="mb-4">
-        <div className="flex items-end justify-between mb-2 px-1">
-          <div>
-            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700">Open tabs</h2>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              All un-paid postpaid orders for this outlet, by table.
-            </p>
+          for task-focused views.
+
+          Accordion: when focused = 'tabs', the section takes all
+          available height; when focused = 'lanes', it collapses to
+          a clickable header strip. */}
+      <section
+        className={clsx(
+          'flex flex-col min-h-0 transition-all',
+          focused === 'tabs' ? 'flex-1 mb-3' : 'shrink-0 mb-2',
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => setFocused('tabs')}
+          className={clsx(
+            'flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg w-full text-left transition-colors',
+            focused === 'tabs' ? 'bg-transparent cursor-default' : 'bg-slate-100 hover:bg-slate-200 cursor-pointer',
+          )}
+        >
+          <div className="flex items-center gap-2">
+            {focused === 'lanes' && <ChevronUp size={14} className="text-slate-500" />}
+            <div>
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700">Open tabs</h2>
+              {focused === 'tabs' && (
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  All un-paid postpaid orders for this outlet, by table.
+                </p>
+              )}
+            </div>
           </div>
-          <span className="text-[11px] font-semibold text-slate-500">
+          <span className="text-[11px] font-semibold text-slate-500 shrink-0">
             {openTabs.length} open · {sectionGroups.reduce((s, g) => s + g.tables.length, 0)} tables
           </span>
-        </div>
+        </button>
+        {focused === 'tabs' && (
+        <div className="flex-1 min-h-0 overflow-auto mt-2">
         {openTabs.length === 0 ? (
           <p className="text-xs text-slate-400 italic px-2 py-6 text-center bg-white border border-slate-100 rounded-xl">
             No open tabs right now.
@@ -618,15 +690,46 @@ export default function ServiceDeskPage() {
             ))}
           </div>
         )}
+        </div>
+        )}
       </section>
 
-      {/* Flex row: each lane is a flex child whose `flex` value swings
-          when one lane is expanded. Default = equal columns; expanded
-          lane → flex 8; collapsed laneas → flex 1 (rendered as a
-          vertical "diary tab" spine). On small screens we drop to a
-          single-column stack so the spines don't get pinched. */}
-      <div className="flex flex-col lg:flex-row gap-3 lg:gap-4 min-h-[60vh]">
-        {(Object.keys(LANE_META) as Lane[]).map((lane) => {
+      {/* ── Lanes section ───────────────────────────────────────
+          Same accordion shell as Open Tabs above. When focused =
+          'lanes' the section claims the available height + the
+          existing 3-lane flex row renders inside. When focused =
+          'tabs', it collapses to a clickable header strip pinned to
+          the bottom. Inside the section, the operator can still
+          expand a single lane to ~80% width via the existing
+          expandedLane mechanism. */}
+      <section
+        className={clsx(
+          'flex flex-col min-h-0 transition-all',
+          focused === 'lanes' ? 'flex-1' : 'shrink-0',
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => setFocused('lanes')}
+          className={clsx(
+            'flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg w-full text-left mb-2 transition-colors',
+            focused === 'lanes' ? 'bg-transparent cursor-default' : 'bg-slate-100 hover:bg-slate-200 cursor-pointer',
+          )}
+        >
+          <div className="flex items-center gap-2">
+            {focused === 'tabs' && <ChevronDown size={14} className="text-slate-500" />}
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700">
+              {isSelfService ? 'Release' : 'Lanes'}
+            </h2>
+          </div>
+          <span className="text-[11px] font-semibold text-slate-500 shrink-0">
+            {visibleLanes.reduce((s, l) => s + counts[l], 0)} pending
+          </span>
+        </button>
+
+        {focused === 'lanes' && (
+        <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-3 lg:gap-4 overflow-hidden">
+        {visibleLanes.map((lane) => {
           const meta = LANE_META[lane];
           const rows = queue[lane];
           const Icon = meta.icon;
@@ -940,7 +1043,9 @@ export default function ServiceDeskPage() {
             </section>
           );
         })}
-      </div>
+        </div>
+        )}
+      </section>
 
       {addItemTarget && (
         <AddItemModal
