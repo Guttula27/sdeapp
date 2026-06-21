@@ -905,7 +905,11 @@ export class OrdersService {
       data: {
         status: dto.status,
         statusHistory: {
-          create: { status: dto.status, changedBy: userId, notes: dto.notes, ...(actedAt ? { changedAt: actedAt } : {}) },
+          // Schema has createdAt (default now()), no separate changedAt.
+          // For offline replays the client passes actedAt so reports
+          // reflect when staff actually pressed the button; override
+          // createdAt with that value when present.
+          create: { status: dto.status, changedBy: userId, notes: dto.notes, ...(actedAt ? { createdAt: actedAt } : {}) },
         },
       },
       include: {
