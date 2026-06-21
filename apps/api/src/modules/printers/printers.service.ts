@@ -70,7 +70,10 @@ export class PrintersService {
   // station that owns them (via Item.kitchenStationId) — one receipt per
   // station that has at least one line. The caller decides whether to
   // actually print (auto vs. manual; printer present vs. not).
-  async buildKitchenReceipts(orderId: string, opts?: { stationId?: string }): Promise<KitchenReceipt[]> {
+  async buildKitchenReceipts(
+    orderId: string,
+    opts?: { stationId?: string; itemId?: string },
+  ): Promise<KitchenReceipt[]> {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
@@ -98,6 +101,53 @@ export class PrintersService {
       },
     });
     if (!order) throw new NotFoundException('Order not found');
+
+    // Per-item filter short-circuit: when the caller asks for a single
+    // OrderItem, build one slip with the order's token + just that line
+    // and return. Used by the kitchen card's per-item print button so
+    // staff can produce a token-tagged slip for any item on demand,
+    // independent of the item's printSeparately flag.
+    if (opts?.itemId) {
+      const li = order.items.find((x) => x.id === opts.itemId);
+      if (!li) return [];
+      const ks = li.item.kitchenStation;
+      const printer = ks?.printer
+        ? {
+            id: ks.printer.id,
+            name: ks.printer.name,
+            connection: ks.printer.connection,
+            address: ks.printer.address ?? null,
+          }
+        : null;
+      const rawNotes = li.notes ?? '';
+      const parts = rawNotes.split('|').map((s) => s.trim()).filter(Boolean);
+      const toppingsPart = parts.find((p) => p.toLowerCase().startsWith('add:')) ?? null;
+      const restNotes = parts.filter((p) => p !== toppingsPart).join(' | ') || null;
+      return [
+        {
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          tokenNumber: order.tokenNumber ?? null,
+          outletName: order.outlet.name,
+          table: order.table?.number ?? null,
+          section: order.section?.name ?? null,
+          isParcel: order.isParcel,
+          printedAt: new Date().toISOString(),
+          stationId: ks?.id ?? '__unassigned__',
+          stationName: ks?.name ?? 'Unassigned',
+          printer,
+          lines: [
+            {
+              itemName: li.item.name,
+              variantName: li.variant?.name ?? null,
+              toppings: toppingsPart ? toppingsPart.replace(/^add:\s*/i, '') : null,
+              quantity: li.quantity,
+              notes: restNotes,
+            },
+          ],
+        },
+      ];
+    }
 
     // Two output shapes per order item:
     //   - Item.printSeparately = false → station bucket (one combined

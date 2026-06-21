@@ -229,6 +229,35 @@ export default function KitchenPage() {
     }
   }, [printerId, myStations]);
 
+  // Per-item slip: prints a token-tagged ticket for a single OrderItem
+  // — independent of the menu item's printSeparately flag. Lets kitchen
+  // staff hand off any individual line (e.g. one of three drinks in an
+  // order) with its own token reference for table delivery.
+  const printOrderItem = useCallback(async (orderId: string, itemId: string) => {
+    if (!printerId) {
+      toast.error('No printer assigned to this station');
+      return;
+    }
+    if (!isPrinterConnected(printerId)) {
+      toast.error('Printer disconnected — tap "Connect printer"');
+      return;
+    }
+    try {
+      const res = await api.get(`/kitchen-receipts/order/${orderId}`, {
+        params: { itemId },
+      });
+      const receipts = res.data.data || [];
+      if (receipts.length === 0) {
+        toast.error('Nothing to print');
+        return;
+      }
+      for (const r of receipts) await printReceipt(printerId, r);
+      toast.success('Item slip printed');
+    } catch (e: any) {
+      toast.error(e?.message || e?.response?.data?.message || 'Print failed');
+    }
+  }, [printerId]);
+
   useEffect(() => { fetchForFilter(filter).catch(() => {}); }, [filter, fetchForFilter]);
 
   // Socket-status pill + REST backfill on reconnect. The kitchen's primary
@@ -797,6 +826,16 @@ export default function KitchenPage() {
                                     }}
                                   >
                                     <nextLabel.icon size={13} /> {nextLabel.label}
+                                  </button>
+                                )}
+                                {outletPrintCfg.allowManual && printerId && (
+                                  <button
+                                    onClick={() => printOrderItem(order.id, item.id)}
+                                    disabled={isBusy}
+                                    className="w-8 h-8 inline-flex items-center justify-center text-slate-500 hover:bg-slate-100 rounded-lg transition-colors"
+                                    title={printerReady ? 'Print slip for this item' : 'Tap "Connect printer" first'}
+                                  >
+                                    <PrinterIcon size={13} />
                                   </button>
                                 )}
                                 <button

@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import {
   Plus, Minus, ShoppingBag, Trash2, Banknote, Smartphone,
   Phone, Package, X as XIcon, Search, Lock, Table2,
-  Maximize2, Minimize2,
+  Maximize2, Minimize2, Printer as PrinterIcon,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import api from '../../services/api';
@@ -89,6 +89,34 @@ export default function PlaceOrderPage() {
     await printCustomerReceipt(printerId, buildReceiptPayload(data.data));
   };
 
+  // Manual receipt reprint for the most recently placed order. Backs the
+  // "Print receipt" pill that appears at the top of the page after every
+  // successful placement. Gated by outlet.receiptAllowManualPrint + a
+  // configured printer.
+  const printLastReceipt = async () => {
+    if (!lastOrder) return;
+    const printerId = outlet?.receiptPrinterId;
+    if (!printerId) {
+      toast.error('No receipt printer configured for this outlet');
+      return;
+    }
+    setPrintingReceipt(true);
+    try {
+      if (!isPrinterConnected(printerId)) {
+        // Web Bluetooth prompts here if there's no live handle.
+        const { connectPrinter } = await import('../../utils/bluetoothPrinter');
+        await connectPrinter(printerId);
+      }
+      const { data } = await api.get(`/outlets/${outletId}/orders/${lastOrder.id}`);
+      await printCustomerReceipt(printerId, buildReceiptPayload(data.data));
+      toast.success('Receipt sent to printer');
+    } catch (e: any) {
+      toast.error(e?.message || 'Print failed');
+    } finally {
+      setPrintingReceipt(false);
+    }
+  };
+
   const cartKey = `placeorder-cart-${outletId}`;
   const [cart, setCart] = useState<CartLine[]>(() => {
     try { return JSON.parse(localStorage.getItem(cartKey) || '[]'); }
@@ -103,6 +131,12 @@ export default function PlaceOrderPage() {
   const [customerPhone, setCustomerPhone] = useState('');
   const [isParcel, setIsParcel] = useState(false);
   const [placing, setPlacing] = useState(false);
+  // Most recently placed order on this device — surfaced as a "Print
+  // receipt" pill at the top of the page so staff can reprint without
+  // navigating to /orders. Cleared on next placement, page refresh, or
+  // explicit dismiss.
+  const [lastOrder, setLastOrder] = useState<{ id: string; orderNumber: string } | null>(null);
+  const [printingReceipt, setPrintingReceipt] = useState(false);
 
   // Fullscreen toggle — uses the browser Fullscreen API on the page
   // wrapper so a counter station or a tablet running in landscape can use
@@ -480,6 +514,7 @@ export default function PlaceOrderPage() {
         __outboxLabel: 'Place order',
       } as any);
       toast.success(`Order ${data.data.orderNumber} placed`);
+      setLastOrder({ id: data.data.id, orderNumber: data.data.orderNumber });
       // Auto-print receipt if the outlet's receiptAutoPrint flag is
       // set AND a printer is configured AND it's currently connected.
       // Best-effort: failures toast but don't block the reset.
@@ -519,6 +554,11 @@ export default function PlaceOrderPage() {
         setIsParcel(false);
         setTableTypeId('');
         setTableId('');
+        // Offline placements don't get an "online" order id back yet —
+        // intentionally leave lastOrder unset so the "Print receipt"
+        // pill doesn't appear (a server fetch would 404 until the
+        // outbox drain promotes the row). Reprints for offline-queued
+        // orders happen from /offline-orders once they sync.
         // Stay on this page after an offline queue too; the offline
         // toast already confirms the provisional number.
       } else {
@@ -868,6 +908,7 @@ export default function PlaceOrderPage() {
         await api.post(`/payments/${data.data.paymentId}/confirm`, { gatewayRef: '' });
       }
       toast.success(`Payment recorded · ₹${Number(openOrder.totalAmount).toFixed(2)}`);
+      setLastOrder({ id: openOrder.id, orderNumber: openOrder.orderNumber });
       setOpenOrder(null);
       setBillingState('idle');
       setCart([]);
@@ -1090,6 +1131,30 @@ export default function PlaceOrderPage() {
 
         {/* ── Right 30%: cart ────────────────────────────────── */}
         <aside className="w-[40%] min-w-[340px] max-w-[520px] bg-white border-l border-slate-100 flex flex-col">
+          {lastOrder && outlet?.receiptAllowManualPrint && outlet?.receiptPrinterId && isBluetoothSupported() && (
+            <div className="px-3 py-2 border-b border-slate-100 bg-emerald-50/50 flex items-center justify-between gap-2">
+              <p className="text-[11px] text-emerald-800 truncate">
+                Last order placed · <span className="font-bold">{lastOrder.orderNumber}</span>
+              </p>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={printLastReceipt}
+                  disabled={printingReceipt}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                  title="Reprint the customer receipt for the last placed order"
+                >
+                  <PrinterIcon size={11} /> {printingReceipt ? 'Printing…' : 'Print receipt'}
+                </button>
+                <button
+                  onClick={() => setLastOrder(null)}
+                  className="text-emerald-700/60 hover:text-emerald-900 p-1"
+                  title="Dismiss"
+                >
+                  <XIcon size={11} />
+                </button>
+              </div>
+            </div>
+          )}
           <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <ShoppingBag size={15} className="text-brand-500" />
