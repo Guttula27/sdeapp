@@ -1,12 +1,17 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { TranslationsService } from '../translations/translations.service';
+import { MenuService } from '../menu/menu.service';
 
 @Injectable()
 export class CustomerTagsService {
   constructor(
     private prisma: PrismaService,
     private translations: TranslationsService,
+    // Used to bump the outlet's menu-tree version after price-override
+    // writes — without this, the admin's re-fetch hits the cached tree
+    // and sees the old override.
+    private menu: MenuService,
   ) {}
 
   async list(outletId: string, lang?: string | null) {
@@ -89,27 +94,35 @@ export class CustomerTagsService {
     const existing = await this.prisma.customerTagPrice.findFirst({
       where: { itemId, customerTagId: tagId, variantId: variantId ?? null },
     });
+    let result;
     if (existing) {
-      return this.prisma.customerTagPrice.update({
+      result = await this.prisma.customerTagPrice.update({
         where: { id: existing.id },
         data: { price, ...(gstRate !== undefined ? { gstRate } : {}) },
       });
+    } else {
+      result = await this.prisma.customerTagPrice.create({
+        data: {
+          itemId,
+          customerTagId: tagId,
+          variantId: variantId ?? null,
+          price,
+          gstRate: gstRate ?? null,
+        },
+      });
     }
-    return this.prisma.customerTagPrice.create({
-      data: {
-        itemId,
-        customerTagId: tagId,
-        variantId: variantId ?? null,
-        price,
-        gstRate: gstRate ?? null,
-      },
-    });
+    // Bust the outlet's menu-tree cache so the admin re-fetch (and the
+    // customer menu) reflect the new override on the next read.
+    await this.menu.invalidateOutlet(tag.outletId);
+    return result;
   }
 
   async clearItemPrice(tagId: string, itemId: string, variantId?: string) {
+    const tag = await this.prisma.customerTag.findUnique({ where: { id: tagId }, select: { outletId: true } });
     await this.prisma.customerTagPrice.deleteMany({
       where: { customerTagId: tagId, itemId, variantId: variantId ?? null },
     });
+    if (tag) await this.menu.invalidateOutlet(tag.outletId);
     return { success: true };
   }
 }
