@@ -187,6 +187,24 @@ export default function OrdersPage() {
   // if orderCreated re-emits on socket reconnect.
   const autoPrintedReceiptsRef = useRef<Set<string>>(new Set());
 
+  // Bump-on-pair so the "Connect printer" pill below can re-render
+  // after a successful pairing flips printerReady from false to true.
+  // BLE state lives outside React, so a tick state is the cheapest
+  // way to make this reactive without polling.
+  const [printerTick, setPrinterTick] = useState(0);
+  const printerReady = !!outletPrint.printerId && isPrinterConnected(outletPrint.printerId);
+  void printerTick;
+  const connectReceiptPrinter = async () => {
+    if (!outletPrint.printerId) return;
+    try {
+      await connectPrinter(outletPrint.printerId);
+      setPrinterTick((t) => t + 1);
+      toast.success('Receipt printer paired — auto-print is armed');
+    } catch (e: any) {
+      if (e?.name !== 'NotFoundError') toast.error(e?.message || 'Pairing cancelled');
+    }
+  };
+
   const [printing, setPrinting] = useState(false);
   const printDetailReceipt = async () => {
     if (!detail || !outletPrint.printerId) return;
@@ -387,19 +405,31 @@ export default function OrdersPage() {
   // cashier never touches. Skips aggregator orders entirely (those use
   // the packing-slip path above). Reconnects the BLE link silently via
   // ensurePrinterConnected so it works after the link has gone idle.
+  // One-per-session nag for the "auto-print on, printer not paired"
+  // case so staff aren't left wondering why nothing's printing. Module-
+  // scoped via ref to avoid spamming on every incoming order.
+  const autoPrintNaggedRef = useRef(false);
   const autoPrintCustomerReceipt = useCallback(async (order: any) => {
     if (!order) return;
     if (isAggregatorOrder(order)) return;
     if (!outletPrint.auto || !outletPrint.printerId) return;
     if (!isBluetoothSupported()) return;
     if (autoPrintedReceiptsRef.current.has(order.id)) return;
+    // Pairing check has to run BEFORE we mark the order as auto-printed
+    // — otherwise an order arriving pre-pairing gets permanently
+    // skipped even if the staff connects the printer a moment later.
+    if (!isPrinterPaired(outletPrint.printerId)) {
+      if (!autoPrintNaggedRef.current) {
+        autoPrintNaggedRef.current = true;
+        toast(
+          `Order ${order.orderNumber} arrived but the printer isn't paired this session. Tap "Connect printer" to enable auto-print.`,
+          { icon: '🖨️', duration: 7000 },
+        );
+      }
+      return;
+    }
     autoPrintedReceiptsRef.current.add(order.id);
     try {
-      // Reuse the cached pairing — auto-print must NOT pop the BT
-      // chooser unannounced (that needs a user gesture and would feel
-      // hostile). Silently bail when the printer was never paired this
-      // session; staff can use the manual button on the detail modal.
-      if (!isPrinterPaired(outletPrint.printerId)) return;
       await ensurePrinterConnected(outletPrint.printerId);
       // Hit the detail endpoint so the receipt has totals + tax rows +
       // outlet header snapshot; the socket payload is lighter.
@@ -408,6 +438,8 @@ export default function OrdersPage() {
       await printCustomerReceipt(outletPrint.printerId, buildReceiptPayload(full));
       toast.success(`Receipt printed for ${order.orderNumber}`, { icon: '🖨️' });
     } catch (e: any) {
+      // Rollback so a manual retry isn't blocked by the dedupe.
+      autoPrintedReceiptsRef.current.delete(order.id);
       toast.error(e?.message || 'Receipt auto-print failed — use the manual button');
     }
   }, [outletPrint.auto, outletPrint.printerId, outletId]);
@@ -1053,6 +1085,26 @@ export default function OrdersPage() {
               />
               {socketPhase === 'connected' ? 'Live' : socketPhase === 'reconnecting' ? 'Reconnecting' : 'Offline'}
             </span>
+          )}
+
+          {/* Receipt printer pill — visible when the outlet has a
+              receipt printer configured AND any receipt-print flag is
+              on. Tap to (re-)pair via Web Bluetooth. Same pattern the
+              kitchen page uses for its station printer. */}
+          {!isReadOnly && outletPrint.printerId && isBluetoothSupported() && (outletPrint.auto || outletPrint.allowManual) && (
+            <button
+              onClick={connectReceiptPrinter}
+              className={clsx(
+                'inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-full border transition-colors',
+                printerReady
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                  : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100',
+              )}
+              title={printerReady ? 'Receipt printer paired — auto-print armed' : 'Tap to pair the receipt printer for this session'}
+            >
+              <PrinterIcon size={11} />
+              {printerReady ? 'Printer ready' : 'Connect printer'}
+            </button>
           )}
 
           {isReadOnly && (

@@ -87,6 +87,24 @@ export default function PlaceOrderPage() {
   // reconnect.
   const autoPrintedReceiptsRef = useRef<Set<string>>(new Set());
 
+  // BLE state lives outside React; tick to force-rerender the
+  // "Connect printer" pill after a successful pairing.
+  const [receiptPrinterTick, setReceiptPrinterTick] = useState(0);
+  const receiptPrinterReady = !!outlet?.receiptPrinterId && isPrinterConnected(outlet.receiptPrinterId);
+  void receiptPrinterTick;
+  const connectReceiptPrinter = async () => {
+    const printerId = outlet?.receiptPrinterId;
+    if (!printerId) return;
+    try {
+      const { connectPrinter } = await import('../../utils/bluetoothPrinter');
+      await connectPrinter(printerId);
+      setReceiptPrinterTick((t) => t + 1);
+      toast.success('Receipt printer paired — auto-print is armed');
+    } catch (e: any) {
+      if (e?.name !== 'NotFoundError') toast.error(e?.message || 'Pairing cancelled');
+    }
+  };
+
   const maybeAutoPrintReceipt = async (createdOrder: any) => {
     if (!outlet?.receiptAutoPrint) return;
     const printerId = outlet?.receiptPrinterId;
@@ -408,22 +426,40 @@ export default function PlaceOrderPage() {
     const printerId = outlet?.receiptPrinterId;
     if (!printerId || !isBluetoothSupported()) return;
     const socket = getSocket(outletId);
+    // One-per-session nag toast for the "auto-print on, printer not
+    // paired" case — without this the staff has no signal that orders
+    // are arriving but failing to print. Module-scoped via ref so we
+    // don't spam every order, just the first one this session.
+    let nagged = false;
     const onCreated = async (o: any) => {
       if (!o?.id) return;
       // Aggregator orders use the packing-slip path (OrdersPage handles
       // that on the READY transition). Skip them here.
       if (isAggregatorOrder(o)) return;
+      // Dedupe guard FIRST — but only after the cheap filters above.
       if (autoPrintedReceiptsRef.current.has(o.id)) return;
+      // Pairing check must happen BEFORE the dedupe-add, otherwise an
+      // order arriving pre-pairing gets permanently marked as printed.
+      if (!isPrinterPaired(printerId)) {
+        if (!nagged) {
+          nagged = true;
+          toast(
+            `Order ${o.orderNumber} arrived but the printer isn't paired this session. Tap "Connect printer" to enable auto-print.`,
+            { icon: '🖨️', duration: 7000 },
+          );
+        }
+        return;
+      }
       autoPrintedReceiptsRef.current.add(o.id);
       try {
-        // Skip silently when the printer was never paired this session
-        // — auto-print must NOT pop the BT chooser unannounced.
-        if (!isPrinterPaired(printerId)) return;
         await ensurePrinterConnected(printerId);
         const { data } = await api.get(`/outlets/${o.outletId || outletId}/orders/${o.id}`);
         await printCustomerReceipt(printerId, buildReceiptPayload(data.data));
         toast.success(`Receipt printed for ${o.orderNumber}`, { icon: '🖨️' });
       } catch (e: any) {
+        // Print failure: roll back the dedupe so a manual retry / a
+        // reconnect-then-next-order doesn't get permanently skipped.
+        autoPrintedReceiptsRef.current.delete(o.id);
         toast.error(e?.message || 'Receipt auto-print failed');
       }
     };
@@ -512,7 +548,34 @@ export default function PlaceOrderPage() {
     (s, c) => s + c.unitPrice * c.quantity * ((c.gstRate ?? 0) / 100),
     0,
   );
-  const totalAmount = subtotal + taxAmount;
+  // Parcel-charge preview — mirrors OrdersService.computeParcelCharge so
+  // the cart total matches the receipt:
+  //   - If ANY cart item has its own override (useCustomParcelCharge +
+  //     parcelCharge), items × qty REPLACE the outlet flat for the bill.
+  //   - Else outlet.defaultParcelCharge once (flat) when enabled.
+  //   - Else 0.
+  // Only applied for counter orders flagged isParcel; table-service
+  // orders bypass the parcel charge regardless of the toggle (submit()
+  // forces isParcel: false for bookingMode === 'table').
+  const parcelAmount = (() => {
+    if (bookingMode === 'table' || !isParcel) return 0;
+    let itemOverrideTotal = 0;
+    let anyOverride = false;
+    for (const c of cart) {
+      let it: any = null;
+      for (const cat of menu) for (const sub of (cat.subcategories || [])) for (const i of (sub.items || [])) {
+        if (i.id === c.itemId) it = i;
+      }
+      if (it?.useCustomParcelCharge && it.parcelCharge != null) {
+        itemOverrideTotal += Number(it.parcelCharge) * c.quantity;
+        anyOverride = true;
+      }
+    }
+    if (anyOverride) return itemOverrideTotal;
+    if (outlet?.parcelChargeEnabled) return Number(outlet.defaultParcelCharge ?? 0);
+    return 0;
+  })();
+  const totalAmount = subtotal + taxAmount + parcelAmount;
   const cartCount = cart.reduce((s, c) => s + c.quantity, 0);
 
   // ── Place order ──────────────────────────────────────────
@@ -1051,6 +1114,28 @@ export default function PlaceOrderPage() {
                 className="input pl-8 py-1.5 text-sm w-48"
               />
             </div>
+            {/* Receipt printer pill — visible when the outlet has any
+                receipt-print flag on and a printer configured. Tap to
+                pair via Web Bluetooth (or re-pair after a page reload).
+                Pairing has to happen once per browser-tab session for
+                auto-print to fire; the cashier's only signal otherwise
+                is the one-per-session nag toast. */}
+            {outlet?.receiptPrinterId && isBluetoothSupported() && (outlet?.receiptAutoPrint || outlet?.receiptAllowManualPrint) && (
+              <button
+                type="button"
+                onClick={connectReceiptPrinter}
+                className={clsx(
+                  'inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-full border transition-colors shrink-0',
+                  receiptPrinterReady
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100',
+                )}
+                title={receiptPrinterReady ? 'Receipt printer paired — auto-print armed' : 'Tap to pair the receipt printer for this session'}
+              >
+                <PrinterIcon size={11} />
+                {receiptPrinterReady ? 'Printer ready' : 'Connect printer'}
+              </button>
+            )}
             <button
               type="button"
               onClick={toggleFullscreen}
@@ -1301,6 +1386,11 @@ export default function PlaceOrderPage() {
                   <div className="flex justify-between text-slate-500"><span>SGST <span className="text-[10px] text-slate-400">est.</span></span><span>₹{(taxAmount / 2).toFixed(2)}</span></div>
                   <div className="flex justify-between text-slate-500"><span>CGST <span className="text-[10px] text-slate-400">est.</span></span><span>₹{(taxAmount / 2).toFixed(2)}</span></div>
                 </>
+              )}
+              {parcelAmount > 0 && (
+                <div className="flex justify-between text-slate-500">
+                  <span>Parcel charge</span><span>₹{parcelAmount.toFixed(2)}</span>
+                </div>
               )}
               <div className="flex justify-between text-slate-900 font-black text-sm pt-1 border-t border-slate-100">
                 <span>Total</span><span>₹{totalAmount.toFixed(2)}</span>
