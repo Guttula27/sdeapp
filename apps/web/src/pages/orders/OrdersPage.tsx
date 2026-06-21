@@ -9,7 +9,7 @@ import { getSocket } from '../../services/socket';
 import { useSocketStatus } from '../../hooks/useSocketStatus';
 import { useUserRole } from '../../hooks/useUserRole';
 import api from '../../services/api';
-import { isPrinterConnected, isBluetoothSupported, connectPrinter, printCustomerReceipt, printPackingSlip } from '../../utils/bluetoothPrinter';
+import { isPrinterConnected, isPrinterPaired, ensurePrinterConnected, isBluetoothSupported, connectPrinter, printCustomerReceipt, printPackingSlip } from '../../utils/bluetoothPrinter';
 import { buildReceiptPayload, buildPackingSlipPayload, isAggregatorOrder } from '../../utils/receiptPayload';
 import { getOpenOrdersSnapshot, setOpenOrdersSnapshot } from '../../utils/idb';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
@@ -182,6 +182,10 @@ export default function OrdersPage() {
   // on page reload (which is fine; the slip was physically printed
   // and the operator can reprint manually if needed).
   const autoPrintedSlipsRef = useRef<Set<string>>(new Set());
+  // Same idea but for the customer receipt auto-print path: dedupes
+  // direct customer orders so a single placement only prints once even
+  // if orderCreated re-emits on socket reconnect.
+  const autoPrintedReceiptsRef = useRef<Set<string>>(new Set());
 
   const [printing, setPrinting] = useState(false);
   const printDetailReceipt = async () => {
@@ -376,6 +380,38 @@ export default function OrdersPage() {
   //   - That READY transition is the right moment to print: the food
   //     is cooked, ready to bag, and the rider may already be at the
   //     counter waiting for the parcel.
+  // Auto-print the customer receipt the moment a direct (non-aggregator)
+  // order shows up over the socket. Same outlet flag PlaceOrderPage uses
+  // for cashier-placed orders (receiptAutoPrint) — that path covers
+  // cashier flow; this one covers customer-PWA placements which the
+  // cashier never touches. Skips aggregator orders entirely (those use
+  // the packing-slip path above). Reconnects the BLE link silently via
+  // ensurePrinterConnected so it works after the link has gone idle.
+  const autoPrintCustomerReceipt = useCallback(async (order: any) => {
+    if (!order) return;
+    if (isAggregatorOrder(order)) return;
+    if (!outletPrint.auto || !outletPrint.printerId) return;
+    if (!isBluetoothSupported()) return;
+    if (autoPrintedReceiptsRef.current.has(order.id)) return;
+    autoPrintedReceiptsRef.current.add(order.id);
+    try {
+      // Reuse the cached pairing — auto-print must NOT pop the BT
+      // chooser unannounced (that needs a user gesture and would feel
+      // hostile). Silently bail when the printer was never paired this
+      // session; staff can use the manual button on the detail modal.
+      if (!isPrinterPaired(outletPrint.printerId)) return;
+      await ensurePrinterConnected(outletPrint.printerId);
+      // Hit the detail endpoint so the receipt has totals + tax rows +
+      // outlet header snapshot; the socket payload is lighter.
+      const { data } = await api.get(`/outlets/${order.outletId || outletId}/orders/${order.id}`);
+      const full = data?.data ?? order;
+      await printCustomerReceipt(outletPrint.printerId, buildReceiptPayload(full));
+      toast.success(`Receipt printed for ${order.orderNumber}`, { icon: '🖨️' });
+    } catch (e: any) {
+      toast.error(e?.message || 'Receipt auto-print failed — use the manual button');
+    }
+  }, [outletPrint.auto, outletPrint.printerId, outletId]);
+
   const autoPrintAggregatorSlip = useCallback(async (order: any) => {
     if (!order || order.status !== 'READY') return;
     if (!isAggregatorOrder(order)) return;
@@ -499,6 +535,12 @@ export default function OrdersPage() {
     socket.on('orderCreated', (o: any) => {
       dispatch(setOrders([o, ...orders]));
       toast.success(`New order — ${o.orderNumber}`);
+      // Fire-and-forget customer-receipt auto-print. Dedupes per
+      // session, skips aggregator orders, and silently bails if the
+      // printer was never paired. Direct customer-PWA placements rely
+      // on this — PlaceOrderPage's local maybeAutoPrintReceipt only
+      // covers cashier-placed orders.
+      void autoPrintCustomerReceipt(o);
     });
     socket.on('orderStatusUpdated', (o: any) => {
       dispatch(updateOrder(o));
@@ -507,7 +549,7 @@ export default function OrdersPage() {
       void autoPrintAggregatorSlip(o);
     });
     return () => { socket.off('orderCreated'); socket.off('orderStatusUpdated'); };
-  }, [tier, outletId, businessId, selectedOutletId, debouncedSearch, sortBy, sortDir, autoPrintAggregatorSlip]);
+  }, [tier, outletId, businessId, selectedOutletId, debouncedSearch, sortBy, sortDir, autoPrintAggregatorSlip, autoPrintCustomerReceipt]);
 
   // Socket state + auto-backfill. The orders page is the cashier's main
   // view; missing a new order because the socket silently dropped is the

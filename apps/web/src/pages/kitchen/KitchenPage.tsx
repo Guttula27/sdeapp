@@ -9,7 +9,7 @@ import { getSocket } from '../../services/socket';
 import { useSocketStatus } from '../../hooks/useSocketStatus';
 import api from '../../services/api';
 import { useUserRole } from '../../hooks/useUserRole';
-import { connectPrinter, printReceipt, isPrinterConnected, isBluetoothSupported } from '../../utils/bluetoothPrinter';
+import { connectPrinter, printReceipt, isPrinterConnected, isPrinterPaired, ensurePrinterConnected, isBluetoothSupported } from '../../utils/bluetoothPrinter';
 import {
   playKitchenBell,
   setupKitchenAudioUnlock,
@@ -203,8 +203,18 @@ export default function KitchenPage() {
       if (!silent) toast.error('No printer assigned to this station');
       return;
     }
-    if (!isPrinterConnected(printerId)) {
-      if (!silent) toast.error('Printer disconnected — tap "Connect printer"');
+    // Try to (re-)establish the BLE link before printing. Web Bluetooth
+    // disconnects on idle / sleep; the cached device ref lets us call
+    // gatt.connect() without a fresh user gesture. If we've never paired
+    // (no handle in the map), surface the prompt — even on the auto path
+    // — so the staff sees why printing didn't happen and what to do.
+    try {
+      await ensurePrinterConnected(printerId);
+    } catch (e: any) {
+      const msg = isPrinterPaired(printerId)
+        ? `Printer reconnect failed: ${e?.message ?? e}`
+        : 'Auto-print is on but the printer hasn’t been paired yet. Tap "Connect printer" once.';
+      toast.error(msg);
       return;
     }
     try {
@@ -224,8 +234,10 @@ export default function KitchenPage() {
         await printReceipt(printerId, r);
       }
       if (!silent) toast.success('Printed');
+      else if (receipts.length > 0) toast.success(`Auto-printed ${receipts.length} slip${receipts.length === 1 ? '' : 's'}`);
     } catch (e: any) {
       if (!silent) toast.error(e?.message || e?.response?.data?.message || 'Print failed');
+      else toast.error(`Auto-print failed: ${e?.message ?? e}`);
     }
   }, [printerId, myStations]);
 
@@ -238,8 +250,12 @@ export default function KitchenPage() {
       toast.error('No printer assigned to this station');
       return;
     }
-    if (!isPrinterConnected(printerId)) {
-      toast.error('Printer disconnected — tap "Connect printer"');
+    try {
+      await ensurePrinterConnected(printerId);
+    } catch (e: any) {
+      toast.error(isPrinterPaired(printerId)
+        ? `Printer reconnect failed: ${e?.message ?? e}`
+        : 'Printer not paired yet. Tap "Connect printer" once.');
       return;
     }
     try {
@@ -295,10 +311,16 @@ export default function KitchenPage() {
         if (initialFetchDone.current) {
           playKitchenBell();
         }
+        // Auto-print gate: only on the flag + a printer + a one-per-order
+        // dedupe. We deliberately do NOT check isPrinterConnected here —
+        // BLE has usually gone idle by the time an order arrives, and
+        // printOrder will call ensurePrinterConnected to reconnect via
+        // the cached device ref (no user gesture needed once paired).
+        // If the printer was never paired this session, printOrder
+        // surfaces a clear toast so staff know to tap Connect printer.
         if (
           outletPrintCfg.auto &&
           printerId &&
-          isPrinterConnected(printerId) &&
           !autoPrintedRef.current.has(o.id)
         ) {
           autoPrintedRef.current.add(o.id);

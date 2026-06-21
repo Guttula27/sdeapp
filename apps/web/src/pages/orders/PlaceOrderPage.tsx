@@ -9,9 +9,10 @@ import {
 } from 'lucide-react';
 import { RootState } from '../../store';
 import api from '../../services/api';
+import { getSocket } from '../../services/socket';
 import { allowsSeating } from '../../utils/outletType';
-import { isPrinterConnected, printCustomerReceipt, isBluetoothSupported } from '../../utils/bluetoothPrinter';
-import { buildReceiptPayload } from '../../utils/receiptPayload';
+import { isPrinterConnected, isPrinterPaired, ensurePrinterConnected, printCustomerReceipt, isBluetoothSupported } from '../../utils/bluetoothPrinter';
+import { buildReceiptPayload, isAggregatorOrder } from '../../utils/receiptPayload';
 import { getCachedMenu, setCachedMenu, saveOfflineOrder, findOpenOfflineTab, appendToOfflineTab, type OfflineOrder, type OfflineOrderBatch } from '../../utils/idb';
 
 type BookingMode = 'counter' | 'table';
@@ -79,10 +80,19 @@ export default function PlaceOrderPage() {
   // currently connected (the connection handle is held in memory; the
   // user must have "Connect printer" pressed at least once this session).
   // Auto-print is best-effort — failures don't block the order flow.
+  // Set of order ids we've already auto-printed this session — used by
+  // both maybeAutoPrintReceipt (cashier placements) and the socket
+  // listener below (customer-PWA placements). Prevents a double print
+  // when both paths see the same order, and dedupes socket re-emits on
+  // reconnect.
+  const autoPrintedReceiptsRef = useRef<Set<string>>(new Set());
+
   const maybeAutoPrintReceipt = async (createdOrder: any) => {
     if (!outlet?.receiptAutoPrint) return;
     const printerId = outlet?.receiptPrinterId;
     if (!printerId || !isBluetoothSupported() || !isPrinterConnected(printerId)) return;
+    if (autoPrintedReceiptsRef.current.has(createdOrder.id)) return;
+    autoPrintedReceiptsRef.current.add(createdOrder.id);
     // Re-fetch the full order so the payload has all the receipt
     // includes (couponUsages + rewardTransactions + outlet address).
     const { data } = await api.get(`/outlets/${outletId}/orders/${createdOrder.id}`);
@@ -386,6 +396,40 @@ export default function PlaceOrderPage() {
   useEffect(() => {
     if (tableId && !tablesForType.some((t) => t.id === tableId)) setTableId('');
   }, [tableId, tablesForType]);
+
+  // Auto-print customer receipts for orders that come in over the socket
+  // — the customer-PWA placements the cashier never touches. The local
+  // submit() path already auto-prints cashier-placed orders via
+  // maybeAutoPrintReceipt; the same dedupe set (autoPrintedReceiptsRef)
+  // covers both so a cashier placement doesn't print twice when its
+  // orderCreated event echoes back.
+  useEffect(() => {
+    if (!outletId || !outlet?.receiptAutoPrint) return;
+    const printerId = outlet?.receiptPrinterId;
+    if (!printerId || !isBluetoothSupported()) return;
+    const socket = getSocket(outletId);
+    const onCreated = async (o: any) => {
+      if (!o?.id) return;
+      // Aggregator orders use the packing-slip path (OrdersPage handles
+      // that on the READY transition). Skip them here.
+      if (isAggregatorOrder(o)) return;
+      if (autoPrintedReceiptsRef.current.has(o.id)) return;
+      autoPrintedReceiptsRef.current.add(o.id);
+      try {
+        // Skip silently when the printer was never paired this session
+        // — auto-print must NOT pop the BT chooser unannounced.
+        if (!isPrinterPaired(printerId)) return;
+        await ensurePrinterConnected(printerId);
+        const { data } = await api.get(`/outlets/${o.outletId || outletId}/orders/${o.id}`);
+        await printCustomerReceipt(printerId, buildReceiptPayload(data.data));
+        toast.success(`Receipt printed for ${o.orderNumber}`, { icon: '🖨️' });
+      } catch (e: any) {
+        toast.error(e?.message || 'Receipt auto-print failed');
+      }
+    };
+    socket.on('orderCreated', onCreated);
+    return () => { socket.off('orderCreated', onCreated); };
+  }, [outletId, outlet?.receiptAutoPrint, outlet?.receiptPrinterId]);
 
   useEffect(() => {
     const cat = menu.find(c => c.id === activeCat);

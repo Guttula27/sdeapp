@@ -30,6 +30,44 @@ export function isPrinterConnected(printerId: string): boolean {
   return !!(h && h.device?.gatt?.connected);
 }
 
+// Returns true if we have a live device reference for this printer even
+// if the GATT layer is currently disconnected. A device ref means the
+// browser still remembers the pairing and we can call gatt.connect()
+// without a fresh user gesture (only requestDevice needs one).
+export function isPrinterPaired(printerId: string): boolean {
+  return handles.has(printerId);
+}
+
+// Reconnect a previously-paired printer without a user gesture. Web
+// Bluetooth disconnects on idle / sleep / device-out-of-range; the
+// pairing itself survives, so we can call gatt.connect() on the cached
+// device ref. Throws if we never paired (the caller should fall back to
+// connectPrinter for a user-gesture pairing prompt). Auto-print relies
+// on this — the order arrives long after the page loaded and the BLE
+// layer has typically gone idle by then.
+export async function ensurePrinterConnected(printerId: string): Promise<void> {
+  const h = handles.get(printerId);
+  if (!h) throw new Error('Printer not paired — tap "Connect printer" first');
+  if (h.device?.gatt?.connected) return;
+  await h.device.gatt.connect();
+  // After a reconnect the previous characteristic handle is invalid; re-
+  // resolve a writable characteristic against the freshly-opened GATT
+  // services. Mirrors connectPrinter's scan logic.
+  const services = await h.device.gatt.getPrimaryServices();
+  let chosen: any = null;
+  outer: for (const svc of services) {
+    const chars = await svc.getCharacteristics();
+    for (const ch of chars) {
+      if (ch.properties.write || ch.properties.writeWithoutResponse) {
+        chosen = ch;
+        break outer;
+      }
+    }
+  }
+  if (!chosen) throw new Error('No writable characteristic found after reconnect');
+  h.characteristic = chosen;
+}
+
 // User-gesture call. Opens the browser's BT chooser, lets the operator
 // pick the printer this station should use, then resolves once we have a
 // writable characteristic.
