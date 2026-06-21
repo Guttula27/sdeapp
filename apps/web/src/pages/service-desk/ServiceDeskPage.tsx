@@ -17,6 +17,7 @@ type Lane = 'verify' | 'release' | 'pickup';
 type OrderRow = {
   id: string;
   orderNumber: string;
+  tokenNumber?: number | null;
   outletId: string;
   tableId: string | null;
   status: string;
@@ -569,6 +570,11 @@ export default function ServiceDeskPage() {
                             <div className="flex items-center justify-between mb-1.5">
                               <div className="flex items-center gap-1.5">
                                 <span className="text-xs font-bold text-slate-900">#{o.orderNumber}</span>
+                                {o.tokenNumber != null && (
+                                  <span className="text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded-full">
+                                    T#{o.tokenNumber}
+                                  </span>
+                                )}
                                 {billed && (
                                   <span className="text-[10px] font-bold bg-violet-100 text-violet-800 border border-violet-200 px-1.5 py-0.5 rounded">
                                     Bill requested
@@ -838,6 +844,11 @@ export default function ServiceDeskPage() {
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                           <span className="font-bold text-slate-900 text-sm">#{o.orderNumber}</span>
+                          {o.tokenNumber != null && (
+                            <span className="text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded-full">
+                              T#{o.tokenNumber}
+                            </span>
+                          )}
                           {o.table?.number ? (
                             // Table numbers are stored as already-formatted
                             // strings (e.g. "T01", "5", "Patio 3"). Show as

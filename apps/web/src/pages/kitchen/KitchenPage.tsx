@@ -34,12 +34,15 @@ const FILTER_LABEL: Record<KitchenFilter, string> = {
   CANCELLED: 'Cancelled',
 };
 
-type ItemStatus = 'PENDING' | 'PREPARING' | 'READY' | 'SERVED' | 'CANCELLED';
+type ItemStatus = 'PENDING' | 'PREPARING' | 'READY' | 'PACKED' | 'SERVED' | 'CANCELLED';
 
 const ITEM_STATUS: Record<ItemStatus, { label: string; bg: string; text: string; border: string; dot: string }> = {
   PENDING:   { label: 'Pending',   bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', dot: '#94a3b8' },
   PREPARING: { label: 'Preparing', bg: '#e8efef', text: '#04181a', border: '#D2E5DF', dot: '#0B4245' },
   READY:     { label: 'Ready',     bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', dot: '#10b981' },
+  // Parcel-only intermediate (parcel-desk packed it; waiting for
+  // sibling items / order-level rollup to READY_FOR_PICKUP).
+  PACKED:    { label: 'Packed',    bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe', dot: '#3b82f6' },
   SERVED:    { label: 'Served',    bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', dot: '#14b8a6' },
   CANCELLED: { label: 'Cancelled', bg: '#fff1f2', text: '#be123c', border: '#fecdd3', dot: '#ef4444' },
 };
