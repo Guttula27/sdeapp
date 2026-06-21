@@ -1219,7 +1219,11 @@ export class MenuService implements OnModuleDestroy {
    * set up at the outlet level after import.
    */
 
-  async getBusinessMenu(businessId: string, lang?: string | null) {
+  async getBusinessMenu(
+    businessId: string,
+    lang?: string | null,
+    opts: { includeHidden?: boolean } = {},
+  ) {
     const categories = await this.prisma.category.findMany({
       where: { businessId, isActive: true },
       orderBy: { displayOrder: 'asc' },
@@ -1229,7 +1233,9 @@ export class MenuService implements OnModuleDestroy {
           orderBy: { displayOrder: 'asc' },
           include: {
             items: {
-              where: { isDisplayed: true },
+              // Admin edit view passes includeHidden so the Visibility
+              // toggle remains discoverable after it's switched off.
+              ...(opts.includeHidden ? {} : { where: { isDisplayed: true } }),
               orderBy: { displayOrder: 'asc' },
               include: { variants: true },
             },
