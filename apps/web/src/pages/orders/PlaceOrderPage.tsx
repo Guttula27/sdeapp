@@ -86,24 +86,11 @@ export default function PlaceOrderPage() {
   // when both paths see the same order, and dedupes socket re-emits on
   // reconnect.
   const autoPrintedReceiptsRef = useRef<Set<string>>(new Set());
-
   // BLE state lives outside React; tick to force-rerender the
-  // "Connect printer" pill after a successful pairing.
+  // "Connect printer" pill after a successful pairing. Declared up
+  // here so it's stable; the `outlet`-dependent derived value lives
+  // below the `outlet` state declaration to avoid a TDZ error.
   const [receiptPrinterTick, setReceiptPrinterTick] = useState(0);
-  const receiptPrinterReady = !!outlet?.receiptPrinterId && isPrinterConnected(outlet.receiptPrinterId);
-  void receiptPrinterTick;
-  const connectReceiptPrinter = async () => {
-    const printerId = outlet?.receiptPrinterId;
-    if (!printerId) return;
-    try {
-      const { connectPrinter } = await import('../../utils/bluetoothPrinter');
-      await connectPrinter(printerId);
-      setReceiptPrinterTick((t) => t + 1);
-      toast.success('Receipt printer paired — auto-print is armed');
-    } catch (e: any) {
-      if (e?.name !== 'NotFoundError') toast.error(e?.message || 'Pairing cancelled');
-    }
-  };
 
   const maybeAutoPrintReceipt = async (createdOrder: any) => {
     if (!outlet?.receiptAutoPrint) return;
@@ -194,6 +181,24 @@ export default function PlaceOrderPage() {
   const [bookingMode, setBookingMode] = useState<BookingMode>('counter');
   const [tableTypeId, setTableTypeId] = useState('');
   const [tableId, setTableId] = useState('');
+
+  // Receipt printer pairing pill — derived from outlet config + BLE
+  // state. Lives here (after `outlet` is in scope) to dodge the TDZ
+  // error that bit when this block sat above the outlet declaration.
+  const receiptPrinterReady = !!outlet?.receiptPrinterId && isPrinterConnected(outlet.receiptPrinterId);
+  void receiptPrinterTick;
+  const connectReceiptPrinter = async () => {
+    const printerId = outlet?.receiptPrinterId;
+    if (!printerId) return;
+    try {
+      const { connectPrinter } = await import('../../utils/bluetoothPrinter');
+      await connectPrinter(printerId);
+      setReceiptPrinterTick((t) => t + 1);
+      toast.success('Receipt printer paired — auto-print is armed');
+    } catch (e: any) {
+      if (e?.name !== 'NotFoundError') toast.error(e?.message || 'Pairing cancelled');
+    }
+  };
 
   // Hydrate the page state from a cached or freshly-fetched menu
   // bundle. Single applicator so the cache-first and network paths
