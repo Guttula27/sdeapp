@@ -22,8 +22,14 @@ export class DisputesService {
     });
     if (!order) throw new NotFoundException('Order not found');
 
-    if (!['DELIVERED', 'CLOSED'].includes(order.status)) {
-      throw new BadRequestException('Disputes can only be raised on delivered or closed orders');
+    // Match the OrderStatus enum — there is no DELIVERED state. The
+    // customer UI only exposes the dispute button on SERVED orders,
+    // and the API enforces the same. RESOLVED is allowed too so a
+    // closed dispute on the same order can be re-opened with a fresh
+    // dispute (the duplicate-active check below still blocks back-to-
+    // back open ones).
+    if (!['SERVED', 'RESOLVED'].includes(order.status)) {
+      throw new BadRequestException('Disputes can only be raised after the order is served');
     }
 
     if (order.disputes.some(d => !['CLOSED', 'RESOLVED'].includes(d.status))) {
@@ -44,14 +50,28 @@ export class DisputesService {
       },
       include: { order: { select: { orderNumber: true, outletId: true, totalAmount: true } } },
     });
-    await this.translations.upsertAll('Dispute', dispute.id, { description: dispute.description });
 
-    // Update order status to DISPUTED
+    // Fire-and-forget the translation upsert. The provider call can take
+    // many seconds per language, and synchronous awaiting was blowing
+    // past the customer's axios timeout — surfacing as a network failure
+    // even though the dispute had been written to the DB. The follow-up
+    // upsert lands asynchronously; the dispute renders in English until
+    // it does. Same pattern menu import uses.
+    void this.translations
+      .upsertAll('Dispute', dispute.id, { description: dispute.description })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn(`[disputes] translate Dispute/${dispute.id} failed`, err);
+      });
+
+    // Update order status to DISPUTED. changedBy is a User FK — for
+    // anonymous customers (or system actions) it must be NULL, not a
+    // literal string, otherwise the FK constraint rejects the insert.
     await this.prisma.order.update({
       where: { id: orderId },
       data: {
         status: 'DISPUTED',
-        statusHistory: { create: { status: 'DISPUTED', changedBy: customerId ?? 'CUSTOMER', notes: 'Dispute raised by customer' } },
+        statusHistory: { create: { status: 'DISPUTED', changedBy: customerId ?? null, notes: 'Dispute raised by customer' } },
       },
     });
 
@@ -166,7 +186,9 @@ export class DisputesService {
           statusHistory: {
             create: {
               status: orderStatus,
-              changedBy: 'OUTLET',
+              // changedBy is a User FK — leave null for system / outlet
+              // actions to avoid FK violations. Audit can rely on notes.
+              changedBy: null,
               notes: `Dispute ${data.status.toLowerCase()}: ${data.resolution || ''}`,
             },
           },
