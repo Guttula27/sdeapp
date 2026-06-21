@@ -83,6 +83,8 @@ export default function OrderPage() {
     outletLogoUrl?: string | null;
     businessName?: string | null;
     businessLogoUrl?: string | null;
+    parcelChargeEnabled?: boolean;
+    defaultParcelCharge?: number;
   } | null>(null);
   // The open postpaid order on this table — items already submitted, locked
   // from edits, waiting for Bill Now.
@@ -238,6 +240,8 @@ export default function OrderPage() {
               outletLogoUrl: d.outletLogoUrl,
               businessName: d.businessName,
               businessLogoUrl: d.businessLogoUrl,
+              parcelChargeEnabled: !!d.parcelChargeEnabled,
+              defaultParcelCharge: Number(d.defaultParcelCharge ?? 0),
             });
           }
         }
@@ -484,19 +488,31 @@ export default function OrderPage() {
     }
     return s + c.price * c.quantity * (rate / 100);
   }, 0);
-  // Parcel charge preview is computed authoritatively on the server; here we estimate using item-level overrides
-  // (universal outlet charge isn't fetched on the customer side, server will add it on order creation)
-  const parcelPreview = isParcel
-    ? cart.reduce((s, c) => {
-        // Look up the menu item to detect a custom per-item parcel charge
-        for (const cat of menu) for (const sub of cat.subcategories || []) for (const it of sub.items || []) {
-          if (it.id === c.itemId && it.useCustomParcelCharge && it.parcelCharge != null) {
-            return s + Number(it.parcelCharge) * c.quantity;
-          }
-        }
-        return s;
-      }, 0)
-    : 0;
+  // Parcel charge preview. Mirrors OrdersService.computeParcelCharge so
+  // the cart total matches the server's authoritative calc:
+  //   - Any item with its own override (useCustomParcelCharge + parcelCharge)
+  //     contributes parcelCharge × qty AND replaces the outlet flat for
+  //     the whole order. Items without their own override contribute 0.
+  //   - Otherwise outlet.defaultParcelCharge once (flat).
+  //   - Otherwise 0.
+  const parcelPreview = (() => {
+    if (!isParcel) return 0;
+    let itemOverrideTotal = 0;
+    let anyOverride = false;
+    for (const c of cart) {
+      let it: any = null;
+      for (const cat of menu) for (const sub of cat.subcategories || []) for (const i of sub.items || []) {
+        if (i.id === c.itemId) it = i;
+      }
+      if (it?.useCustomParcelCharge && it.parcelCharge != null) {
+        itemOverrideTotal += Number(it.parcelCharge) * c.quantity;
+        anyOverride = true;
+      }
+    }
+    if (anyOverride) return itemOverrideTotal;
+    if (outletMeta?.parcelChargeEnabled) return Number(outletMeta.defaultParcelCharge ?? 0);
+    return 0;
+  })();
   const cartTotal = subtotal + taxAmount + parcelPreview;
   const cartCount = cart.reduce((s, c) => s + c.quantity, 0);
 

@@ -1829,9 +1829,18 @@ export class OrdersService {
 
   /**
    * Parcel-charge rules:
-   *   - Items with `useCustomParcelCharge`: their own parcelCharge × quantity
-   *   - Any other line + outlet has `parcelChargeEnabled`: add outlet.defaultParcelCharge once
-   *   - Validates each item is `parcelAvailable`
+   *   - If ANY item has a per-item override (useCustomParcelCharge &&
+   *     parcelCharge != null): items with override pay parcelCharge × qty
+   *     and REPLACE the outlet's flat default for the whole bill. Items
+   *     without their own override contribute 0 — the item-level override
+   *     supersedes the outlet default for the whole order.
+   *   - Otherwise, if outlet.parcelChargeEnabled: outlet.defaultParcelCharge
+   *     applied once as a flat per-order fee.
+   *   - Otherwise: 0.
+   *   - Validates each item is `parcelAvailable`.
+   *
+   * Kept in lock-step with PricingService.quoteCart's parcel block so the
+   * /pricing/quote preview always matches the order the server creates.
    */
   private async computeParcelCharge(
     outletId: string,
@@ -1851,8 +1860,8 @@ export class OrdersService {
     });
     const map = new Map(itemRecords.map(i => [i.id, i]));
 
-    let total = 0;
-    let anyUsesUniversal = false;
+    let itemOverrideTotal = 0;
+    let anyOverride = false;
     for (const line of items) {
       const meta = map.get(line.itemId);
       if (!meta) continue;
@@ -1860,15 +1869,13 @@ export class OrdersService {
         throw new BadRequestException(`Item "${meta.name}" is not available for parcel`);
       }
       if (meta.useCustomParcelCharge && meta.parcelCharge != null) {
-        total += Number(meta.parcelCharge) * line.quantity;
-      } else {
-        anyUsesUniversal = true;
+        itemOverrideTotal += Number(meta.parcelCharge) * line.quantity;
+        anyOverride = true;
       }
     }
-    if (anyUsesUniversal && outlet?.parcelChargeEnabled) {
-      total += Number(outlet.defaultParcelCharge);
-    }
-    return total;
+    if (anyOverride) return itemOverrideTotal;
+    if (outlet?.parcelChargeEnabled) return Number(outlet.defaultParcelCharge);
+    return 0;
   }
 
   /**

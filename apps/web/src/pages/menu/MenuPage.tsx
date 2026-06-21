@@ -680,6 +680,11 @@ export default function MenuPage() {
       preparationTime: form.get('preparationTime') ? Number(form.get('preparationTime')) : undefined,
       isPopular: form.get('isPopular') === 'on',
       isSpecial: form.get('isSpecial') === 'on',
+      // Per-item kitchen slip: when on, each OrderItem row for this
+      // item prints its own kitchen ticket (token + just that line) so
+      // staff can match it back to the customer at hand-off — useful
+      // when the item has custom toppings/variants.
+      printSeparately: form.get('printSeparately') === 'on',
       // Sales unit — NUMBER keeps existing count-based behaviour;
       // GRAMS / MILLILITERS marks the item as portion-based, drives
       // variant naming, and is hinted on the customer UI.
@@ -2349,6 +2354,16 @@ export default function MenuPage() {
               />
               <span className="text-sm font-medium text-slate-700">Visible on customer menu</span>
               <span className="text-[10px] text-slate-400">(uncheck for bundle-only items, e.g. mini dosa)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                name="printSeparately"
+                defaultChecked={!!itemModal.editing?.printSeparately}
+                className="w-4 h-4 accent-emerald-500 rounded"
+              />
+              <span className="text-sm font-medium text-slate-700">Print as separate kitchen slip</span>
+              <span className="text-[10px] text-slate-400">(token + just this line — helps service identify items with custom toppings/variants)</span>
             </label>
           </div>
 

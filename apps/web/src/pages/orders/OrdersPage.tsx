@@ -1743,6 +1743,15 @@ function CustomerInsightsPill({ outletId, userId }: { outletId: string; userId: 
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
+    // Skip the fetch when there's no staff token — the endpoint requires
+    // auth and the response interceptor would otherwise log a 401 and
+    // bounce the user to /login mid-render. The pill is best-effort UI,
+    // not worth interrupting the page for.
+    if (!localStorage.getItem('token')) {
+      setData(null);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     api.get(`/outlets/${outletId}/customers/${userId}/insights`)

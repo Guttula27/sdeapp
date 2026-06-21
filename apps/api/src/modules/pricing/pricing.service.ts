@@ -138,7 +138,13 @@ export class PricingService {
     //    parent Item.basePrice is the bundle price.
     //    Quote is a preview, so we skip stock + topping math here — those are
     //    enforced server-side when the order is actually created.
-    const lines: (QuoteLine & { categoryId?: string; subcategoryId?: string; gstRate: number })[] = [];
+    const lines: (QuoteLine & {
+      categoryId?: string;
+      subcategoryId?: string;
+      gstRate: number;
+      useCustomParcelCharge?: boolean;
+      parcelCharge?: number | null;
+    })[] = [];
     for (const l of input.lines) {
       if (!l.itemId) throw new BadRequestException('Each line needs an itemId');
       const item = await this.prisma.item.findUnique({
@@ -146,6 +152,9 @@ export class PricingService {
         select: {
           id: true, name: true, basePrice: true, gstRate: true,
           subcategoryId: true, subcategory: { select: { categoryId: true } },
+          // Parcel fields needed below for the parcel-charge calc — keep
+          // in lock-step with OrdersService.computeParcelCharge.
+          useCustomParcelCharge: true, parcelCharge: true,
           customerTagPrices: viewerTagId
             ? { where: { customerTagId: viewerTagId } }
             : false,
@@ -200,6 +209,8 @@ export class PricingService {
         gstRate,
         categoryId: item.subcategory?.categoryId,
         subcategoryId: item.subcategoryId,
+        useCustomParcelCharge: (item as any).useCustomParcelCharge,
+        parcelCharge: (item as any).parcelCharge != null ? Number((item as any).parcelCharge) : null,
       });
     }
 
@@ -378,10 +389,31 @@ export class PricingService {
       }
     }
 
-    // 6. Parcel charge — flat per the outlet config when isParcel = true.
-    const parcelAmount = input.isParcel && outlet.parcelChargeEnabled
-      ? Number(outlet.defaultParcelCharge ?? 0)
-      : 0;
+    // 6. Parcel charge. Mirrors OrdersService.computeParcelCharge so the
+    //    customer-facing /pricing/quote preview always matches the actual
+    //    charge the order will incur:
+    //      - If ANY line has a per-item override
+    //        (useCustomParcelCharge && parcelCharge != null) the items'
+    //        charge × qty REPLACES the outlet flat for the whole bill.
+    //        Lines without their own override contribute 0.
+    //      - Else outlet.defaultParcelCharge flat (when enabled).
+    //      - Else 0.
+    let parcelAmount = 0;
+    if (input.isParcel) {
+      let itemOverrideTotal = 0;
+      let anyOverride = false;
+      for (const line of lines) {
+        if (line.useCustomParcelCharge && line.parcelCharge != null) {
+          itemOverrideTotal += Number(line.parcelCharge) * line.quantity;
+          anyOverride = true;
+        }
+      }
+      if (anyOverride) {
+        parcelAmount = itemOverrideTotal;
+      } else if (outlet.parcelChargeEnabled) {
+        parcelAmount = Number(outlet.defaultParcelCharge ?? 0);
+      }
+    }
 
     // Running total ahead of the customer-driven promotions.
     const preCustomerTotal = runningSubtotal + taxAmount + parcelAmount;

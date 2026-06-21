@@ -378,17 +378,23 @@ export class MenuService implements OnModuleDestroy {
     const skipSchedule = !!ctx.includeHidden;
 
     // ── Outlet-menu visibility resolution (out of cache so toggles
-    // don't invalidate). Mirrors the original gating:
-    //   • multipleMenusEnabled = false → only default menu (+ legacy
-    //     unassigned categories with menuId = null)
+    // don't invalidate). Two modes:
+    //   • multipleMenusEnabled = false → the outlet has collapsed every
+    //     menu into a single customer view. Bypass menu-id filtering
+    //     entirely so imports from any business menu (default or not)
+    //     surface to the customer. The previous "default + null only"
+    //     filter silently dropped categories imported from non-default
+    //     menus — and dropped *everything* when the business had no
+    //     isDefault menu seeded (older businesses).
     //   • multipleMenusEnabled = true  → enabled OutletMenu links,
     //     minus table-driven exclusions; default menu always counts.
     const outletMeta = await this.prisma.outlet.findUnique({
       where: { id: outletId },
       select: { multipleMenusEnabled: true, businessId: true },
     });
+    let bypassMenuFilter = false;
     let allowedMenuIds = new Set<string>();
-    let allowNullMenu = false; // single-menu mode also shows unassigned categories
+    let allowNullMenu = false;
     let defaultMenuId: string | null = null;
     if (outletMeta) {
       const defaultMenu = await this.prisma.menu.findFirst({
@@ -397,8 +403,7 @@ export class MenuService implements OnModuleDestroy {
       });
       defaultMenuId = defaultMenu?.id ?? null;
       if (!outletMeta.multipleMenusEnabled) {
-        if (defaultMenuId) allowedMenuIds.add(defaultMenuId);
-        allowNullMenu = true;
+        bypassMenuFilter = true;
       } else {
         const links = await this.prisma.outletMenu.findMany({
           where: { outletId, isEnabled: true },
@@ -406,6 +411,9 @@ export class MenuService implements OnModuleDestroy {
         });
         for (const l of links) allowedMenuIds.add(l.menuId);
         if (defaultMenuId) allowedMenuIds.add(defaultMenuId);
+        // Legacy categories created before the menus feature have menuId
+        // = null — those should surface in multi-mode too.
+        allowNullMenu = true;
         // Table-type-level disables (legacy / "Patio table" style
         // grouping) AND section-level disables (physical area: "VIP
         // room", "Bar"). Both apply when a table QR is scanned.
@@ -442,10 +450,12 @@ export class MenuService implements OnModuleDestroy {
       }
     }
 
-    const categories = tree.categories.filter((c: any) => {
-      if (c.menuId == null) return allowNullMenu;
-      return allowedMenuIds.has(c.menuId);
-    });
+    const categories = bypassMenuFilter
+      ? tree.categories
+      : tree.categories.filter((c: any) => {
+          if (c.menuId == null) return allowNullMenu;
+          return allowedMenuIds.has(c.menuId);
+        });
 
     // Resolve viewer's tag for this outlet (if any) and project effective price
     let viewerTagId: string | null = null;
@@ -1178,13 +1188,20 @@ export class MenuService implements OnModuleDestroy {
 
   async deleteVariant(id: string) {
     const outletId = await this.outletIdFromVariantId(id);
-    const orderItemCount = await this.prisma.orderItem.count({ where: { variantId: id } });
-    if (orderItemCount > 0) {
-      const updated = await this.prisma.variant.update({ where: { id }, data: { isAvailable: false } });
-      if (outletId) await this.invalidateOutlet(outletId);
-      return updated;
-    }
-    const result = await this.prisma.variant.delete({ where: { id } });
+    // If past orders reference this variant, the raw delete would FK-fail
+    // (OrderItem.variantId has no ON DELETE rule). Null out the link in
+    // those rows first — variantNameSnapshot was captured at order time
+    // so historical receipts still print the variant label. We previously
+    // soft-deleted (isAvailable=false) here, but the row stayed and
+    // reappeared on the next fetch, making the Menu UI look like the
+    // delete silently failed.
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.orderItem.updateMany({
+        where: { variantId: id },
+        data: { variantId: null },
+      });
+      return tx.variant.delete({ where: { id } });
+    });
     if (outletId) await this.invalidateOutlet(outletId);
     return result;
   }
@@ -1480,6 +1497,7 @@ export class MenuService implements OnModuleDestroy {
                 isPopular: item.isPopular,
                 isAvailable: item.isAvailable,
                 isDisplayed: item.isDisplayed,
+                printSeparately: (item as any).printSeparately ?? false,
                 imageUrl: item.imageUrl,
                 displayOrder: item.displayOrder,
               },

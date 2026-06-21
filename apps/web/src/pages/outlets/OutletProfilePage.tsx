@@ -783,7 +783,7 @@ export default function OutletProfilePage() {
               placeholder="e.g. 15"
             />
           </Field>
-          <Field label="Default parcel charge (₹)" hint="Per-order parcel fee. Only applied when the toggle below is on.">
+          <Field label="Default parcel charge (₹)" hint="Per-order parcel fee. Only applied when the toggle below is on, and only when no item in the order sets its own parcel charge — item-level overrides replace this default for that bill.">
             <input
               type="number"
               min={0}

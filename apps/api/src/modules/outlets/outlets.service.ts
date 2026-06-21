@@ -300,6 +300,11 @@ export class OutletsService {
         // (a boolean) below — we never echo the actual LA id to the
         // customer PWA; that's an internal Razorpay reference.
         razorpayLinkedAccountId: true,
+        // Parcel config travels with open-status so the customer PWA's
+        // cart preview can mirror the server's parcel-charge math
+        // without an extra round-trip to /outlets/:id.
+        parcelChargeEnabled: true,
+        defaultParcelCharge: true,
         // Business name + logo travel alongside so the customer menu
         // header can show the brand identity (logo + name) without an
         // extra round-trip to /businesses/:id.
@@ -319,6 +324,8 @@ export class OutletsService {
       businessName: outlet.business?.name ?? null,
       businessLogoUrl: outlet.business?.logoUrl ?? null,
       outletType: outlet.outletType,
+      parcelChargeEnabled: outlet.parcelChargeEnabled,
+      defaultParcelCharge: Number(outlet.defaultParcelCharge ?? 0),
       // Razorpay routing is enabled for this outlet iff a Linked Account
       // is configured. The customer PWA uses this to hide the Razorpay
       // payment option when the outlet hasn't onboarded for Route — no

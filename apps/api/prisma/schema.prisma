@@ -1002,6 +1002,13 @@ model Item {
   kitchenStationId String?
   kitchenStation   KitchenStation? @relation(fields: [kitchenStationId], references: [id])
 
+  // When true, each OrderItem row for this item prints its own kitchen
+  // slip (with the order's token and just that line — variant, toppings,
+  // qty, notes) instead of being grouped into the station's combined
+  // ticket. Intended for items where toppings / variants make per-line
+  // identification critical at hand-off.
+  printSeparately Boolean @default(false)
+
   // When true, this Item is a Bundle — at order time the server expands it
   // into its child rows (see ItemBundleChild). Bundles still live under a
   // subcategory and inherit every Item feature (variants, customer-tag /

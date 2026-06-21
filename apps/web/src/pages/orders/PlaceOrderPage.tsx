@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSelector } from 'react-redux';
-import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import {
@@ -56,7 +55,6 @@ type CartLine = {
 
 export default function PlaceOrderPage() {
   const user = useSelector((s: RootState) => s.auth.user);
-  const navigate = useNavigate();
   const outletId = user?.outletId || 'demo-outlet';
 
   const [menu, setMenu] = useState<any[]>([]);
@@ -484,19 +482,19 @@ export default function PlaceOrderPage() {
       toast.success(`Order ${data.data.orderNumber} placed`);
       // Auto-print receipt if the outlet's receiptAutoPrint flag is
       // set AND a printer is configured AND it's currently connected.
-      // Best-effort: failures toast but don't block navigation.
+      // Best-effort: failures toast but don't block the reset.
       try { await maybeAutoPrintReceipt(data.data); }
       catch (e: any) { toast.error(`Receipt print failed: ${e?.message ?? e}`); }
       setCart([]);
-      // navigate() can unmount before the persist-cart useEffect fires
-      // with the empty array, so wipe the localStorage row directly to
-      // guarantee the next Place Order visit starts clean.
+      // Wipe the persisted cart explicitly so a refresh starts clean.
       try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
       setCustomerPhone('');
       setIsParcel(false);
       setTableTypeId('');
       setTableId('');
-      navigate('/orders');
+      // Stay on this page so staff can immediately place the next order;
+      // the toast above is the confirmation. The Orders page is one nav
+      // click away if they need to review.
     } catch (e: any) {
       // ─── Offline fallback ──────────────────────────────────────
       // If the failure is a network-level one, the api interceptor has
@@ -521,7 +519,8 @@ export default function PlaceOrderPage() {
         setIsParcel(false);
         setTableTypeId('');
         setTableId('');
-        navigate('/orders');
+        // Stay on this page after an offline queue too; the offline
+        // toast already confirms the provisional number.
       } else {
         toast.error(e.response?.data?.message || 'Failed to place order');
       }
@@ -875,7 +874,8 @@ export default function PlaceOrderPage() {
       try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
       setTableTypeId('');
       setTableId('');
-      navigate('/orders');
+      // Stay on the Place Order page so staff can move straight on to
+      // the next order/table; the toast confirms the closed tab.
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to record payment');
     } finally {
