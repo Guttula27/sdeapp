@@ -143,6 +143,22 @@ export class TranslationsService {
 
     const languages = await this.enabledLanguages();
 
+    // Find any existing manual overrides for this (entity, field, lang)
+    // grid up-front so the auto-backfill never silently clobbers a
+    // human-edited translation. The schema's `source` column is the
+    // mechanism; this is the read that honours it.
+    const manualRows = await this.prisma.translation.findMany({
+      where: {
+        entityType,
+        entityId,
+        fieldName: { in: Object.keys(cleanFields) },
+        languageCode: { in: languages },
+        source: 'manual',
+      },
+      select: { fieldName: true, languageCode: true },
+    });
+    const manualKeys = new Set(manualRows.map((r) => `${r.fieldName}:${r.languageCode}`));
+
     const rows: Array<{
       entityType: string;
       entityId: string;
@@ -154,9 +170,11 @@ export class TranslationsService {
     // Translate every (field, language) pair in parallel so a slow provider
     // doesn't compound: serial × N languages used to push category-create
     // past the browser's 15s axios timeout when a Lingva mirror was down.
-    const jobs: Array<Promise<typeof rows[number]>> = [];
+    // Skips cells the outlet admin has manually overridden.
+    const jobs: Array<Promise<typeof rows[number] | null>> = [];
     for (const [fieldName, sourceText] of Object.entries(cleanFields)) {
       for (const lang of languages) {
+        if (manualKeys.has(`${fieldName}:${lang}`)) continue;
         jobs.push(
           (async () => {
             const raw =
@@ -177,10 +195,16 @@ export class TranslationsService {
         );
       }
     }
-    rows.push(...(await Promise.all(jobs)));
+    for (const r of await Promise.all(jobs)) {
+      if (r) rows.push(r);
+    }
+
+    if (rows.length === 0) return;
 
     // Upsert in a single transaction — bulk createMany doesn't support upsert,
-    // so we use the per-row upsert which is fine at this volume.
+    // so we use the per-row upsert which is fine at this volume. The
+    // update-side keeps `source: 'auto'` because we filtered manual rows
+    // out above; this branch only ever touches auto rows.
     await this.prisma.$transaction(
       rows.map((r) =>
         this.prisma.translation.upsert({

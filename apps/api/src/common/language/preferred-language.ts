@@ -18,16 +18,29 @@ import { createParamDecorator, ExecutionContext } from '@nestjs/common';
  * `req.user.preferredLanguage` stayed stale and was being preferred
  * over the freshly-updated Accept-Language header.
  */
+// Region/script-strip a BCP-47 tag down to its base language code
+// (`en-US` → `en`, `hi-IN` → `hi`, `zh-Hant` → `zh`). The translation
+// table is keyed by base codes (`en`, `hi`, …); without this normalize
+// step, every US-English browser triggers a translation hydrate that
+// returns zero rows. Net rendering stays correct (English source
+// wins by fallback) but the queries are wasted.
+//
+// Caveat: collapses `zh-Hans` and `zh-Hant` to the same `zh`. India
+// scope has no such pair today, but worth noting if anyone adds one.
+function normalizeLanguageCode(raw: string): string {
+  return raw.trim().toLowerCase().split('-')[0];
+}
+
 export function preferredLanguageFromRequest(req: any): string | null {
   if (!req) return null;
   const q = req.query?.lang;
-  if (typeof q === 'string' && q.trim()) return q.trim().toLowerCase();
+  if (typeof q === 'string' && q.trim()) return normalizeLanguageCode(q);
   const accept = req.headers?.['accept-language'];
   if (typeof accept === 'string' && accept.trim()) {
-    const first = accept.split(',')[0]?.split(';')[0]?.trim().toLowerCase();
-    if (first) return first;
+    const first = accept.split(',')[0]?.split(';')[0];
+    if (first && first.trim()) return normalizeLanguageCode(first);
   }
-  if (req.user?.preferredLanguage) return String(req.user.preferredLanguage).toLowerCase();
+  if (req.user?.preferredLanguage) return normalizeLanguageCode(String(req.user.preferredLanguage));
   return null;
 }
 

@@ -81,8 +81,7 @@ export class TranslationBackfillService {
 
     try {
       for (const entity of TRANSLATABLE_ENTITIES) {
-        const rows = await this.fetchRows(entity);
-        for (const row of rows) {
+        for await (const row of this.streamRows(entity)) {
           const fields: Record<string, string> = {};
           for (const f of entity.fields) {
             const v = (row as any)[f];
@@ -109,18 +108,36 @@ export class TranslationBackfillService {
   }
 
   /**
-   * Dynamically dispatches to the right Prisma model. Done this way so
-   * the registry above stays the only place that needs editing when
-   * a new translatable entity lands.
+   * Stream every translatable row of an entity in cursor-paginated
+   * batches so the backfill never buffers the whole table in memory.
+   * The earlier non-streaming `findMany({ select })` was fine at seed
+   * scale but would OOM the API once any entity (most likely Item)
+   * grew past a few tens of thousands.
    */
-  private async fetchRows(entity: typeof TRANSLATABLE_ENTITIES[number]): Promise<Array<{ id: string }>> {
+  private async *streamRows(
+    entity: typeof TRANSLATABLE_ENTITIES[number],
+  ): AsyncGenerator<{ id: string }> {
     const model = (this.prisma as any)[entity.model];
     if (!model || typeof model.findMany !== 'function') {
       this.logger.warn(`no Prisma model "${entity.model}" — skipping ${entity.type}`);
-      return [];
+      return;
     }
     const selectArg: Record<string, true> = { id: true };
     for (const f of entity.fields) selectArg[f] = true;
-    return model.findMany({ select: selectArg });
+
+    const BATCH = 500;
+    let cursor: string | undefined;
+    while (true) {
+      const batch: Array<{ id: string }> = await model.findMany({
+        select: selectArg,
+        take: BATCH,
+        orderBy: { id: 'asc' },
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
+      if (batch.length === 0) return;
+      for (const row of batch) yield row;
+      if (batch.length < BATCH) return;
+      cursor = batch[batch.length - 1].id;
+    }
   }
 }

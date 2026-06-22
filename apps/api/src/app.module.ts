@@ -1,6 +1,7 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { BullModule } from '@nestjs/bull';
 import { PrismaModule } from './config/prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -51,10 +52,15 @@ import { RequestLogMiddleware } from './config/logger/request-log.middleware';
 import { CryptoModule } from './config/crypto/crypto.module';
 import { RedisModule } from './config/redis/redis.module';
 
+// Rate-limit buckets:
+//   • global default — every request counts toward this; safety net.
+//   • per-route override via @Throttle() — auth/payment surfaces.
+// ThrottlerGuard must be wired as a global APP_GUARD (below); without
+// that registration the @Throttle decorators are inert.
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     BullModule.forRoot({
       // Bull's redis option accepts either a URL string or an
       // ioredis options object. We use the object form so REDIS_PASSWORD /
@@ -122,6 +128,13 @@ import { RedisModule } from './config/redis/redis.module';
     RefundsModule,
     AggregatorsModule,
     SplitBillsModule,
+  ],
+  providers: [
+    // Globally enforce ThrottlerModule's limits. Without this entry the
+    // @Throttle() decorators (auth surfaces, payment verify) silently
+    // do nothing — the rate-limit configuration only takes effect when
+    // the guard is registered as APP_GUARD.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
 export class AppModule implements NestModule {
