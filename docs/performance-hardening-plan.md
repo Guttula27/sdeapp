@@ -311,15 +311,63 @@ write through to the JSON column, serve thereafter. Combined with D3,
 provider cost scales with `items × languages_actually_used`, not
 `items × languages_supported`.
 
-#### D5. Per-business language scope
-**Problem.** `paynpik_languages.isEnabled` is a global flag. A
-Karnataka outlet probably needs Kannada + Hindi + English, not Bengali
-or Assamese.
+#### D5. Customer-uniform availability with per-business eager + manual overrides
+**Problem.** Customer experience must not depend on which outlet they
+scanned. If a customer picks Tamil, they should always get Tamil —
+across every outlet on the platform. A naive "per-business enabled
+languages" model breaks this: same customer at two outlets of the same
+chain sees a Tamil menu at one and English at the other. Looks like a
+bug from the seat.
 
-**Fix.** Add `paynpik_business_languages(businessId, languageCode,
-isPrimary)`. Lazy-fill jobs only fire for languages enabled for that
-business. Customers requesting languages outside the scope fall back to
-English (or the business's primary).
+But there is real platform-side cost to caring about: eager translation
+of every menu item × every supported language × every business is
+wasteful when most outlets serve a small number of dominant local
+languages. And quality varies — a Telugu outlet owner can vouch for
+Telugu translations, a Punjabi one usually cannot.
+
+**Model.**
+- **Supported languages are global**, owned by the platform. The
+  `paynpik_languages` table stays the source of truth for "languages
+  the platform offers." A customer-facing menu is *always* reachable
+  in every supported language at *every* outlet — the platform makes
+  that promise.
+- **Per-business `primaryLanguage`** governs the *default rendering*
+  when the customer hasn't expressed a preference (i.e. no `lang`
+  query, no useful `Accept-Language`). A Tamil Nadu chain defaults to
+  Tamil; a Karnataka chain defaults to Kannada. Better UX than
+  always-English.
+- **Per-business `eagerLanguages`** (optional) is a cost-control knob:
+  these languages are pre-translated when a menu is saved so the first
+  reader pays zero provider latency. Everything else falls to D4's
+  lazy path. Typical setting: business's primary language + English +
+  any core regional secondary (e.g. Tamil + Hindi + English for a TN
+  chain serving north-Indian tourists).
+- **Per-entity manual overrides** stay as today (`source = 'manual'`
+  in `paynpik_translations`, or the JSON column variant after D3).
+  Outlet admins fix translations they have authority on; backfill
+  honours the manual flag and never clobbers them.
+- **No "language disabled for this outlet" path.** Every supported
+  language reaches the customer regardless of where they're sitting.
+
+**Fix.**
+- Add `primaryLanguage VARCHAR(8)` and `eagerLanguages JSON`
+  (string-array) columns on `paynpik_businesses`.
+- Backfill `upsertAll` (now queued via D2) writes only the source row
+  + the business's `eagerLanguages` synchronously. Other languages
+  enqueue a lazy job that's deduped and only runs when first
+  requested.
+- Customer language resolution order:
+  `?lang= → Accept-Language (region-stripped) → JWT
+  preferredLanguage → business.primaryLanguage → 'en'`.
+- The previously-proposed `paynpik_business_languages` table is **not
+  needed**. The two business-level columns above are sufficient and
+  preserve customer-uniform behaviour.
+
+**Tradeoff explicit.** Provider cost scales with
+`Σ (items × eagerLanguages_per_business)` + `actual lazy reads × items`,
+not the (cheaper but customer-hostile) `Σ (items × enabled_per_business)`
+the earlier draft implied. Worth it — customer consistency is a
+platform-level promise that shouldn't be negotiated per outlet.
 
 #### D6. Right-to-left (Urdu) prerequisite work
 **Problem.** Urdu is on the roadmap → first RTL script. Customer PWA
@@ -743,7 +791,8 @@ Time estimate: 1.5–2 weeks. Risk: medium (touches multiple consumers).
 Time estimate: 2–3 weeks. Risk: medium-high (data migration + dual
 writes).
 
-1. Add `paynpik_business_languages` table (D5).
+1. Add `primaryLanguage` + `eagerLanguages` columns on
+   `paynpik_businesses` (D5).
 2. Add `name_i18n` + `description_i18n` JSON columns on each
    translatable entity (D3).
 3. One-shot migration: collapse existing `paynpik_translations` rows
@@ -901,9 +950,13 @@ Regressions block the next phase.
    Drives the signed-token TTL in G3.
 2. Reports dashboard freshness tolerance — is 60 s lag acceptable, or
    do staff expect live counters? Drives caching in C8.
-3. Per-business languages — who owns the enablement decision
-   (business owner self-service, or platform admin)? Drives the
-   admin UI in D5.
+3. Business primary + eager-language defaults — who picks them at
+   business onboarding (platform admin pre-fills by region, or
+   business owner self-service), and what's the platform default for
+   businesses that don't set them? Drives the admin UI in D5.
+   Customer access to *every* supported language is the
+   non-negotiable; the question is only about the eager-translation
+   cost knob.
 4. Receipt printer model(s) in deployment — confirms whether the
    raster-image Urdu fallback (D6) is a one-printer fix or fleet-wide.
 5. Tolerance for an outage on the translation provider chain — is it
@@ -917,3 +970,4 @@ Regressions block the next phase.
 | Date | Author | Change |
 |---|---|---|
 | 2026-06-22 | Claude Code (stress-test session) | Initial capture. |
+| 2026-06-22 | Claude Code | D5 reworked — customer-uniform language availability with per-business primary + eager-translation knob; dropped the per-business "enabled languages" gating that would have made the customer experience outlet-dependent. |
