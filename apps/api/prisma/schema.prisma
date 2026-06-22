@@ -7,6 +7,22 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─────────────────────────────────────────────────────────────
+// Recommended production DATABASE_URL params (append to the URL):
+//   ?connection_limit=20&pool_timeout=10
+//
+// Why: Prisma's default pool is `num_cpus × 2 + 1` — on a typical 4-core
+// container that's 9 connections. Under burst load (e.g. a kitchen-screen
+// reconnect storm or a menu cache cold-fill) Prisma serialises new queries
+// once the pool is exhausted, surfacing as request-side latency spikes
+// before any single query is actually slow. Bumping to 20 buys headroom
+// and the 10 s pool_timeout fails fast instead of hanging.
+//
+// MySQL's own `max_connections` ceiling is the hard limit — keep
+// (connection_limit × api_replicas) < max_connections. Local dev keeps
+// the default; this only matters in deployed environments.
+// ─────────────────────────────────────────────────────────────
+
 // ─── Enums ───────────────────────────────────────────────
 
 enum UserStatus {
@@ -1340,6 +1356,20 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Hot-path composites (added 2026-06-22, Phase 1 of perf plan):
+  //   • (outletId, createdAt) — every orders-list view filters by outlet
+  //     and sorts by createdAt DESC. The single-column outletId FK index
+  //     forces a filesort over thousands of rows on each render.
+  //   • (outletId, status, createdAt) — service desk + kitchen station
+  //     queries filter by outlet + status IN (...) and want the same
+  //     newest-first sort. Lets the optimiser walk the index in order.
+  //   • (status) — z-reports and global queues filter on status alone.
+  // Single-column outletId/customerId/tableId etc. stay as the implicit
+  // FK indexes Prisma generates; these only add the composite + the
+  // bare status lookup.
+  @@index([outletId, createdAt], map: "idx_orders_outlet_created")
+  @@index([outletId, status, createdAt], map: "idx_orders_outlet_status_created")
+  @@index([status], map: "idx_orders_status")
   @@map("paynpik_orders")
 }
 
@@ -1492,6 +1522,15 @@ model OrderItem {
 
   @@index([menuId])
   @@index([bundleId])
+  // Phase 1 perf composites:
+  //   • (orderId, status, itemId) — the menu popularity GROUP BY scans
+  //     order_items per order and filters by status; the kitchen feed
+  //     does the same shape. Lets join + filter + group-key reads stay
+  //     index-only.
+  //   • (status) — service-desk / kitchen status filters that aren't
+  //     scoped by orderId.
+  @@index([orderId, status, itemId], map: "idx_orderitems_order_status_item")
+  @@index([status], map: "idx_orderitems_status")
   @@map("paynpik_order_items")
 }
 

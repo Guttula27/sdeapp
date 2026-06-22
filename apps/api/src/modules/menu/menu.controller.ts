@@ -1,5 +1,7 @@
-import { Controller, ForbiddenException, Get, Post, Put, Patch, Delete, Param, Body, UseGuards, Req, Query } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Post, Put, Patch, Delete, Param, Body, UseGuards, Req, Res, Query } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import { MenuService } from './menu.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt.guard';
@@ -12,11 +14,19 @@ import { PreferredLanguage } from '../../common/language/preferred-language';
 export class MenuController {
   constructor(private menuService: MenuService) {}
 
+  // Public cached read with ETag-driven 304 revalidation already
+  // handles flood protection: warm clients get sub-3 ms revalidations.
+  // Strict per-IP bucketing (60/min as in the doc's G5) is set up
+  // explicitly in Phase 5 when named throttlers land; for now the
+  // global 100/min bucket would penalise a customer whose PWA
+  // legitimately fires a few cache misses in succession.
+  @SkipThrottle()
   @UseGuards(OptionalJwtAuthGuard)
   @Get()
-  getMenu(
+  async getMenu(
     @Param('outletId') outletId: string,
     @Req() req: any,
+    @Res() res: Response,
     @PreferredLanguage() lang: string | null,
     @Query('tableId') tableId?: string,
     @Query('includeHidden') includeHidden?: string,
@@ -26,15 +36,61 @@ export class MenuController {
     // taps to open a detail/picker modal.
     @Query('slim') slim?: string,
   ) {
+    // NOTE: this endpoint takes over response handling (no passthrough)
+    // so it can issue a clean 304 (empty body) on revalidation —
+    // returning undefined under passthrough mode trips the global
+    // TransformInterceptor into writing `{success,data,timestamp}` and
+    // then this method calling res.end() causes ERR_HTTP_HEADERS_SENT.
+    // The 200 branch reproduces the standard envelope shape inline.
+
     // includeHidden is honored only for staff users (those tied to a
     // business or outlet). Customer/anon callers always get the public
     // (display-filtered) view regardless of query string.
     const isStaff = !!(req?.user?.businessId || req?.user?.outletId);
     const allowHidden = isStaff && includeHidden === 'true';
-    return this.menuService.getMenu(outletId, req?.user?.id, tableId, lang, {
+    const slimMode = slim === 'true';
+
+    // ETag bound to the outlet menu-version counter. A menu edit calls
+    // invalidateOutlet() which INCRs the version → every variant's ETag
+    // rotates atomically. Different (lang × audience × slim) buckets get
+    // distinct ETags so a customer revalidating a slim payload doesn't
+    // get 304'd against a staff full payload.
+    const version = await this.menuService.getMenuVersion(outletId);
+    const etag = `W/"m:${outletId}:${version}:${lang || 'en'}:${allowHidden ? 'all' : 'pub'}:${slimMode ? 's' : 'f'}"`;
+
+    // Cache-Control tiering by audience:
+    //   • includeHidden (admin edit view) — no caching; admins must see
+    //     every save instantly.
+    //   • staff but not includeHidden — short cache + must-revalidate so
+    //     mid-shift menu toggles surface quickly.
+    //   • anonymous / customer — 30 s fresh + 5 min stale-while-revalidate
+    //     so the customer PWA can paint instantly from cache and
+    //     reconcile in the background.
+    const cacheControl = allowHidden
+      ? 'no-store'
+      : isStaff
+        ? 'private, max-age=10, must-revalidate'
+        : 'private, max-age=30, stale-while-revalidate=300';
+
+    res.setHeader('ETag', etag);
+    res.setHeader('Cache-Control', cacheControl);
+
+    // Fast revalidation path — skip the entire DB read + projection
+    // when the client's cached payload is still current. RFC 7232:
+    // 304 MUST NOT contain a message body.
+    if (req.headers['if-none-match'] === etag) {
+      res.status(304).end();
+      return;
+    }
+
+    const data = await this.menuService.getMenu(outletId, req?.user?.id, tableId, lang, {
       includeHidden: allowHidden,
-      slim: slim === 'true',
+      slim: slimMode,
     });
+    // Mirror the global TransformInterceptor envelope so the contract
+    // with the SPAs doesn't change when this route bypasses the
+    // interceptor.
+    res.json({ success: true, data, timestamp: new Date().toISOString() });
   }
 
   // Detail endpoint for the slim list. Returns the single item with all
@@ -42,6 +98,7 @@ export class MenuController {
   // images gallery, customerTagPrices, tableTypePrices) so the customer
   // can render the picker/modal. Same per-request projection layer as
   // /menu, so effectivePrice / isFavorite / inSchedule stay consistent.
+  @SkipThrottle()
   @UseGuards(OptionalJwtAuthGuard)
   @Get('items/:itemId')
   getItemDetail(
@@ -54,6 +111,7 @@ export class MenuController {
     return this.menuService.getItemDetail(outletId, itemId, req?.user?.id, tableId, lang);
   }
 
+  @SkipThrottle()
   @Public()
   @Get('popular')
   getPopular(@Param('outletId') outletId: string) {

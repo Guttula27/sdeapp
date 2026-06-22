@@ -12,6 +12,11 @@ import {
 // 10 minutes — safety net for any mutation path we forgot to hook.
 // Direct invalidation via invalidateOutlet() is the primary mechanism.
 const MENU_TREE_TTL_SECONDS = 600;
+// Outlet-level rolling aggregates (popular set, review averages) — these
+// are computed from order/review activity, so they don't get bumped by
+// the menu-version counter on every menu edit. Short TTL so a new
+// review or a freshly popular item surfaces within a minute.
+const MENU_AGGREGATE_TTL_SECONDS = 60;
 // Debounce window before a post-mutation cache warm fires. Long enough
 // to coalesce a bulk edit session (drag-reorder, batch price updates,
 // import-from-template) into a single warm; short enough that the first
@@ -50,10 +55,99 @@ export class MenuService implements OnModuleDestroy {
   private menuVersionKey(outletId: string) {
     return `menu:ver:${outletId}`;
   }
+
+  /**
+   * Exposes the outlet's current menu-version counter so the controller
+   * can mint an ETag whose value rotates atomically with every cache
+   * bust. Returns 0 when Redis is down — the ETag still works as a
+   * weak hash and stale responses simply skip the 304 fast path.
+   */
+  async getMenuVersion(outletId: string): Promise<number> {
+    return this.redis.getCounter(this.menuVersionKey(outletId));
+  }
   private menuTreeKey(outletId: string, version: number, lang: string, includeHidden: boolean) {
     const langPart = lang || 'en';
     const audience = includeHidden ? 'all' : 'public';
     return `menu:tree:v1:${outletId}:${version}:${langPart}:${audience}`;
+  }
+  // Outlet-level rolling aggregates. Keyed by outletId + menu-version
+  // counter so a menu edit that adds/removes items doesn't serve a
+  // popular set referencing items the customer can no longer see. TTL
+  // takes care of recency for order/review activity that doesn't go
+  // through invalidateOutlet().
+  private popularItemsKey(outletId: string, version: number) {
+    return `menu:popular:v1:${outletId}:${version}`;
+  }
+  private ratingsKey(outletId: string, version: number) {
+    return `menu:ratings:v1:${outletId}:${version}`;
+  }
+
+  /**
+   * Returns the top-5 item IDs at this outlet by quantity ordered in
+   * the last 30 days. Stress-test evidence (Phase 0 baseline) was that
+   * this query alone accounted for 20.1M of 34M total InnoDB row reads
+   * and hit max 1000 ms under contention. Cached for 60 s so the
+   * customer menu doesn't recompute it on every render.
+   *
+   * Behaves like the original inline query: empty array if nothing has
+   * been ordered in the window, never throws on Redis miss (the cache
+   * helpers degrade to pass-through).
+   */
+  private async getPopularItemIds(outletId: string): Promise<string[]> {
+    const version = await this.redis.getCounter(this.menuVersionKey(outletId));
+    const key = this.popularItemsKey(outletId, version);
+    const cached = await this.redis.getJSON<string[]>(key);
+    if (cached) return cached;
+
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const topGroups = await this.prisma.orderItem.groupBy({
+      by: ['itemId'],
+      where: {
+        order: { outletId, createdAt: { gte: since } },
+        status: { not: 'CANCELLED' },
+      },
+      _sum: { quantity: true },
+      orderBy: { _sum: { quantity: 'desc' } },
+      take: 5,
+    });
+    const ids = topGroups.map((g) => g.itemId);
+    void this.redis.setJSON(key, ids, MENU_AGGREGATE_TTL_SECONDS);
+    return ids;
+  }
+
+  /**
+   * Returns a Map of itemId → {avg, count} for every item rendered on
+   * this menu. Same caching shape as popularity — keyed by outletId +
+   * menu-version, 60 s TTL. Map is serialised as `[key, value][]` so
+   * JSON.stringify round-trips faithfully.
+   */
+  private async getRatingsByItem(
+    outletId: string,
+    itemIds: string[],
+  ): Promise<Map<string, { avg: number; count: number }>> {
+    if (itemIds.length === 0) return new Map();
+    const version = await this.redis.getCounter(this.menuVersionKey(outletId));
+    const key = this.ratingsKey(outletId, version);
+
+    type Entry = [string, { avg: number; count: number }];
+    const cached = await this.redis.getJSON<Entry[]>(key);
+    if (cached) return new Map(cached);
+
+    const rows = await this.prisma.orderItemReview.groupBy({
+      by: ['itemId'],
+      where: { itemId: { in: itemIds } },
+      _avg: { rating: true },
+      _count: { rating: true },
+    });
+    const map = new Map<string, { avg: number; count: number }>();
+    for (const r of rows) {
+      map.set(r.itemId, {
+        avg: r._avg.rating ? Math.round(r._avg.rating * 10) / 10 : 0,
+        count: r._count.rating ?? 0,
+      });
+    }
+    void this.redis.setJSON(key, [...map.entries()] as Entry[], MENU_AGGREGATE_TTL_SECONDS);
+    return map;
   }
 
   /**
@@ -476,19 +570,10 @@ export class MenuService implements OnModuleDestroy {
       if (table?.outletId === outletId) tableTypeId = table.tableTypeId;
     }
 
-    // Auto-detect top 5 ordered items at this outlet over the last 30 days
-    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const topGroups = await this.prisma.orderItem.groupBy({
-      by: ['itemId'],
-      where: {
-        order: { outletId, createdAt: { gte: since } },
-        status: { not: 'CANCELLED' },
-      },
-      _sum: { quantity: true },
-      orderBy: { _sum: { quantity: 'desc' } },
-      take: 5,
-    });
-    const popularSet = new Set(topGroups.map(g => g.itemId));
+    // Auto-detect top 5 ordered items at this outlet over the last 30 days.
+    // Cached for 60 s — the previous inline groupBy was the heaviest read
+    // on the menu hot path (see docs/performance-hardening-plan.md A3).
+    const popularSet = new Set(await this.getPopularItemIds(outletId));
 
     // Viewer's favourites
     let favoriteSet = new Set<string>();
@@ -555,27 +640,14 @@ export class MenuService implements OnModuleDestroy {
       };
     };
 
-    // Aggregate review stats for every item on the (filtered) menu in one
-    // query so the customer can see the consolidated rating chip without
-    // an extra round-trip.
+    // Aggregate review stats for every item on the (filtered) menu so
+    // the customer sees the consolidated rating chip without an extra
+    // round-trip. Cached for 60 s alongside popularity — same outlet
+    // version key so a menu edit invalidates both atomically.
     const itemIds = categories.flatMap((c: any) =>
       c.subcategories.flatMap((s: any) => s.items.map((i: any) => i.id)),
     );
-    const ratingRows = itemIds.length
-      ? await this.prisma.orderItemReview.groupBy({
-          by: ['itemId'],
-          where: { itemId: { in: itemIds } },
-          _avg: { rating: true },
-          _count: { rating: true },
-        })
-      : [];
-    const ratingByItem = new Map<string, { avg: number; count: number }>();
-    for (const r of ratingRows) {
-      ratingByItem.set(r.itemId, {
-        avg: r._avg.rating ? Math.round(r._avg.rating * 10) / 10 : 0,
-        count: r._count.rating ?? 0,
-      });
-    }
+    const ratingByItem = await this.getRatingsByItem(outletId, itemIds);
 
     // Cascading availability evaluation. Outlet hours and bot
     // category/sub/item per-day slots all cascade — a node is in
