@@ -1262,25 +1262,17 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
             <span className="mt-1.5"><FoodGradeDot grade={item.foodGrade} /></span>
             <p className="text-sm font-bold text-slate-900 leading-tight line-clamp-3 min-w-0 flex-1">{item.name}</p>
           </div>
-          {/* Rows 2+3: a two-column layout — badges + price on the
-              left, Add button vertically centred on the right (so it
-              "merges" rowspan-2 against the badges and price rows).
-              This is what eliminated the big empty corner the
-              previous flat-column layout left below short names. */}
-          <div className="flex items-center gap-3">
-            <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-              {/* Row 2: favourite + Popular/Special/Limited chips +
-                  variants/toppings markers. */}
-              {(onToggleFavorite || item.isPopular || item.isSpecial || hasVariants || (item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 || (item.hasLimitedStock && item.availableQuantity > 0) || (disabled && disabledReason)) && (
-                <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Row 2: badges. Full content-column width — no Add
+              button squeezing it from the right, so the chip set can
+              run across cleanly. */}
+          {(onToggleFavorite || item.isPopular || item.isSpecial || hasVariants || (item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 || (item.hasLimitedStock && item.availableQuantity > 0) || (disabled && disabledReason)) && (
+            <div className="flex items-center gap-1.5 flex-wrap">
               {onToggleFavorite && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onToggleFavorite(e); }}
                   className={clsx(
-                    // Larger hit target now that the heart sits in the
-                    // badge row — 32×32 with an 18px icon reads as a
-                    // primary affordance, not a footnote, and clears
-                    // Material's 48dp tap-target guideline with padding.
+                    // 32×32 hit target with an 18px icon — clears
+                    // Material's recommended tap-target size.
                     'inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors',
                     item.isFavorite ? 'bg-red-50 text-red-500' : 'text-slate-300 hover:text-red-400 hover:bg-red-50',
                   )}
@@ -1301,27 +1293,22 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
                 </span>
               )}
               {/* Variant count — single chip "Nx options" so the
-                  customer knows tapping opens a chooser. Brand tone
-                  to differentiate from amber/rose "praise" chips. */}
+                  customer knows tapping opens a chooser. */}
               {hasVariants && (
                 <span className="inline-flex items-center text-[9px] font-bold bg-brand-50 text-brand-700 px-1.5 py-0.5 rounded-full border border-brand-100">
                   {item.variants.length} options
                 </span>
               )}
-              {/* Toppings indicator — the picker exists. Same brand
-                  family as the variants chip; pluralised for clarity. */}
+              {/* Toppings indicator. */}
               {(item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 && (
                 <span className="inline-flex items-center text-[9px] font-bold bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full border border-indigo-100">
                   + toppings
                 </span>
               )}
-              {/* Limited-stock chip — exposes the kitchen's per-item
-                  inventory so customers know to grab the popular ones
-                  fast. Shows the exact count when it gets tight (≤5
-                  left), otherwise just the generic "Limited Quantity
-                  Available" label so we don't broadcast healthy stock
-                  levels into FOMO. Hidden once the item is sold out —
-                  in that case `disabledReason` already says so. */}
+              {/* Limited-stock chip — exact count when ≤5 (mild
+                  scarcity nudge), generic "Limited Quantity
+                  Available" otherwise so we don't broadcast healthy
+                  stock into FOMO. */}
               {item.hasLimitedStock && item.availableQuantity > 0 && (
                 <span
                   className={clsx(
@@ -1342,41 +1329,42 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
                   {disabledReason}
                 </span>
               )}
-                </div>
-              )}
-              {item.shortDescription && (
-                <p className="text-[11px] text-slate-400 line-clamp-1">{item.shortDescription}</p>
-              )}
-              {/* Row 3: price + rating + prep time. */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {hasDiscount ? (
-                  <>
-                    <span className="text-sm font-black text-emerald-700">
-                      {hasVariants ? `from ₹${lowDiscounted.toFixed(0)}` : `₹${lowDiscounted.toFixed(0)}`}
-                    </span>
-                    <span className="text-xs text-slate-400 line-through">
-                      ₹{lowPrice.toFixed(0)}
-                    </span>
-                    <span className="inline-flex items-center text-[10px] font-bold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-full">
-                      Save ₹{saveAmount.toFixed(0)}
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-sm font-black text-slate-900">{hasVariants ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}</span>
-                )}
-                {item.ratingCount > 0 && (
-                  <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700">
-                    <Star size={9} fill="currentColor" className="text-amber-500" />
-                    {item.ratingAvg.toFixed(1)}
-                    <span className="text-slate-400 font-normal">({item.ratingCount})</span>
-                  </span>
-                )}
-                {item.preparationTime && <span className="text-[10px] text-slate-400 flex items-center gap-0.5"><Clock size={9} /> {item.preparationTime}m</span>}
-              </div>
             </div>
-            {/* Rowspan-2 Add button — vertically centred against the
-                badges (row 2) + price (row 3) stack. Gold "money
-                zone" + charcoal text per the design tokens. */}
+          )}
+          {/* Row 3: short description, when present. */}
+          {item.shortDescription && (
+            <p className="text-[11px] text-slate-400 line-clamp-1">{item.shortDescription}</p>
+          )}
+          {/* Row 4: price + rating + prep time on the left, Add
+              button on the right. justify-between splits them so the
+              left stack hugs the start and the gold CTA hugs the
+              end — the "split to the right" from the spec. */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              {hasDiscount ? (
+                <>
+                  <span className="text-sm font-black text-emerald-700">
+                    {hasVariants ? `from ₹${lowDiscounted.toFixed(0)}` : `₹${lowDiscounted.toFixed(0)}`}
+                  </span>
+                  <span className="text-xs text-slate-400 line-through">
+                    ₹{lowPrice.toFixed(0)}
+                  </span>
+                  <span className="inline-flex items-center text-[10px] font-bold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-full">
+                    Save ₹{saveAmount.toFixed(0)}
+                  </span>
+                </>
+              ) : (
+                <span className="text-sm font-black text-slate-900">{hasVariants ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}</span>
+              )}
+              {item.ratingCount > 0 && (
+                <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700">
+                  <Star size={9} fill="currentColor" className="text-amber-500" />
+                  {item.ratingAvg.toFixed(1)}
+                  <span className="text-slate-400 font-normal">({item.ratingCount})</span>
+                </span>
+              )}
+              {item.preparationTime && <span className="text-[10px] text-slate-400 flex items-center gap-0.5"><Clock size={9} /> {item.preparationTime}m</span>}
+            </div>
             <button
               onClick={onQuickAdd}
               disabled={disabled}
