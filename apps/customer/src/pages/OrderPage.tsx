@@ -1199,20 +1199,38 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
           </div>
         )}
         <div className="flex-1 min-w-0">
-          {/* Name row — just the food-grade dot + the name. No badges
-              here. Inline badges were stealing horizontal space and
-              forcing CJK / Indic scripts (which don't break inside a
-              word) to render as 1–2-character columns next to the
-              "Popular" chip. Badges moved to the row below. */}
+          {/* Name row — just the food-grade dot + the name. Favourite
+              + Popular/Special/Limited/disabled-reason chips all
+              moved to the row below so the name owns this row
+              outright. Up to 3 lines before truncation — enough for
+              long Telugu / Hindi compound names without becoming a
+              wall of text. */}
           <div className="flex items-start gap-1.5">
             <span className="mt-1.5"><FoodGradeDot grade={item.foodGrade} /></span>
-            <p className="text-sm font-bold text-slate-900 leading-tight line-clamp-2 break-words min-w-0 flex-1">{item.name}</p>
+            <p className="text-sm font-bold text-slate-900 leading-tight line-clamp-3 min-w-0 flex-1">{item.name}</p>
           </div>
-          {/* Badge row — Popular / Special / Limited / disabled state.
-              flex-wrap so a long combination flows onto multiple
-              lines without breaking the card. */}
-          {(item.isPopular || item.isSpecial || (item.hasLimitedStock && item.availableQuantity > 0) || (disabled && disabledReason)) && (
+          {/* Badge row — Popular / Special / Limited / disabled state
+              + the favourite toggle, which used to sit in the
+              right-side actions column. Moving it here keeps the
+              right column to a single Add button + variants label so
+              the card is taller on text instead of duplicating two
+              action columns. flex-wrap so a long combination flows
+              onto multiple lines without breaking the card. */}
+          {(onToggleFavorite || item.isPopular || item.isSpecial || (item.hasLimitedStock && item.availableQuantity > 0) || (disabled && disabledReason)) && (
             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              {onToggleFavorite && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggleFavorite(e); }}
+                  className={clsx(
+                    'inline-flex items-center justify-center w-6 h-6 rounded-full transition-colors',
+                    item.isFavorite ? 'bg-red-50 text-red-500' : 'text-slate-300 hover:text-red-400 hover:bg-red-50',
+                  )}
+                  title={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+                  aria-label={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+                >
+                  <Heart size={12} fill={item.isFavorite ? 'currentColor' : 'none'} />
+                </button>
+              )}
               {item.isPopular && (
                 <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-full">
                   <Star size={8} fill="currentColor" /> Popular
@@ -1283,18 +1301,8 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
           </div>
         </div>
         <div className="shrink-0 flex flex-col items-end gap-1.5">
-          {onToggleFavorite && (
-            <button
-              onClick={onToggleFavorite}
-              className={clsx(
-                'w-7 h-7 rounded-lg flex items-center justify-center transition-colors',
-                item.isFavorite ? 'bg-red-50 text-red-500' : 'text-slate-300 hover:text-red-400 hover:bg-red-50',
-              )}
-              title={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
-            >
-              <Heart size={14} fill={item.isFavorite ? 'currentColor' : 'none'} />
-            </button>
-          )}
+          {/* Favourite toggle moved to the badge row above so this
+              column only carries the Add action. */}
           <button
             onClick={onQuickAdd}
             disabled={disabled}
