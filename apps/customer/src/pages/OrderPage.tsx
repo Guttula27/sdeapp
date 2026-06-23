@@ -1209,14 +1209,15 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
             <span className="mt-1.5"><FoodGradeDot grade={item.foodGrade} /></span>
             <p className="text-sm font-bold text-slate-900 leading-tight line-clamp-3 min-w-0 flex-1">{item.name}</p>
           </div>
-          {/* Badge row — Popular / Special / Limited / disabled state
-              + the favourite toggle, which used to sit in the
-              right-side actions column. Moving it here keeps the
-              right column to a single Add button + variants label so
-              the card is taller on text instead of duplicating two
-              action columns. flex-wrap so a long combination flows
-              onto multiple lines without breaking the card. */}
-          {(onToggleFavorite || item.isPopular || item.isSpecial || (item.hasLimitedStock && item.availableQuantity > 0) || (disabled && disabledReason)) && (
+          {/* Badge row — favourite toggle + Popular/Special/Limited
+              status flags + variant-count and toppings indicators.
+              Moving all of these out of the name row (where they
+              squeezed Indic scripts) AND out of the right-side
+              actions column (which now carries only the Add button)
+              gave the card a clean three-section layout: image |
+              text+badges | action. flex-wrap so a long combination
+              flows onto multiple lines without breaking the card. */}
+          {(onToggleFavorite || item.isPopular || item.isSpecial || hasVariants || (item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 || (item.hasLimitedStock && item.availableQuantity > 0) || (disabled && disabledReason)) && (
             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
               {onToggleFavorite && (
                 <button
@@ -1239,6 +1240,21 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
               {item.isSpecial && (
                 <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-rose-50 text-rose-600 px-1.5 py-0.5 rounded-full">
                   ⭐ Special
+                </span>
+              )}
+              {/* Variant count — single chip "Nx options" so the
+                  customer knows tapping opens a chooser. Brand tone
+                  to differentiate from amber/rose "praise" chips. */}
+              {hasVariants && (
+                <span className="inline-flex items-center text-[9px] font-bold bg-brand-50 text-brand-700 px-1.5 py-0.5 rounded-full border border-brand-100">
+                  {item.variants.length} options
+                </span>
+              )}
+              {/* Toppings indicator — the picker exists. Same brand
+                  family as the variants chip; pluralised for clarity. */}
+              {(item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 && (
+                <span className="inline-flex items-center text-[9px] font-bold bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full border border-indigo-100">
+                  + toppings
                 </span>
               )}
               {/* Limited-stock chip — exposes the kitchen's per-item
@@ -1296,13 +1312,14 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
                 <span className="text-slate-400 font-normal">({item.ratingCount})</span>
               </span>
             )}
-            {(item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 && <span className="text-[10px] text-indigo-600 font-semibold">+ toppings</span>}
             {item.preparationTime && <span className="text-[10px] text-slate-400 flex items-center gap-0.5"><Clock size={9} /> {item.preparationTime}m</span>}
           </div>
         </div>
-        <div className="shrink-0 flex flex-col items-end gap-1.5">
-          {/* Favourite toggle moved to the badge row above so this
-              column only carries the Add action. */}
+        <div className="shrink-0 flex items-center">
+          {/* Everything else (heart, Popular, Special, options/toppings
+              chips) moved up into the badge row, so the right column
+              is just the Add button — vertically centred against the
+              card so it doesn't look orphaned next to a tall name. */}
           <button
             onClick={onQuickAdd}
             disabled={disabled}
@@ -1315,11 +1332,6 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
           >
             <Plus size={12} /> Add{qty > 0 && ` · ${qty}`}
           </button>
-          {hasVariants && (
-            <span className="text-[9px] font-bold uppercase tracking-wider text-brand-600">
-              {item.variants.length} variants
-            </span>
-          )}
         </div>
       </div>
     </div>
