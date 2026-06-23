@@ -221,6 +221,268 @@ export class TranslationsService {
         }),
       ),
     );
+
+    // Phase 3 dual-write: mirror the same key/value pairs into the
+    // per-row JSON column on the entity. Read path prefers the JSON
+    // cell, so this is what makes the new menu cache key (no `:lang:`
+    // segment) viable. Keeping the legacy paynpik_translations row in
+    // sync gives us a one-deploy rollback if the JSON path misbehaves.
+    await this.dualWriteJsonCells(rows);
+  }
+
+  // Maps an `entityType` to its physical table and the set of fields
+  // that own a matching `<field>_i18n` JSON column. Hard-coded rather
+  // than reflective because (a) the set is tiny, (b) the migration
+  // that created the columns enumerated them explicitly, and (c)
+  // composing column names from untrusted data would invite SQL
+  // injection through the dual-write path.
+  private static readonly DUAL_WRITE_TARGETS: Record<
+    string,
+    { table: string; fields: Set<string> }
+  > = {
+    Business:      { table: 'paynpik_businesses',      fields: new Set(['name', 'description', 'address', 'addressLine1', 'addressLine2']) },
+    Outlet:        { table: 'paynpik_outlets',         fields: new Set(['name', 'description', 'address', 'addressLine1', 'addressLine2']) },
+    Category:      { table: 'paynpik_categories',      fields: new Set(['name']) },
+    Subcategory:   { table: 'paynpik_subcategories',   fields: new Set(['name']) },
+    Item:          { table: 'paynpik_items',           fields: new Set(['name', 'description', 'shortDescription']) },
+    Variant:       { table: 'paynpik_variants',        fields: new Set(['name', 'shortDescription']) },
+    Topping:       { table: 'paynpik_toppings',        fields: new Set(['name']) },
+    ToppingOption: { table: 'paynpik_topping_options', fields: new Set(['name']) },
+    CustomerTag:   { table: 'paynpik_customer_tags',   fields: new Set(['name']) },
+    Dispute:       { table: 'paynpik_disputes',        fields: new Set(['description']) },
+  };
+
+  /**
+   * For every (entityType, entityId, fieldName) tuple in the input,
+   * MERGE the (lang → value) map into the entity's `<field>_i18n` JSON
+   * column. JSON_MERGE_PATCH preserves existing keys not present in
+   * the patch — partial backfills don't wipe out previously-set
+   * languages. The source language (English) is skipped because the
+   * canonical source stays in the plain column.
+   */
+  private async dualWriteJsonCells(
+    rows: Array<{ entityType: string; entityId: string; fieldName: string; languageCode: string; value: string }>,
+  ): Promise<void> {
+    type Group = {
+      entityType: string;
+      entityId: string;
+      fieldName: string;
+      values: Record<string, string>;
+    };
+    const grouped = new Map<string, Group>();
+    for (const r of rows) {
+      if (r.languageCode === SOURCE_LANGUAGE) continue;
+      const key = `${r.entityType} ${r.entityId} ${r.fieldName}`;
+      let g = grouped.get(key);
+      if (!g) {
+        g = { entityType: r.entityType, entityId: r.entityId, fieldName: r.fieldName, values: {} };
+        grouped.set(key, g);
+      }
+      g.values[r.languageCode] = r.value;
+    }
+    if (grouped.size === 0) return;
+
+    const updates: Array<Promise<unknown>> = [];
+    for (const g of grouped.values()) {
+      const target = TranslationsService.DUAL_WRITE_TARGETS[g.entityType];
+      if (!target || !target.fields.has(g.fieldName)) continue;
+      const column = `${g.fieldName}_i18n`;
+      updates.push(
+        this.prisma.$executeRawUnsafe(
+          // Table + column are inlined from the allowlist above —
+          // never from user input — so the unsafe interpolation here
+          // can't be reached with attacker-controlled identifiers.
+          // entityId and the JSON payload flow as parameters.
+          `UPDATE \`${target.table}\` ` +
+            `SET \`${column}\` = JSON_MERGE_PATCH(COALESCE(\`${column}\`, JSON_OBJECT()), CAST(? AS JSON)) ` +
+            `WHERE id = ?`,
+          JSON.stringify(g.values),
+          g.entityId,
+        ),
+      );
+    }
+    if (updates.length > 0) await Promise.all(updates);
+  }
+
+  // ─── Admin: list + manually correct translations ─────────────
+  //
+  // The outlet-admin Languages page reads via listOutletStrings to
+  // get one row per (entity, field) with the source text and the
+  // current translation, then calls upsertManualOverride to save a
+  // correction. Manual overrides flip the legacy row's `source` to
+  // 'manual' so the backfill in upsertAll() skips them on the next
+  // pass (see the manualKeys check above).
+
+  /**
+   * Where-clause builder that filters a Prisma model to rows owned
+   * by `outletId`. Hard-coded — same allowlist shape as
+   * DUAL_WRITE_TARGETS — so an attacker can't ask the admin
+   * endpoint for an arbitrary entityType.
+   */
+  private static readonly ADMIN_LIST: Record<
+    string,
+    { model: string; fields: string[]; whereForOutlet: (outletId: string) => any }
+  > = {
+    Outlet:        { model: 'outlet',        fields: ['name', 'description', 'address', 'addressLine1', 'addressLine2'], whereForOutlet: (o) => ({ id: o }) },
+    Category:      { model: 'category',      fields: ['name'],                                                            whereForOutlet: (o) => ({ outletId: o }) },
+    Subcategory:   { model: 'subcategory',   fields: ['name'],                                                            whereForOutlet: (o) => ({ category: { outletId: o } }) },
+    Item:          { model: 'item',          fields: ['name', 'description', 'shortDescription'],                         whereForOutlet: (o) => ({ subcategory: { category: { outletId: o } } }) },
+    Variant:       { model: 'variant',       fields: ['name', 'shortDescription'],                                        whereForOutlet: (o) => ({ item: { subcategory: { category: { outletId: o } } } }) },
+    Topping:       { model: 'topping',       fields: ['name'],                                                            whereForOutlet: (o) => ({ outletId: o }) },
+    ToppingOption: { model: 'toppingOption', fields: ['name'],                                                            whereForOutlet: (o) => ({ topping: { outletId: o } }) },
+    CustomerTag:   { model: 'customerTag',   fields: ['name'],                                                            whereForOutlet: (o) => ({ outletId: o }) },
+  };
+
+  /**
+   * Returns one row per (entity, fieldName) for the requested
+   * entityType + language. Each row carries the English source, the
+   * current translation (preferring the JSON cell, falling back to
+   * the legacy table), and the row's `source` flag (auto / manual /
+   * missing). Used by the outlet-admin Languages page.
+   */
+  async listOutletStrings(
+    outletId: string,
+    opts: { lang: string; entityType: string; search?: string; page?: number; limit?: number },
+  ) {
+    const cfg = TranslationsService.ADMIN_LIST[opts.entityType];
+    if (!cfg) {
+      return { rows: [], total: 0, page: 1, limit: 0, entityTypes: Object.keys(TranslationsService.ADMIN_LIST) };
+    }
+    const limit = Math.min(Math.max(Number(opts.limit) || 50, 1), 200);
+    const page  = Math.max(Number(opts.page) || 1, 1);
+    const skip  = (page - 1) * limit;
+
+    const where: any = cfg.whereForOutlet(outletId);
+    if (opts.search?.trim()) {
+      where.OR = cfg.fields.map((f) => ({ [f]: { contains: opts.search } }));
+    }
+
+    const select: Record<string, true> = { id: true };
+    for (const f of cfg.fields) {
+      select[f] = true;
+      select[`${f}_i18n`] = true;
+    }
+
+    const [entities, total] = await Promise.all([
+      (this.prisma as any)[cfg.model].findMany({
+        where, select, take: limit, skip, orderBy: { id: 'asc' },
+      }),
+      (this.prisma as any)[cfg.model].count({ where }),
+    ]);
+
+    // Legacy table lookup batches by entityId — fills in the `source`
+    // flag and gives us a fallback when the JSON cell hasn't been
+    // populated yet (entities created before the Phase 3 migration
+    // but after the last backfill).
+    const ids = entities.map((e: any) => e.id);
+    const legacy = ids.length
+      ? await this.prisma.translation.findMany({
+          where: { entityType: opts.entityType, entityId: { in: ids }, languageCode: opts.lang },
+          select: { entityId: true, fieldName: true, source: true, value: true },
+        })
+      : [];
+    const legacyByKey = new Map<string, { source: string; value: string }>();
+    for (const r of legacy) legacyByKey.set(`${r.entityId}:${r.fieldName}`, r);
+
+    const rows: any[] = [];
+    for (const e of entities as any[]) {
+      for (const fieldName of cfg.fields) {
+        const sourceText: string | null = e[fieldName] ?? null;
+        if (!sourceText || !sourceText.trim()) continue;
+        const i18nCell = e[`${fieldName}_i18n`] as Record<string, string> | null;
+        const jsonValue = i18nCell?.[opts.lang];
+        const lg = legacyByKey.get(`${e.id}:${fieldName}`);
+        const translatedText =
+          (typeof jsonValue === 'string' && jsonValue) ? jsonValue : (lg?.value ?? '');
+        const source: 'manual' | 'auto' | 'missing' =
+          (lg?.source === 'manual') ? 'manual'
+          : translatedText ? 'auto'
+          : 'missing';
+        rows.push({
+          entityType: opts.entityType,
+          entityId: e.id,
+          fieldName,
+          sourceText,
+          translatedText,
+          source,
+        });
+      }
+    }
+    return {
+      rows,
+      total,
+      page,
+      limit,
+      entityTypes: Object.keys(TranslationsService.ADMIN_LIST),
+    };
+  }
+
+  /**
+   * Save a human-curated correction. Writes to BOTH the legacy
+   * translations table (with `source: 'manual'`, so future auto
+   * backfills skip it) AND the JSON cell on the entity (which the
+   * customer menu reads). Returns the persisted row.
+   *
+   * Throws when the entityType/fieldName isn't on the admin allowlist
+   * or when the entityId doesn't belong to the caller's outlet.
+   */
+  async upsertManualOverride(
+    outletId: string,
+    params: { entityType: string; entityId: string; fieldName: string; languageCode: string; value: string },
+  ): Promise<{ entityType: string; entityId: string; fieldName: string; languageCode: string; value: string; source: 'manual' }> {
+    const cfg = TranslationsService.ADMIN_LIST[params.entityType];
+    if (!cfg) throw new Error(`Unknown entityType: ${params.entityType}`);
+    if (!cfg.fields.includes(params.fieldName)) throw new Error(`Field ${params.fieldName} is not translatable on ${params.entityType}`);
+    if (!params.languageCode || params.languageCode === SOURCE_LANGUAGE) {
+      throw new Error('languageCode must be set and non-source');
+    }
+
+    // Tenant check: confirm the entity belongs to this outlet by
+    // re-running the whereForOutlet filter as an existence query.
+    const exists = await (this.prisma as any)[cfg.model].findFirst({
+      where: { AND: [cfg.whereForOutlet(outletId), { id: params.entityId }] },
+      select: { id: true },
+    });
+    if (!exists) throw new Error('Entity not found in this outlet');
+
+    const value = (params.value ?? '').trim();
+    const dualTarget = TranslationsService.DUAL_WRITE_TARGETS[params.entityType];
+
+    // 1) Legacy row — flips source='manual' so upsertAll skips it.
+    await this.prisma.translation.upsert({
+      where: {
+        entityType_entityId_fieldName_languageCode: {
+          entityType: params.entityType,
+          entityId: params.entityId,
+          fieldName: params.fieldName,
+          languageCode: params.languageCode,
+        },
+      },
+      update: { value, source: 'manual' },
+      create: {
+        entityType: params.entityType,
+        entityId: params.entityId,
+        fieldName: params.fieldName,
+        languageCode: params.languageCode,
+        value,
+        source: 'manual',
+      },
+    });
+
+    // 2) Per-row JSON cell — merge in the new (lang → value) so
+    // existing keys for other languages stay intact.
+    if (dualTarget && dualTarget.fields.has(params.fieldName)) {
+      const column = `${params.fieldName}_i18n`;
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE \`${dualTarget.table}\` ` +
+          `SET \`${column}\` = JSON_MERGE_PATCH(COALESCE(\`${column}\`, JSON_OBJECT()), CAST(? AS JSON)) ` +
+          `WHERE id = ?`,
+        JSON.stringify({ [params.languageCode]: value }),
+        params.entityId,
+      );
+    }
+
+    return { ...params, value, source: 'manual' };
   }
 
   /** Remove every translation row for an entity (call from delete handlers). */
@@ -303,6 +565,47 @@ export class TranslationsService {
    * Usage:
    *   await translations.hydrate('Item', items, ['name', 'description'], userLang)
    */
+  /**
+   * In-memory variant of hydrate(). Reads the per-row `<field>_i18n`
+   * JSON column (populated by the Phase 3 migration + dual-write in
+   * upsertAll) and mutates the row's source field with the translated
+   * value. Zero DB queries — replaces the old 5-findMany roundtrip
+   * that the legacy hydrate() does. Use for read paths that already
+   * pull entity rows with their i18n cells (the menu tree, the orders
+   * detail join, anything using include or scalar select).
+   *
+   * Falls through silently when no entry exists for `languageCode` —
+   * caller gets the source value untouched.
+   */
+  pickI18n<T extends Record<string, any>>(
+    row: T | null | undefined,
+    fields: Array<keyof T & string>,
+    languageCode: string | null | undefined,
+  ): T | null | undefined {
+    if (!row || !languageCode || languageCode === SOURCE_LANGUAGE) return row;
+    for (const f of fields) {
+      const cell = (row as any)[`${f}_i18n`];
+      if (cell && typeof cell === 'object') {
+        const v = cell[languageCode];
+        if (typeof v === 'string' && v.length > 0) {
+          (row as any)[f] = v;
+        }
+      }
+    }
+    return row;
+  }
+
+  /** Batch variant of pickI18n — applies to every row in the list. */
+  pickI18nBatch<T extends Record<string, any>>(
+    rows: T[] | null | undefined,
+    fields: Array<keyof T & string>,
+    languageCode: string | null | undefined,
+  ): T[] | null | undefined {
+    if (!rows?.length || !languageCode || languageCode === SOURCE_LANGUAGE) return rows;
+    for (const row of rows) this.pickI18n(row, fields, languageCode);
+    return rows;
+  }
+
   async hydrate<T extends { id: string }>(
     entityType: string,
     rows: T | T[] | null | undefined,

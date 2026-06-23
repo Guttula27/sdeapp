@@ -558,6 +558,29 @@ model Business {
   discounts Discount[]
   offers    Offer[]
 
+  // ── i18n (Phase 3 of perf plan) ──────────────────────────────
+  // primaryLanguage = customer-facing default when no preference is
+  //   signalled. A Tamil Nadu chain uses 'ta'; defaults to 'en'.
+  // eagerLanguages  = JSON string-array of language codes to
+  //   pre-translate on every menu/business edit. Everything else
+  //   falls to the on-demand lazy path. Typical setting: a primary
+  //   regional language + English + one or two core secondaries.
+  // Customers can still request any platform-supported language at
+  //   any outlet — these knobs only affect provider-cost ergonomics.
+  primaryLanguage  String?    @default("en") @db.VarChar(8)
+  eagerLanguages   Json?
+
+  // Denormalised i18n cells — populated by upsertAll alongside the
+  // legacy paynpik_translations rows. Shape per cell:
+  //   { "hi": "हिंदी value", "ta": "தமிழ் value" }
+  // Source-language (English) value stays in the matching plain
+  // column; the i18n cell never carries the source itself.
+  name_i18n         Json?
+  description_i18n  Json?
+  address_i18n      Json?
+  addressLine1_i18n Json?
+  addressLine2_i18n Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -729,6 +752,13 @@ model Outlet {
   // this flag). Default false so the toggle is opt-in per outlet.
   aggregatorEnabled         Boolean            @default(false)
 
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n         Json?
+  description_i18n  Json?
+  address_i18n      Json?
+  addressLine1_i18n Json?
+  addressLine2_i18n Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -832,6 +862,9 @@ model Category {
   // (cascading semantics — see menu.service.getMenu).
   timingSlots   CategoryTimingSlot[]
 
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -869,6 +902,9 @@ model Subcategory {
   discounts   Discount[]
   // Optional per-day availability windows (see CategoryTimingSlot).
   timingSlots SubcategoryTimingSlot[]
+
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1058,6 +1094,11 @@ model Item {
   // Per-aggregator-channel external id mapping (Zomato/Swiggy/etc).
   aggregatorMappings AggregatorItemMapping[]
 
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n             Json?
+  description_i18n      Json?
+  shortDescription_i18n Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1106,6 +1147,10 @@ model Variant {
   customerTagPrices CustomerTagPrice[]
   tableTypePrices   TableTypePrice[]
   bundleChildLinks  ItemBundleChild[]
+
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n             Json?
+  shortDescription_i18n Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2000,6 +2045,9 @@ model Dispute {
   orderId     String
   order       Order    @relation(fields: [orderId], references: [id])
 
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  description_i18n Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2192,6 +2240,9 @@ model CustomerTag {
   itemPrices  CustomerTagPrice[]
   assignments CustomerTagAssignment[]
 
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2246,6 +2297,9 @@ model Topping {
   options   ToppingOption[]
   itemLinks ItemTopping[]
 
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2260,6 +2314,9 @@ model ToppingOption {
   name         String
   priceAdd     Decimal @default(0) @db.Decimal(10, 2)
   displayOrder Int     @default(0)
+
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

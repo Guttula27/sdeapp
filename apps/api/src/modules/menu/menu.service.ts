@@ -65,10 +65,14 @@ export class MenuService implements OnModuleDestroy {
   async getMenuVersion(outletId: string): Promise<number> {
     return this.redis.getCounter(this.menuVersionKey(outletId));
   }
-  private menuTreeKey(outletId: string, version: number, lang: string, includeHidden: boolean) {
-    const langPart = lang || 'en';
+  private menuTreeKey(outletId: string, version: number, includeHidden: boolean) {
+    // v2: dropped the `:lang:` segment. The cached tree carries every
+    // language's value inside each row's `<field>_i18n` JSON cell;
+    // projectMenu picks the right one per request. One cached tree
+    // per outlet × audience instead of one per (outlet × audience × N
+    // languages) — see docs/performance-hardening-plan.md D3.
     const audience = includeHidden ? 'all' : 'public';
-    return `menu:tree:v1:${outletId}:${version}:${langPart}:${audience}`;
+    return `menu:tree:v2:${outletId}:${version}:${audience}`;
   }
   // Outlet-level rolling aggregates. Keyed by outletId + menu-version
   // counter so a menu edit that adds/removes items doesn't serve a
@@ -240,8 +244,13 @@ export class MenuService implements OnModuleDestroy {
   private async invalidateForVariant(id: string)     { const o = await this.outletIdFromVariantId(id);     if (o) await this.invalidateOutlet(o); }
 
   // Translate every menu-bearing entity in a single getMenu response.
-  private async hydrateMenu(categories: any[], lang: string | null | undefined) {
+  private hydrateMenu(categories: any[], lang: string | null | undefined) {
     if (!lang || lang === 'en' || !categories.length) return categories;
+    // Phase 3 fast path: every translatable row already carries its
+    // <field>_i18n JSON cell (selected by Prisma include). pickI18n
+    // mutates the source field in place per requested language — zero
+    // DB roundtrips. Replaces the 5-findMany hydrate that used to fire
+    // on every cache miss.
     const cats: any[] = categories;
     const subs: any[] = categories.flatMap((c) => c.subcategories ?? []);
     const items: any[] = subs.flatMap((s) => s.items ?? []);
@@ -250,14 +259,11 @@ export class MenuService implements OnModuleDestroy {
       .flatMap((i) => i.itemToppings ?? [])
       .map((t) => t.topping)
       .filter(Boolean);
-
-    await Promise.all([
-      this.translations.hydrate('Category',    cats,     ['name'],                lang),
-      this.translations.hydrate('Subcategory', subs,     ['name'],                lang),
-      this.translations.hydrate('Item',        items,    ['name', 'description'], lang),
-      this.translations.hydrate('Variant',     variants, ['name', 'shortDescription'], lang),
-      this.translations.hydrate('Topping',     toppings, ['name'],                lang),
-    ]);
+    this.translations.pickI18nBatch(cats,     ['name'], lang);
+    this.translations.pickI18nBatch(subs,     ['name'], lang);
+    this.translations.pickI18nBatch(items,    ['name', 'description'], lang);
+    this.translations.pickI18nBatch(variants, ['name', 'shortDescription'], lang);
+    this.translations.pickI18nBatch(toppings, ['name'], lang);
     return categories;
   }
 
@@ -372,21 +378,26 @@ export class MenuService implements OnModuleDestroy {
     includeHidden?: boolean,
   ): Promise<{ categories: any[] }> {
     const version = await this.redis.getCounter(this.menuVersionKey(outletId));
-    const cacheKey = this.menuTreeKey(outletId, version, lang || 'en', !!includeHidden);
+    const cacheKey = this.menuTreeKey(outletId, version, !!includeHidden);
 
-    const cached = await this.redis.getJSON<{ categories: any[] }>(cacheKey);
-    if (cached) return cached;
-
-    const tree = await this.loadMenuTreeFromDb(outletId, lang, includeHidden);
-    // Fire-and-forget write — we already have the freshly-loaded tree
-    // to return; a cache write failure shouldn't slow down the response.
-    void this.redis.setJSON(cacheKey, tree, MENU_TREE_TTL_SECONDS);
+    let tree = await this.redis.getJSON<{ categories: any[] }>(cacheKey);
+    if (!tree) {
+      tree = await this.loadMenuTreeFromDb(outletId, includeHidden);
+      // Fire-and-forget write — we already have the freshly-loaded tree
+      // to return; a cache write failure shouldn't slow down the response.
+      void this.redis.setJSON(cacheKey, tree, MENU_TREE_TTL_SECONDS);
+    }
+    // Per-request language pick. The cached tree carries every
+    // language's value in <field>_i18n cells; pickI18n mutates the
+    // source field per requested language. Operates on a freshly
+    // deserialised copy (redis.getJSON does JSON.parse), so concurrent
+    // requests in different languages don't race.
+    if (lang && lang !== 'en') this.hydrateMenu(tree.categories, lang);
     return tree;
   }
 
   private async loadMenuTreeFromDb(
     outletId: string,
-    lang?: string | null,
     includeHidden?: boolean,
   ): Promise<{ categories: any[] }> {
     const categories = await this.prisma.category.findMany({
@@ -447,7 +458,9 @@ export class MenuService implements OnModuleDestroy {
       },
     });
 
-    await this.hydrateMenu(categories, lang);
+    // No translation hydration here — the tree is cached
+    // language-agnostic. loadMenuTree() calls hydrateMenu() per request
+    // against the deserialised copy.
     return { categories };
   }
 

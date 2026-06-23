@@ -1,6 +1,7 @@
 import { Global, Logger, Module } from '@nestjs/common';
 import { TranslationsService } from './translations.service';
 import { TranslationBackfillService } from './translation-backfill.service';
+import { TranslationsAdminController } from './translations-admin.controller';
 import { StubTranslationProvider, TRANSLATION_PROVIDER, TranslationProvider } from './translation-provider';
 import { BhashiniTranslationProvider } from './bhashini-translation-provider';
 import { LingvaTranslationProvider } from './lingva-translation-provider';
@@ -69,6 +70,7 @@ function buildProvider(): TranslationProvider {
 
 @Global()
 @Module({
+  controllers: [TranslationsAdminController],
   providers: [
     TranslationsService,
     TranslationBackfillService,

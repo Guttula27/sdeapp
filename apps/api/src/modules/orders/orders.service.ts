@@ -59,17 +59,20 @@ export class OrdersService {
     private userLookup: UserLookupService,
   ) {}
 
-  /** Hydrate items[].item, items[].variant, and outlet for a batch of orders. */
-  private async hydrateOrders(orders: any[], lang: string | null | undefined) {
+  /**
+   * Hydrate items[].item, items[].variant, and outlet for a batch of
+   * orders. Phase 3 in-memory variant — reads the <field>_i18n JSON
+   * cells that the order's joined entities already carry. Zero DB
+   * roundtrips.
+   */
+  private hydrateOrders(orders: any[], lang: string | null | undefined) {
     if (!lang || lang === 'en' || !orders?.length) return orders;
     const allItems    = orders.flatMap((o: any) => (o.items ?? []).map((oi: any) => oi.item).filter(Boolean));
     const allVariants = orders.flatMap((o: any) => (o.items ?? []).map((oi: any) => oi.variant).filter(Boolean));
     const allOutlets  = orders.map((o: any) => o.outlet).filter(Boolean);
-    await Promise.all([
-      this.translations.hydrate('Item',    allItems,    ['name', 'description'], lang),
-      this.translations.hydrate('Variant', allVariants, ['name', 'shortDescription'], lang),
-      this.translations.hydrate('Outlet',  allOutlets,  ['name', 'address'], lang),
-    ]);
+    this.translations.pickI18nBatch(allItems,    ['name', 'description'], lang);
+    this.translations.pickI18nBatch(allVariants, ['name', 'shortDescription'], lang);
+    this.translations.pickI18nBatch(allOutlets,  ['name', 'address'], lang);
     return orders;
   }
 
