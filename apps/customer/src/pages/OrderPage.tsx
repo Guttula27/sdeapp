@@ -1236,7 +1236,12 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
           : 'border-slate-100 hover:border-brand-200 cursor-pointer',
       )}
     >
-      <div className="flex gap-3 p-3 items-start">
+      {/* items-center so the (fixed-square) image vertically aligns
+          with the text column's actual content, regardless of
+          whether the name is one line or three. Without this, a
+          short name left empty space below the 80px image while the
+          rest of the text column floated next to the top of it. */}
+      <div className="flex gap-3 p-3 items-center">
         {item.thumbnailUrl || item.imageUrl ? (
           <img src={item.thumbnailUrl || item.imageUrl} alt={item.name}
             loading="lazy" decoding="async"
@@ -1246,7 +1251,10 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
             <span className="text-xl">🍽️</span>
           </div>
         )}
-        <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+        {/* Tightened gap from 1.5 → 1 because the previous spacing
+            looked OK only with multi-line names. For 1-line names it
+            made the badge row float weirdly far below. */}
+        <div className="flex-1 min-w-0 flex flex-col gap-1">
           {/* Row 1: name. Full width — no badges, no Add button in
               this row, so long Telugu/Hindi compound names get the
               entire content column to wrap into (up to 3 lines). */}
@@ -1260,7 +1268,7 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
               This is what eliminated the big empty corner the
               previous flat-column layout left below short names. */}
           <div className="flex items-center gap-3">
-            <div className="flex-1 min-w-0 flex flex-col gap-1">
+            <div className="flex-1 min-w-0 flex flex-col gap-0.5">
               {/* Row 2: favourite + Popular/Special/Limited chips +
                   variants/toppings markers. */}
               {(onToggleFavorite || item.isPopular || item.isSpecial || hasVariants || (item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 || (item.hasLimitedStock && item.availableQuantity > 0) || (disabled && disabledReason)) && (
