@@ -41,10 +41,15 @@ export class OrdersController {
     @Query('search') search?: string,
     @Query('sortBy') sortBy?: 'createdAt' | 'totalAmount' | 'orderNumber' | 'status',
     @Query('sortDir') sortDir?: 'asc' | 'desc',
+    // slim=true returns the SLIM_LIST_SELECT shape — id, number,
+    // status, total, table#, customerName, itemCount. ~60× smaller.
+    // Default keeps the fat shape so existing list views (admin SPA
+    // expecting items[].item etc.) don't break.
+    @Query('slim') slim?: string,
   ) {
     return this.ordersService.findAll(
       outletId,
-      { status, page, limit, callerUserId: user?.id, search, sortBy, sortDir },
+      { status, page, limit, callerUserId: user?.id, search, sortBy, sortDir, slim: slim === 'true' },
       lang,
     );
   }
@@ -107,10 +112,78 @@ export class OrdersController {
 
   @UseGuards(OptionalJwtAuthGuard)
   @Get(':id')
-  findOne(@Param('id') id: string, @PreferredLanguage() lang: string | null) {
+  findOne(
+    @Param('id') id: string,
+    @PreferredLanguage() lang: string | null,
+    // slim=true returns just the core fields (status, items as snapshots,
+    // outlet/table/customer names, totals). Skips the receipt-shaped
+    // graph (item.variant.menu, full address, payments, statusHistory,
+    // disputes, couponUsages, reviews+paybackPayment). Receipt-shaped
+    // graph is what the print path needs; everything else should opt
+    // into slim. Sub-resources expose the pieces individually:
+    //   GET /orders/:id/payments
+    //   GET /orders/:id/status-history
+    //   GET /orders/:id/disputes
+    //   GET /orders/:id/coupons
+    //   GET /orders/:id/status   (lightweight poll target)
+    @Query('slim') slim?: string,
+  ) {
     // Public lookup — order IDs are cuids and effectively unguessable.
     // Required so guest customers can track their own orders after placing.
-    return this.ordersService.findOne(id, lang);
+    return slim === 'true'
+      ? this.ordersService.findOneSlim(id)
+      : this.ordersService.findOne(id, lang);
+  }
+
+  // ── Sub-resources for the slim findOne shape ──────────────────
+  // Targeted GETs the admin SPA / customer track-order page can fetch
+  // on-demand rather than dragging the whole graph through every poll.
+  // Same auth gate as the parent (`/orders/:id`) so anonymous customer
+  // tracking keeps working for the lightweight status path.
+
+  @UseGuards(OptionalJwtAuthGuard)
+  @Get(':id/status')
+  async getOrderStatus(@Param('id') id: string) {
+    // Returns ~150 bytes — designed for poll-loop clients (customer
+    // track-order screen, kitchen reconcile after a missed socket
+    // event). See C3.
+    const slim = await this.ordersService.findOneSlim(id);
+    if (!slim) return null;
+    const history = await this.ordersService.findStatusHistory(id);
+    const currentEvent = history.length ? history[history.length - 1] : null;
+    return {
+      id: slim.id,
+      orderNumber: slim.orderNumber,
+      status: slim.status,
+      updatedAt: slim.updatedAt,
+      currentEvent: currentEvent
+        ? { status: currentEvent.status, at: currentEvent.createdAt }
+        : null,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/payments')
+  getOrderPayments(@Param('id') id: string) {
+    return this.ordersService.findPayments(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/status-history')
+  getOrderStatusHistory(@Param('id') id: string) {
+    return this.ordersService.findStatusHistory(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/disputes')
+  getOrderDisputes(@Param('id') id: string) {
+    return this.ordersService.findDisputes(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/coupons')
+  getOrderCoupons(@Param('id') id: string) {
+    return this.ordersService.findCouponUsages(id);
   }
 
   @UseGuards(JwtAuthGuard)

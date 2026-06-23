@@ -18,6 +18,31 @@ import {
   TimingSlot,
 } from '../../common/timing/timing-slots';
 
+// Slim list projection used when callers pass ?slim=true to the orders
+// list endpoints. Keeps the row payload ~250 bytes so a 50-row list
+// stays under ~15 KB — vs ~1 MB for the fat shape that ships every
+// item.item.variant + customer.tags + payments graph. The fat shape
+// remains the default until consumers (admin SPA, kitchen displays,
+// service desk) explicitly opt in. See docs/performance-hardening-plan.md C2.
+const SLIM_LIST_SELECT = {
+  id: true,
+  orderNumber: true,
+  tokenNumber: true,
+  status: true,
+  isParcel: true,
+  isPostpaid: true,
+  totalAmount: true,
+  channel: true,
+  createdAt: true,
+  splitTotalShares: true,
+  splitPaidShares: true,
+  outletId: true,
+  tableId: true,
+  table: { select: { id: true, number: true } },
+  customer: { select: { id: true, name: true } },
+  _count: { select: { items: true } },
+} as const;
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -596,6 +621,9 @@ export class OrdersService {
       // newest orders come first (existing behaviour).
       sortBy?: 'createdAt' | 'totalAmount' | 'orderNumber' | 'status';
       sortDir?: 'asc' | 'desc';
+      // When true, return SLIM_LIST_SELECT rows instead of the fat
+      // include graph. ~60× smaller payload — used by list views.
+      slim?: boolean;
     },
     lang?: string | null,
   ) {
@@ -676,6 +704,24 @@ export class OrdersService {
     const sortDir: 'asc' | 'desc' = filters.sortDir ?? 'desc';
     const orderBy: any = { [sortKey]: sortDir };
 
+    // Slim fast path: skip the fat include graph + the per-item
+    // translation hydrate. The slim shape has no translatable names —
+    // item.name / variant.name aren't pulled in — so there's nothing
+    // for hydrateOrders to do anyway.
+    if (filters.slim) {
+      const [orders, total] = await Promise.all([
+        this.prisma.order.findMany({
+          where,
+          select: SLIM_LIST_SELECT,
+          orderBy,
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        this.prisma.order.count({ where }),
+      ]);
+      return { orders, total, page, limit };
+    }
+
     const [orders, total] = await Promise.all([
       this.prisma.order.findMany({
         where,
@@ -707,6 +753,7 @@ export class OrdersService {
     search?: string;
     sortBy?: 'createdAt' | 'totalAmount' | 'orderNumber' | 'status';
     sortDir?: 'asc' | 'desc';
+    slim?: boolean;
   }, lang?: string | null) {
     const page  = Number(filters.page)  || 1;
     const limit = Number(filters.limit) || 50;
@@ -735,6 +782,21 @@ export class OrdersService {
     const sortDir: 'asc' | 'desc' = filters.sortDir ?? 'desc';
     const orderBy: any = { [sortKey]: sortDir };
 
+    // Same slim fast path as findAll — see SLIM_LIST_SELECT above.
+    if (filters.slim) {
+      const [orders, total] = await Promise.all([
+        this.prisma.order.findMany({
+          where,
+          select: SLIM_LIST_SELECT,
+          orderBy,
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        this.prisma.order.count({ where }),
+      ]);
+      return { orders, total, page, limit };
+    }
+
     const [orders, total] = await Promise.all([
       this.prisma.order.findMany({
         where,
@@ -759,6 +821,72 @@ export class OrdersService {
 
     await this.hydrateOrders(orders, lang);
     return { orders, total, page, limit };
+  }
+
+  /**
+   * Core detail fields. Kitchen view, customer track-order, and the
+   * service desk header don't need the full receipt graph — they want
+   * status, items (snapshots), table, customer name, outlet name.
+   * Total payload sits under ~5 KB per order with ~20 line items.
+   */
+  async findOneSlim(id: string) {
+    return this.prisma.order.findUnique({
+      where: { id },
+      select: {
+        id: true, orderNumber: true, tokenNumber: true, status: true,
+        isParcel: true, isPostpaid: true, notes: true,
+        subtotal: true, taxAmount: true, sgstAmount: true, cgstAmount: true,
+        parcelAmount: true, discountAmount: true, totalAmount: true,
+        channel: true, activeSequence: true, sequenceLabels: true,
+        billRequestedAt: true, createdAt: true, updatedAt: true,
+        splitTotalShares: true, splitPaidShares: true, splitPaidAmount: true,
+        outletId: true, tableId: true, customerId: true,
+        outlet: { select: { id: true, name: true } },
+        table: { select: { id: true, number: true, sectionId: true } },
+        section: { select: { id: true, name: true } },
+        customer: { select: { id: true, name: true } },
+        items: {
+          select: {
+            id: true, quantity: true, unitPrice: true, totalPrice: true,
+            gstRate: true, gstAmount: true, notes: true, status: true,
+            sequenceNumber: true, bundleId: true,
+            itemNameSnapshot: true, variantNameSnapshot: true,
+          },
+        },
+      },
+    });
+  }
+
+  /** Payments rolled up for an order — sub-resource of /orders/:id/payments. */
+  async findPayments(id: string) {
+    return this.prisma.payment.findMany({
+      where: { orderId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /** Status-event timeline — sub-resource of /orders/:id/status-history. */
+  async findStatusHistory(id: string) {
+    return this.prisma.orderStatusHistory.findMany({
+      where: { orderId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /** Disputes raised against this order — sub-resource of /orders/:id/disputes. */
+  async findDisputes(id: string) {
+    return this.prisma.dispute.findMany({
+      where: { orderId: id },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /** Coupon redemptions broken out by code — sub-resource of /orders/:id/coupons. */
+  async findCouponUsages(id: string) {
+    return this.prisma.couponUsage.findMany({
+      where: { orderId: id },
+      select: { discountAmount: true, coupon: { select: { code: true, name: true } } },
+    });
   }
 
   async findOne(id: string, lang?: string | null) {

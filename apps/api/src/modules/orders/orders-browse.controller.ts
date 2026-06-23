@@ -19,7 +19,7 @@ export class OrdersBrowseController {
   constructor(private ordersService: OrdersService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Browse orders across outlets (read-only). Scope via query.' })
+  @ApiOperation({ summary: 'Browse orders across outlets (read-only). Scope via query. ?slim=true → ~60× smaller payload.' })
   findAll(
     @PreferredLanguage() lang: string | null,
     @Query('businessId') businessId?: string,
@@ -30,9 +30,10 @@ export class OrdersBrowseController {
     @Query('search')     search?: string,
     @Query('sortBy')     sortBy?: 'createdAt' | 'totalAmount' | 'orderNumber' | 'status',
     @Query('sortDir')    sortDir?: 'asc' | 'desc',
+    @Query('slim')       slim?: string,
   ) {
     return this.ordersService.findAllScoped(
-      { businessId, outletId, status, page, limit, search, sortBy, sortDir },
+      { businessId, outletId, status, page, limit, search, sortBy, sortDir, slim: slim === 'true' },
       lang,
     );
   }

@@ -65,7 +65,7 @@ export class AuthService {
       select: { id: true, name: true, phone: true, email: true, status: true, createdAt: true },
     });
 
-    const tokens = this.generateTokens(user.id, user.phone);
+    const tokens = this.generateTokens(user.id, user.phone, []);
     return { user, ...tokens };
   }
 
@@ -73,6 +73,10 @@ export class AuthService {
     const user: any = await this.findUserByPhone(dto.phone, {
       include: {
         role: { include: { responsibilities: { include: { responsibility: true } } } },
+        // Per-user overrides — also needed for the JWT `resp` embedding
+        // so revokes/grants resolve to the same set the runtime would
+        // compute on every authed request.
+        responsibilities: { include: { responsibility: true } },
         // Cluster context so the client can route Cluster Owners straight
         // to their cluster admin instead of /dashboard.
         business: { select: { id: true, name: true, isCluster: true } },
@@ -99,7 +103,8 @@ export class AuthService {
     // the decrypted `phone` field for display.
     const { passwordHash, phoneEnc, phoneHash, ...safeUser } = user as any;
     void passwordHash; void phoneEnc; void phoneHash; // strip-only
-    const tokens = this.generateTokens(user.id, user.phone);
+    const respNames = this.effectiveResponsibilityNames(user);
+    const tokens = this.generateTokens(user.id, user.phone, respNames);
     return { user: safeUser, ...tokens };
   }
 
@@ -134,7 +139,10 @@ export class AuthService {
     if (dto.otp !== TEST_CUSTOMER_OTP) throw new UnauthorizedException('Invalid OTP');
 
     let user: any = await this.findUserByPhone(phone, {
-      include: { role: { include: { responsibilities: { include: { responsibility: true } } } } },
+      include: {
+        role: { include: { responsibilities: { include: { responsibility: true } } } },
+        responsibilities: { include: { responsibility: true } },
+      },
     });
 
     if (user && user.businessId) {
@@ -148,18 +156,25 @@ export class AuthService {
           ...this.encryption.buildPhoneFields(phone),
           status: 'ACTIVE',
         },
-        include: { role: { include: { responsibilities: { include: { responsibility: true } } } } },
+        include: {
+          role: { include: { responsibilities: { include: { responsibility: true } } } },
+          responsibilities: { include: { responsibility: true } },
+        },
       });
     } else if (user.status !== 'ACTIVE') {
       throw new UnauthorizedException('Account is not active');
     }
 
+    // Customers typically have no role yet — respNames is just an empty
+    // list. Carrying the (empty) claim keeps the fast path in
+    // JwtStrategy active for customer tokens, same as staff.
+    const respNames = this.effectiveResponsibilityNames(user);
     const accessToken = this.jwtService.sign(
-      { sub: user.id, phone: user.phone },
+      { sub: user.id, phone: user.phone, resp: respNames },
       { expiresIn: CUSTOMER_JWT_EXPIRY },
     );
     const refreshToken = this.jwtService.sign(
-      { sub: user.id, phone: user.phone },
+      { sub: user.id, phone: user.phone, resp: respNames },
       { secret: process.env.JWT_REFRESH_SECRET, expiresIn: CUSTOMER_JWT_EXPIRY },
     );
 
@@ -288,8 +303,41 @@ export class AuthService {
     };
   }
 
-  private generateTokens(userId: string, phone: string) {
-    const payload = { sub: userId, phone };
+  /**
+   * Pulls the effective responsibility-name list off a user-with-role
+   * graph. Encodes the same rules `validateUser` uses to apply per-user
+   * overrides: per-user `granted=true` rows add a permission on top of
+   * the role; per-user `granted=false` rows revoke a permission from
+   * the role. Used at token-mint time so the JWT carries the resolved
+   * set — every authed request can then skip the responsibilities
+   * join, which the stress test caught doing 27k *NO INDEX* scans per
+   * run (see docs/performance-hardening-plan.md A5/C10).
+   */
+  private effectiveResponsibilityNames(user: any): string[] {
+    const rolePerms: any[] = user?.role?.responsibilities ?? [];
+    const overrides: any[] = user?.responsibilities ?? [];
+    const revokes = new Set(
+      overrides.filter((o) => !o.granted).map((o) => o.responsibility?.name).filter(Boolean),
+    );
+    const grants: string[] = overrides
+      .filter((o) => o.granted)
+      .map((o) => o.responsibility?.name)
+      .filter(Boolean);
+    const out = new Set<string>();
+    for (const rp of rolePerms) {
+      const n = rp?.responsibility?.name;
+      if (n && !revokes.has(n)) out.add(n);
+    }
+    for (const g of grants) out.add(g);
+    return [...out];
+  }
+
+  private generateTokens(userId: string, phone: string, respNames: string[] = []) {
+    // `resp` is the resolved effective-permission set. JwtStrategy reads
+    // it on every authed request to skip the role.responsibilities DB
+    // join. Stale until next login — role changes have at most a
+    // token-lifetime delay before they take effect.
+    const payload = { sub: userId, phone, resp: respNames };
     return {
       accessToken: this.jwtService.sign(payload),
       refreshToken: this.jwtService.sign(payload, {
@@ -297,5 +345,37 @@ export class AuthService {
         expiresIn: '7d',
       }),
     };
+  }
+
+  /**
+   * Light user lookup used by JwtStrategy when the access token already
+   * carries the resolved `resp` claim. Skips the
+   * role.responsibilities + user.responsibilities joins that
+   * `validateUser` would otherwise run on every request. Returns null
+   * when the user no longer exists / has been deactivated since the
+   * token was issued.
+   */
+  async validateUserCore(userId: string) {
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        email: true,
+        status: true,
+        preferredUpiApp: true,
+        preferredLanguage: true,
+        profileImageUrl: true,
+        alertRingtone: true,
+        alertVolume: true,
+        mustChangePassword: true,
+        businessId: true,
+        outletId: true,
+        business: { select: { id: true, name: true, isCluster: true } },
+        outlet: { select: { id: true, name: true, outletType: true, aggregatorEnabled: true } },
+        role: { select: { id: true, name: true } },
+      },
+    });
   }
 }

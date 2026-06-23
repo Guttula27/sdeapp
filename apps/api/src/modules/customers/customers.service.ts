@@ -1,12 +1,25 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
+import { RedisService } from '../../config/redis/redis.service';
 import { EncryptionService } from '../../config/crypto/encryption.service';
 import { UserLookupService } from '../../config/crypto/user-lookup.service';
+
+// 5 minutes — staff would notice longer staleness on the recognition
+// pill (e.g. customer's "14th visit" not bumping after a fresh order).
+// Short enough to feel current, long enough to absorb the burst of
+// pill-renders during a busy service window.
+const INSIGHTS_TTL_SECONDS = 300;
+// Default + ceiling for customer-order-history pagination. Old callers
+// who didn't pass ?limit now get the first 20 — enough to fill any
+// list view, with `nextCursor` to keep scrolling.
+const HISTORY_DEFAULT_LIMIT = 20;
+const HISTORY_MAX_LIMIT = 100;
 
 @Injectable()
 export class CustomersService {
   constructor(
     private prisma: PrismaService,
+    private redis: RedisService,
     private encryption: EncryptionService,
     private userLookup: UserLookupService,
   ) {}
@@ -93,17 +106,59 @@ export class CustomersService {
     return user;
   }
 
-  /** Orders this customer has placed at this outlet, newest first. */
-  async listOrders(outletId: string, userId: string) {
-    return this.prisma.order.findMany({
+  /**
+   * Orders this customer has placed at this outlet, newest first.
+   * Cursor-paginated by orderId — default page 20, max 100. Old
+   * callers that don't pass any opts get the first 20 instead of the
+   * unbounded history that used to come back. `nextCursor` is the id
+   * to pass back as `?cursor=` for the next page; null when no more.
+   *
+   * Line items use snapshot fields (itemNameSnapshot / variantNameSnapshot)
+   * instead of include-ing the live menu graph — historical receipts
+   * stay stable even after the menu is edited, and the per-row payload
+   * stays small.
+   */
+  async listOrders(
+    outletId: string,
+    userId: string,
+    opts?: { limit?: number; cursor?: string },
+  ) {
+    const limit = Math.min(
+      Math.max(1, Number(opts?.limit) || HISTORY_DEFAULT_LIMIT),
+      HISTORY_MAX_LIMIT,
+    );
+    const cursor = opts?.cursor;
+
+    // Fetch limit+1 so we know whether there's a next page without a
+    // separate count query. The +1 row drops out of the returned set
+    // and seeds nextCursor.
+    const rows = await this.prisma.order.findMany({
       where: { outletId, customerId: userId },
       orderBy: { createdAt: 'desc' },
-      include: {
-        items: { include: { item: true, variant: true } },
-        table: true,
-        payments: true,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      take: limit + 1,
+      select: {
+        id: true, orderNumber: true, tokenNumber: true, status: true,
+        isParcel: true, isPostpaid: true,
+        subtotal: true, taxAmount: true, totalAmount: true,
+        channel: true, createdAt: true,
+        table: { select: { id: true, number: true } },
+        items: {
+          select: {
+            id: true, quantity: true, unitPrice: true, totalPrice: true,
+            status: true, sequenceNumber: true,
+            itemNameSnapshot: true, variantNameSnapshot: true,
+          },
+        },
       },
     });
+
+    let nextCursor: string | null = null;
+    if (rows.length > limit) {
+      nextCursor = rows[rows.length - 1].id;
+      rows.pop();
+    }
+    return { items: rows, nextCursor, limit };
   }
 
   /**
@@ -115,6 +170,16 @@ export class CustomersService {
    * the last 90 days so reads stay tight as history grows.
    */
   async insights(outletId: string, userId: string) {
+    // Cache the assembled pill payload for 5 min per (outlet, customer).
+    // Comment on the method had it being "cheap enough to compute on
+    // every detail open", which was true at single-user scale; under
+    // load (busy service-desk with many concurrent operators each
+    // opening the same customer) the four groupBy/aggregate fan-outs
+    // multiply. See docs/performance-hardening-plan.md C5.
+    const cacheKey = `customer:insights:v1:${outletId}:${userId}`;
+    const cached = await this.redis.getJSON<any>(cacheKey);
+    if (cached) return cached;
+
     const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -186,7 +251,7 @@ export class CustomersService {
 
     const visits = lifetime._count ?? 0;
     const spend = Number(lifetime._sum.totalAmount ?? 0);
-    return {
+    const payload = {
       customer: { id: user.id, name: user.name, phone: user.phone },
       visits,
       lifetimeSpend: spend,
@@ -195,6 +260,10 @@ export class CustomersService {
       favourites,
       preferredMode,
     };
+    // Write-through cache. Failure to set is a no-op (Redis layer
+    // degrades gracefully), so the call never throws on cache miss.
+    void this.redis.setJSON(cacheKey, payload, INSIGHTS_TTL_SECONDS);
+    return payload;
   }
 
   async setTag(outletId: string, userId: string, customerTagId: string | null) {
