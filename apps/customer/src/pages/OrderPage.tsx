@@ -102,6 +102,44 @@ export default function OrderPage() {
   const [activeSub, setActiveSub] = useState('');
   const [detailItem, setDetailItem] = useState<any>(null);
 
+  // Wire the half-screen item detail + cart sheet into the browser
+  // history so the mobile back button just closes them instead of
+  // navigating off /order (which on a scan-in flow drops the
+  // customer all the way back to the QR scan screen). Push a marker
+  // state on open, pop it on close — same pattern most native apps
+  // use for transient sheets.
+  useEffect(() => {
+    if (!detailItem) return;
+    const marker = { modal: 'item-detail' as const };
+    window.history.pushState(marker, '');
+    const onPopState = () => setDetailItem(null);
+    window.addEventListener('popstate', onPopState);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      // If the modal closed by other means (X button, Add to cart),
+      // the synthetic entry we pushed is still on the stack. Pop it
+      // so the next back-press doesn't leave the user re-opening a
+      // closed modal.
+      if (window.history.state && (window.history.state as any).modal === 'item-detail') {
+        window.history.back();
+      }
+    };
+  }, [!!detailItem]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!showCart) return;
+    const marker = { modal: 'cart' as const };
+    window.history.pushState(marker, '');
+    const onPopState = () => setShowCart(false);
+    window.addEventListener('popstate', onPopState);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      if (window.history.state && (window.history.state as any).modal === 'cart') {
+        window.history.back();
+      }
+    };
+  }, [showCart]);
+
   // Menu tabs (multi-menu feature). Populated only when the outlet's business
   // has multipleMenusEnabled (otherwise the single Main Menu stays implicit and
   // tabs are hidden). enabledMenus filters out menus the outlet has disabled.
