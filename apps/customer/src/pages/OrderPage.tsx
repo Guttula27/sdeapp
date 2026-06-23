@@ -1271,13 +1271,17 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
                 <button
                   onClick={(e) => { e.stopPropagation(); onToggleFavorite(e); }}
                   className={clsx(
-                    'inline-flex items-center justify-center w-6 h-6 rounded-full transition-colors',
+                    // Larger hit target now that the heart sits in the
+                    // badge row — 32×32 with an 18px icon reads as a
+                    // primary affordance, not a footnote, and clears
+                    // Material's 48dp tap-target guideline with padding.
+                    'inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors',
                     item.isFavorite ? 'bg-red-50 text-red-500' : 'text-slate-300 hover:text-red-400 hover:bg-red-50',
                   )}
                   title={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
                   aria-label={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
                 >
-                  <Heart size={12} fill={item.isFavorite ? 'currentColor' : 'none'} />
+                  <Heart size={18} fill={item.isFavorite ? 'currentColor' : 'none'} />
                 </button>
               )}
               {item.isPopular && (
