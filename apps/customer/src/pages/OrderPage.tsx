@@ -715,7 +715,11 @@ export default function OrderPage() {
             )}
             <button
               onClick={() => setShowCart(true)}
-              className="relative flex items-center gap-2 bg-brand-500 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-sm"
+              // Gold-on-charcoal — per the tailwind config's design
+              // intent (gold is the "money zone": Add to Cart, Place
+              // Order, Pay). Charcoal text because gold + white fails
+              // the contrast checker.
+              className="relative flex items-center gap-2 bg-gold-500 hover:bg-gold-600 text-charcoal-900 px-4 py-2 rounded-full text-sm font-semibold shadow-sm transition-colors"
             >
               <ShoppingCart size={16} />
               Cart
@@ -885,15 +889,19 @@ export default function OrderPage() {
                 key={sub.id}
                 onClick={() => setActiveSub(sub.id)}
                 className={clsx(
+                  // Subcategory rail's "this is selected" stripe →
+                  // gold. The selection IS a navigation marker, not
+                  // an action, but a hint of gold here ties the rail
+                  // visually to the gold CTAs in the same column.
                   'flex flex-col items-center w-full px-2 py-3 gap-1.5 border-l-[3px] transition-all',
                   active
-                    ? 'border-brand-500 bg-brand-50/60'
+                    ? 'border-gold-500 bg-gold-50/50'
                     : 'border-transparent hover:bg-slate-50',
                 )}
               >
                 <div className={clsx(
                   'w-14 h-14 rounded-xl overflow-hidden border shrink-0',
-                  active ? 'border-brand-300 ring-2 ring-brand-100' : 'border-slate-200',
+                  active ? 'border-gold-300 ring-2 ring-gold-100' : 'border-slate-200',
                 )}>
                   {thumb ? (
                     <img src={thumb} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
@@ -1091,7 +1099,9 @@ export default function OrderPage() {
               <button
                 onClick={isPostpaidTable ? placePostpaid : goToPay}
                 disabled={placing || (!!openStatus && !openStatus.isOpen)}
-                className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-4 rounded-2xl text-base shadow-lg disabled:opacity-60 disabled:cursor-not-allowed transition-all active:scale-[.98]"
+                // Place / pay → gold. Same "money zone" rule as
+                // the header Cart button. Gold gradient for depth.
+                className="w-full bg-gradient-to-r from-gold-500 to-gold-400 text-charcoal-900 font-bold py-4 rounded-2xl text-base shadow-lg disabled:opacity-60 disabled:cursor-not-allowed transition-all active:scale-[.98]"
               >
                 {openStatus && !openStatus.isOpen
                   ? 'Outlet closed'
@@ -1323,11 +1333,14 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
           <button
             onClick={onQuickAdd}
             disabled={disabled}
+            // Per the design token comment in tailwind.config — Add
+            // to Cart belongs to the gold "money zone" alongside the
+            // Place Order / Pay CTAs. Dark text on gold for contrast.
             className={clsx(
               'inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors',
               disabled
                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                : 'bg-brand-500 hover:bg-brand-600 text-white',
+                : 'bg-gold-500 hover:bg-gold-600 text-charcoal-900',
             )}
           >
             <Plus size={12} /> Add{qty > 0 && ` · ${qty}`}
