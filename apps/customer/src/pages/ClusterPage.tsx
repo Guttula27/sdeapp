@@ -331,19 +331,23 @@ export default function ClusterPage() {
     // the shell. Sticky headers below stick to the top of THIS
     // element's scroll context (the parent <main>).
     <div className="bg-slate-50">
-      {/* ── Compact top bar — back + cluster name. No big hero band; the
-          customer is in a known context (the cluster shell), so the
-          screen real-estate goes to the menu instead. ─────────────── */}
-      <div className="bg-white px-3 py-2.5 flex items-center gap-2 shadow-sm sticky top-0 z-30">
-        <button onClick={() => navigate(-1)} className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-slate-100 shrink-0">
+      {/* ── Compact top bar — back + cluster name. Brand-teal
+          banner to match OrderPage's outlet header so the customer's
+          context stays visually consistent moving between the two
+          surfaces. ──────────────────────────────────────────────── */}
+      <div className="bg-brand-700 px-3 py-2.5 flex items-center gap-2 shadow-sm sticky top-0 z-30">
+        <button
+          onClick={() => navigate(-1)}
+          className="w-9 h-9 rounded-lg flex items-center justify-center text-brand-200 hover:text-white hover:bg-brand-600 shrink-0 transition-colors"
+        >
           <ChevronLeft size={20} />
         </button>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <Network size={11} className="text-indigo-500 shrink-0" />
-            <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-indigo-500">Cluster</span>
+            <Network size={11} className="text-gold-300 shrink-0" />
+            <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-gold-300">Cluster</span>
           </div>
-          <p className="text-base font-black text-slate-900 leading-tight truncate">{cluster.name}</p>
+          <p className="text-base font-black text-white leading-tight truncate">{cluster.name}</p>
         </div>
       </div>
 
