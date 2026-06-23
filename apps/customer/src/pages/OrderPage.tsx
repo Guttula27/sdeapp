@@ -610,11 +610,12 @@ export default function OrderPage() {
   const activeCat = menu.find((c) => c.id === activeCategory);
 
   return (
-    // h-dvh (fixed viewport height) instead of min-h-dvh so the inner
-    // 3-pane flex container can give its aside (subcategory rail) and main
-    // (item list) independent scrollable areas. With min-h-dvh the whole
-    // document scrolls and both panes scroll together with the page.
-    <div className="h-dvh bg-slate-50 flex flex-col overflow-hidden">
+    // h-full (fills the BottomNav <main> which is now the scroll
+    // container) instead of h-dvh so the page can't extend past the
+    // shell. The inner 3-pane flex container has its own
+    // overflow-y-auto on the items pane so the rail + item list scroll
+    // independently of each other and of the header/category strip.
+    <div className="h-full bg-slate-50 flex flex-col overflow-hidden">
       {/* Cached-menu indicator — only shown when the menu came from the
           localStorage fallback (network unavailable or slow). Auto-
           clears on the next successful refresh. */}
@@ -814,7 +815,9 @@ export default function OrderPage() {
       )}
 
       {/* ── Menu content (3-pane) ────────────────────────────── */}
-      <div className="flex-1 flex min-h-0 pb-24">
+      {/* No pb-24 here — the BottomNav is in-flow in the shell now,
+          not fixed, so we don't need to reserve space for it. */}
+      <div className="flex-1 flex min-h-0">
         {activeCategory === '__special__' ? (
           <main className="flex-1 overflow-y-auto px-3 py-3 space-y-2 min-w-0">
             {(() => {
@@ -1198,7 +1201,7 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <FoodGradeDot grade={item.foodGrade} />
-            <p className="text-sm font-bold text-slate-900 leading-tight truncate">{item.name}</p>
+            <p className="text-sm font-bold text-slate-900 leading-tight line-clamp-2 break-words min-w-0 flex-1">{item.name}</p>
             {item.isPopular && (
               <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-full">
                 <Star size={8} fill="currentColor" /> Popular

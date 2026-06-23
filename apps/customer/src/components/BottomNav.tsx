@@ -16,12 +16,20 @@ export default function BottomNav() {
   const scanActive = location.pathname.startsWith('/scan');
 
   return (
-    <div className="flex flex-col min-h-dvh bg-slate-50">
-      <main className="flex-1 pb-24">
+    // h-dvh + overflow-hidden locks the shell to the visible viewport
+    // so the inner <main> can be the page's scroll container. Without
+    // this the body scrolled on mobile (h-dvh-aware pages still had
+    // min-h-dvh on the parent letting it grow past the viewport),
+    // taking the sticky header along with it and leaving an empty
+    // gap above the nav. The nav is now in-flow inside the flex
+    // column rather than fixed — pages no longer need their own
+    // pb-24 to clear it.
+    <div className="flex flex-col h-dvh bg-slate-50 overflow-hidden">
+      <main className="flex-1 min-h-0 overflow-y-auto">
         <Outlet />
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-2px_12px_rgba(0,0,0,.04)] z-40">
+      <nav className="bg-white border-t border-slate-200 shadow-[0_-2px_12px_rgba(0,0,0,.04)] z-40 shrink-0">
         <div className="max-w-md mx-auto grid grid-cols-5 relative">
           {/* 2 left tabs */}
           {SIDE_TABS.slice(0, 2).map(({ to, icon: Icon, label }) => (

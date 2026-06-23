@@ -326,7 +326,11 @@ export default function ClusterPage() {
   if (!cluster) return <div className="p-6 text-center text-slate-500">Cluster not found</div>;
 
   return (
-    <div className="pb-40 bg-slate-50 min-h-screen">
+    // h-full fills the BottomNav <main> (which is now the scroll
+    // container). No bottom padding needed — the nav is in-flow in
+    // the shell. Sticky headers below stick to the top of THIS
+    // element's scroll context (the parent <main>).
+    <div className="bg-slate-50">
       {/* ── Compact top bar — back + cluster name. No big hero band; the
           customer is in a known context (the cluster shell), so the
           screen real-estate goes to the menu instead. ─────────────── */}
@@ -548,7 +552,7 @@ export default function ClusterPage() {
                       <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-xl">🍽️</div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-slate-900 truncate">{item.name}</p>
+                      <p className="text-sm font-bold text-slate-900 line-clamp-2 break-words">{item.name}</p>
                       {item.shortDescription && <p className="text-[11px] text-slate-400 truncate">{item.shortDescription}</p>}
                       <p className="text-sm font-black text-brand-700 mt-0.5">
                         {item.variants?.length ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}
