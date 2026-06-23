@@ -1199,47 +1199,59 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <FoodGradeDot grade={item.foodGrade} />
+          {/* Name row — just the food-grade dot + the name. No badges
+              here. Inline badges were stealing horizontal space and
+              forcing CJK / Indic scripts (which don't break inside a
+              word) to render as 1–2-character columns next to the
+              "Popular" chip. Badges moved to the row below. */}
+          <div className="flex items-start gap-1.5">
+            <span className="mt-1.5"><FoodGradeDot grade={item.foodGrade} /></span>
             <p className="text-sm font-bold text-slate-900 leading-tight line-clamp-2 break-words min-w-0 flex-1">{item.name}</p>
-            {item.isPopular && (
-              <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-full">
-                <Star size={8} fill="currentColor" /> Popular
-              </span>
-            )}
-            {item.isSpecial && (
-              <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-rose-50 text-rose-600 px-1.5 py-0.5 rounded-full">
-                ⭐ Special
-              </span>
-            )}
-            {/* Limited-stock chip — exposes the kitchen's per-item
-                inventory so customers know to grab the popular ones
-                fast. Shows the exact count when it gets tight (≤5
-                left), otherwise just the generic "Limited Quantity
-                Available" label so we don't broadcast healthy stock
-                levels into FOMO. Hidden once the item is sold out —
-                in that case `disabledReason` already says so. */}
-            {item.hasLimitedStock && item.availableQuantity > 0 && (
-              <span
-                className={clsx(
-                  'inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full',
-                  item.availableQuantity <= 5
-                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                    : 'bg-amber-50 text-amber-700 border border-amber-100',
-                )}
-                title={`Only ${item.availableQuantity} left in stock`}
-              >
-                {item.availableQuantity <= 5
-                  ? `Only ${item.availableQuantity} left`
-                  : 'Limited Quantity Available'}
-              </span>
-            )}
-            {disabled && disabledReason && (
-              <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full border border-slate-200">
-                {disabledReason}
-              </span>
-            )}
           </div>
+          {/* Badge row — Popular / Special / Limited / disabled state.
+              flex-wrap so a long combination flows onto multiple
+              lines without breaking the card. */}
+          {(item.isPopular || item.isSpecial || (item.hasLimitedStock && item.availableQuantity > 0) || (disabled && disabledReason)) && (
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              {item.isPopular && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-full">
+                  <Star size={8} fill="currentColor" /> Popular
+                </span>
+              )}
+              {item.isSpecial && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-rose-50 text-rose-600 px-1.5 py-0.5 rounded-full">
+                  ⭐ Special
+                </span>
+              )}
+              {/* Limited-stock chip — exposes the kitchen's per-item
+                  inventory so customers know to grab the popular ones
+                  fast. Shows the exact count when it gets tight (≤5
+                  left), otherwise just the generic "Limited Quantity
+                  Available" label so we don't broadcast healthy stock
+                  levels into FOMO. Hidden once the item is sold out —
+                  in that case `disabledReason` already says so. */}
+              {item.hasLimitedStock && item.availableQuantity > 0 && (
+                <span
+                  className={clsx(
+                    'inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full',
+                    item.availableQuantity <= 5
+                      ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                      : 'bg-amber-50 text-amber-700 border border-amber-100',
+                  )}
+                  title={`Only ${item.availableQuantity} left in stock`}
+                >
+                  {item.availableQuantity <= 5
+                    ? `Only ${item.availableQuantity} left`
+                    : 'Limited Quantity Available'}
+                </span>
+              )}
+              {disabled && disabledReason && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full border border-slate-200">
+                  {disabledReason}
+                </span>
+              )}
+            </div>
+          )}
           {item.shortDescription && (
             <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">{item.shortDescription}</p>
           )}
