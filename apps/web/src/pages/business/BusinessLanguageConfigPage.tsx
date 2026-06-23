@@ -43,8 +43,12 @@ export default function BusinessLanguageConfigPage() {
     let cancelled = false;
     (async () => {
       try {
+        // Use the public /languages endpoint (returns only enabled
+        // rows, no platform-admin gate). /languages/all is
+        // platform-tier only and 403s for business / outlet
+        // accounts.
         const [langsRes, cfgRes] = await Promise.all([
-          api.get('/languages/all'),
+          api.get('/languages'),
           api.get(`/businesses/${businessId}/language-config`),
         ]);
         if (cancelled) return;
@@ -103,11 +107,11 @@ export default function BusinessLanguageConfigPage() {
     );
   }
 
-  const enabledLangs = languages.filter((l) => l.isEnabled);
-  // Customer never gets translated *into* English; remove it from the
-  // eager-translate chip set. Keep it eligible for primaryLanguage
-  // since some chains explicitly want English as the default.
-  const eagerCandidates = enabledLangs.filter((l) => l.code !== 'en');
+  // /languages already only returns enabled rows. Keep the local
+  // names so the JSX downstream stays readable + has a single point
+  // to tweak if the eager-vs-primary split ever diverges.
+  const enabledLangs = languages;
+  const eagerCandidates = languages.filter((l) => l.code !== 'en');
 
   return (
     <div className="space-y-5">

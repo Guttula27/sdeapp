@@ -73,16 +73,19 @@ export default function TranslationsPage() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   // Pull the platform-supported languages list so the admin picks
-  // a target language from a dropdown. Filtered to non-source enabled
-  // langs — there's no point editing English (it IS the source).
+  // a target language from a dropdown. Use the public GET /languages
+  // endpoint (only returns enabled rows, no platform-admin gate) —
+  // outlet admins can't reach /languages/all (it's platform-only).
+  // There's no point editing English (it IS the source), so we also
+  // filter that out.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const { data } = await api.get('/languages/all');
+        const { data } = await api.get('/languages');
         if (cancelled) return;
         const all: Language[] = data.data || [];
-        const targets = all.filter((l) => l.isEnabled && l.code !== 'en');
+        const targets = all.filter((l) => l.code !== 'en');
         setLanguages(targets);
         if (targets.length && !lang) setLang(targets[0].code);
       } catch (e: any) {
