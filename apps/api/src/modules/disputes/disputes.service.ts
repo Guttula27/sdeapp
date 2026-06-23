@@ -116,17 +116,32 @@ export class DisputesService {
     return dispute;
   }
 
-  /* ── Outlet: all disputes for an outlet ─────────────────── */
-  async findByOutlet(outletId: string, status?: DisputeStatus, lang?: string | null) {
+  /* ── Outlet: all disputes for an outlet ───────────────────
+   * slim=true returns a small per-row payload (no order.items
+   * preview, no customer.phone) — what the list-view table renders.
+   * Detail screens use GET /disputes/:id for the full graph.
+   * Default keeps the fat shape so existing admin SPA code paths
+   * are untouched.
+   */
+  async findByOutlet(outletId: string, status?: DisputeStatus, lang?: string | null, slim?: boolean) {
     const where = {
       order: { outletId },
       ...(status && { status }),
     };
 
-    const [disputes, total] = await Promise.all([
-      this.prisma.dispute.findMany({
-        where,
-        include: {
+    const include = slim
+      ? {
+          order: {
+            select: {
+              id: true,
+              orderNumber: true,
+              totalAmount: true,
+              createdAt: true,
+              customer: { select: { id: true, name: true } },
+            },
+          },
+        }
+      : {
           order: {
             select: {
               id: true, orderNumber: true, totalAmount: true, createdAt: true,
@@ -134,7 +149,12 @@ export class DisputesService {
               items: { take: 2, include: { item: { select: { id: true, name: true } } } },
             },
           },
-        },
+        };
+
+    const [disputes, total] = await Promise.all([
+      this.prisma.dispute.findMany({
+        where,
+        include,
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.dispute.count({ where }),
@@ -146,7 +166,10 @@ export class DisputesService {
       _count: { id: true },
     });
 
-    await this.translations.hydrate('Dispute', disputes, ['description'], lang);
+    // Slim never includes translatable item names — and dispute.description
+    // is the only translatable field — so still hydrate the dispute rows
+    // either way. Fast in-memory pickI18n via the JSON cell.
+    this.translations.pickI18nBatch(disputes as any[], ['description'], lang);
     return { disputes, total, stats };
   }
 

@@ -184,22 +184,51 @@ export class OutletsService {
     return outlets;
   }
 
-  async findOne(id: string, lang?: string | null) {
+  /**
+   * Outlet detail. `mode='config'` (default) returns address, hours,
+   * images, GST/UPI fields — what the outlet profile page needs.
+   * `mode='layout'` adds sections.tables which can be many hundreds
+   * of rows for a busy multi-section outlet. The split keeps the
+   * payload tight on every config-only open (which is most of them)
+   * and the layout/map view fetches the heavy graph on demand.
+   * Existing callers default to `config` and now get a smaller
+   * response without changing their code.
+   *
+   * Sub-resource alternative: GET /outlets/:id/layout returns the
+   * layout block only — useful when a UI already has the config
+   * cached and only needs to refresh the map.
+   */
+  async findOne(id: string, lang?: string | null, mode: 'config' | 'layout' | 'full' = 'config') {
+    const includeLayout = mode === 'layout' || mode === 'full';
     const outlet = await this.prisma.outlet.findUnique({
       where: { id },
       include: {
-        sections: { include: { tables: true } },
+        ...(includeLayout ? { sections: { include: { tables: true } } } : {}),
         images: { orderBy: { displayOrder: 'asc' } },
         hours: { orderBy: [{ dayOfWeek: 'asc' }, { openTime: 'asc' }] },
         _count: { select: { orders: true, tables: true } },
       },
     });
     if (!outlet) throw new NotFoundException('Outlet not found');
-    await this.translations.hydrate('Outlet', outlet, ['name', 'description', 'address', 'addressLine1', 'addressLine2'], lang);
+    // Phase 3 in-memory pick — zero translation-table reads.
+    this.translations.pickI18n(outlet, ['name', 'description', 'address', 'addressLine1', 'addressLine2'], lang);
     // Decrypt sensitive at-rest fields before responding so admin UI
     // sees the cleartext acc_... id when pre-filling the form. The
     // customer-facing getOpenStatus never reads this field plaintext.
     (outlet as any).razorpayLinkedAccountId = this.encryption.decrypt(outlet.razorpayLinkedAccountId);
+    return outlet;
+  }
+
+  /** Sub-resource: just the section/table layout. Used by the map view. */
+  async getLayout(id: string) {
+    const outlet = await this.prisma.outlet.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        sections: { include: { tables: true } },
+      },
+    });
+    if (!outlet) throw new NotFoundException('Outlet not found');
     return outlet;
   }
 

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, Body, UseGuards, Delete, Put } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, UseGuards, Delete, Put, Query } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { OutletsService, CreateOutletDto, CreateSectionDto, CreateTableDto, UpdateTableDto } from './outlets.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -33,8 +33,24 @@ export class OutletsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string, @PreferredLanguage() lang: string | null) {
-    return this.service.findOne(id, lang);
+  findOne(
+    @Param('id') id: string,
+    @PreferredLanguage() lang: string | null,
+    // `mode=config` (default) returns config + hours + images only.
+    // `mode=layout` adds sections.tables — many hundreds of rows for
+    // a busy multi-section outlet. The map view passes layout; the
+    // outlet profile page (which is most opens) takes the default.
+    // `mode=full` returns both for legacy callers expecting the
+    // historical shape.
+    @Query('mode') mode?: 'config' | 'layout' | 'full',
+  ) {
+    return this.service.findOne(id, lang, mode);
+  }
+
+  /** Sub-resource for the layout/map view. Skips config + i18n hydration. */
+  @Get(':id/layout')
+  getLayout(@Param('id') id: string) {
+    return this.service.getLayout(id);
   }
 
   @Get(':id/dashboard')

@@ -41,8 +41,12 @@ export class DisputesController {
     @Param('outletId') outletId: string,
     @PreferredLanguage() lang: string | null,
     @Query('status') status?: DisputeStatus,
+    // ?slim=true → list-view shape (no order.items preview, no
+    // customer.phone). Default keeps the fat shape so existing
+    // consumers don't break.
+    @Query('slim')   slim?: string,
   ) {
-    return this.service.findByOutlet(outletId, status, lang);
+    return this.service.findByOutlet(outletId, status, lang, slim === 'true');
   }
 
   /* ── Outlet: dispute stats ───────────────────────────────── */

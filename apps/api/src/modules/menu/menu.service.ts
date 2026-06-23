@@ -29,6 +29,16 @@ export class MenuService implements OnModuleDestroy {
   // Per-outlet debounce handle for the post-mutation warm. Cancelled
   // on each new invalidation; bulk edit sessions collapse to one warm.
   private readonly warmTimers = new Map<string, NodeJS.Timeout>();
+  // Single-flight guard for the menu-tree cold-cache load. Under a
+  // cold-cache thundering-herd (e.g. 20 concurrent customer scans on
+  // boot, or right after invalidateOutlet), every request used to
+  // fire its own loadMenuTreeFromDb — the stress harness caught
+  // 20× table reads of paynpik_items for one cache miss. Now the
+  // first arrival creates the promise; the rest await it; only one
+  // DB query fires. Cleared once the load resolves so the next
+  // miss-after-eviction starts cleanly. See A6 in
+  // docs/performance-hardening-plan.md.
+  private readonly inFlightTreeLoads = new Map<string, Promise<{ categories: any[] }>>();
 
   constructor(
     private prisma: PrismaService,
@@ -380,12 +390,38 @@ export class MenuService implements OnModuleDestroy {
     const version = await this.redis.getCounter(this.menuVersionKey(outletId));
     const cacheKey = this.menuTreeKey(outletId, version, !!includeHidden);
 
-    let tree = await this.redis.getJSON<{ categories: any[] }>(cacheKey);
-    if (!tree) {
-      tree = await this.loadMenuTreeFromDb(outletId, includeHidden);
-      // Fire-and-forget write — we already have the freshly-loaded tree
-      // to return; a cache write failure shouldn't slow down the response.
-      void this.redis.setJSON(cacheKey, tree, MENU_TREE_TTL_SECONDS);
+    const cached = await this.redis.getJSON<{ categories: any[] }>(cacheKey);
+    let tree: { categories: any[] };
+    if (cached) {
+      tree = cached;
+    } else {
+      // Single-flight: only the first arrival for a given cache key
+      // fires the DB query. Concurrent siblings await the same
+      // promise and reuse the result. The map entry is keyed on the
+      // FULL cache key so a fresh invalidation (different version)
+      // doesn't collide with an in-flight load for the previous
+      // version.
+      let pending = this.inFlightTreeLoads.get(cacheKey);
+      if (!pending) {
+        pending = (async () => {
+          const loaded = await this.loadMenuTreeFromDb(outletId, includeHidden);
+          // Fire-and-forget write — we already have the freshly-loaded
+          // tree to return; a cache write failure shouldn't slow down
+          // the response.
+          void this.redis.setJSON(cacheKey, loaded, MENU_TREE_TTL_SECONDS);
+          return loaded;
+        })();
+        this.inFlightTreeLoads.set(cacheKey, pending);
+        // Clear the entry once it settles (success or failure) so the
+        // next miss-after-eviction starts cleanly.
+        pending.finally(() => this.inFlightTreeLoads.delete(cacheKey));
+      }
+      const shared = await pending;
+      // Each awaiter needs its own deep copy because hydrateMenu()
+      // mutates in place. The Redis cache-hit branch is already safe
+      // because redis.getJSON returns a fresh JSON.parse — this clone
+      // gives the single-flight branch the same property.
+      tree = JSON.parse(JSON.stringify(shared));
     }
     // Per-request language pick. The cached tree carries every
     // language's value in <field>_i18n cells; pickI18n mutates the
