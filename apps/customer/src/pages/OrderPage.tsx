@@ -1242,26 +1242,33 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
           short name left empty space below the 80px image while the
           rest of the text column floated next to the top of it. */}
       <div className="flex gap-3 p-3 items-center">
-        {item.thumbnailUrl || item.imageUrl ? (
-          <img src={item.thumbnailUrl || item.imageUrl} alt={item.name}
-            loading="lazy" decoding="async"
-            className={clsx('w-20 h-20 rounded-xl object-cover shrink-0', disabled && 'grayscale')} />
-        ) : (
-          <div className="w-20 h-20 bg-gradient-to-br from-slate-100 to-slate-200 rounded-xl shrink-0 flex items-center justify-center">
-            <span className="text-xl">🍽️</span>
-          </div>
-        )}
+        {/* Image with the veg/non-veg/vegan badge overlaid on the
+            top-right corner. Wrapped in a `relative` shell so the
+            dot is positionally pinned regardless of the underlying
+            element being an <img> or the placeholder gradient.
+            White rounded tile around the dot for legibility against
+            any photo background. */}
+        <div className="relative shrink-0">
+          {item.thumbnailUrl || item.imageUrl ? (
+            <img src={item.thumbnailUrl || item.imageUrl} alt={item.name}
+              loading="lazy" decoding="async"
+              className={clsx('w-20 h-20 rounded-xl object-cover block', disabled && 'grayscale')} />
+          ) : (
+            <div className="w-20 h-20 bg-gradient-to-br from-slate-100 to-slate-200 rounded-xl flex items-center justify-center">
+              <span className="text-xl">🍽️</span>
+            </div>
+          )}
+          <span className="absolute top-1 right-1 inline-flex items-center justify-center bg-white/95 rounded-md shadow-sm p-0.5">
+            <FoodGradeDot grade={item.foodGrade} />
+          </span>
+        </div>
         {/* Tightened gap from 1.5 → 1 because the previous spacing
             looked OK only with multi-line names. For 1-line names it
             made the badge row float weirdly far below. */}
         <div className="flex-1 min-w-0 flex flex-col gap-1">
-          {/* Row 1: name. Full width — no badges, no Add button in
-              this row, so long Telugu/Hindi compound names get the
-              entire content column to wrap into (up to 3 lines). */}
-          <div className="flex items-start gap-1.5">
-            <span className="mt-1.5"><FoodGradeDot grade={item.foodGrade} /></span>
-            <p className="text-sm font-bold text-slate-900 leading-tight line-clamp-3 min-w-0 flex-1">{item.name}</p>
-          </div>
+          {/* Row 1: name. Full width, no longer competing with the
+              food-grade dot (which moved onto the image). */}
+          <p className="text-sm font-bold text-slate-900 leading-tight line-clamp-3 min-w-0">{item.name}</p>
           {/* Row 2: badges. Full content-column width — no Add
               button squeezing it from the right, so the chip set can
               run across cleanly. */}
