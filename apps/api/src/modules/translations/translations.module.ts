@@ -1,7 +1,10 @@
 import { Global, Logger, Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bull';
 import { TranslationsService } from './translations.service';
 import { TranslationBackfillService } from './translation-backfill.service';
 import { TranslationsAdminController } from './translations-admin.controller';
+import { TranslationsProcessor } from './translations.processor';
+import { TRANSLATIONS_QUEUE } from './translations-queue.constants';
 import { StubTranslationProvider, TRANSLATION_PROVIDER, TranslationProvider } from './translation-provider';
 import { BhashiniTranslationProvider } from './bhashini-translation-provider';
 import { LingvaTranslationProvider } from './lingva-translation-provider';
@@ -70,10 +73,19 @@ function buildProvider(): TranslationProvider {
 
 @Global()
 @Module({
+  imports: [
+    // Bull queue for provider-side translation fan-out. Workers run
+    // in-process (Nest's default for @Processor). Heavy multi-tenant
+    // installs can later split workers to a separate node by setting
+    // up a separate process consuming this queue with no API
+    // controllers mounted.
+    BullModule.registerQueue({ name: TRANSLATIONS_QUEUE }),
+  ],
   controllers: [TranslationsAdminController],
   providers: [
     TranslationsService,
     TranslationBackfillService,
+    TranslationsProcessor,
     StubTranslationProvider,
     BhashiniTranslationProvider,
     LingvaTranslationProvider,

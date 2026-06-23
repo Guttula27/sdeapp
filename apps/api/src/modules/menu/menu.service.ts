@@ -274,6 +274,16 @@ export class MenuService implements OnModuleDestroy {
     this.translations.pickI18nBatch(items,    ['name', 'description'], lang);
     this.translations.pickI18nBatch(variants, ['name', 'shortDescription'], lang);
     this.translations.pickI18nBatch(toppings, ['name'], lang);
+    // D4 lazy fill: enqueue translate jobs for cells that don't yet
+    // have a value for this language. Customer sees English on this
+    // render; the cached translation lands on the next read. Capped
+    // per-render so a cold-language burst doesn't fan out hundreds
+    // of jobs at once.
+    this.translations.lazyFillMissing('Category',    cats,     ['name'],                    lang);
+    this.translations.lazyFillMissing('Subcategory', subs,     ['name'],                    lang);
+    this.translations.lazyFillMissing('Item',        items,    ['name', 'description'],     lang);
+    this.translations.lazyFillMissing('Variant',     variants, ['name', 'shortDescription'], lang);
+    this.translations.lazyFillMissing('Topping',     toppings, ['name'],                    lang);
     return categories;
   }
 

@@ -35,6 +35,7 @@ import StaffPage from './pages/staff/StaffPage';
 import RolesPage from './pages/roles/RolesPage';
 import LanguagesPage from './pages/languages/LanguagesPage';
 import TranslationsPage from './pages/i18n/TranslationsPage';
+import BusinessLanguageConfigPage from './pages/business/BusinessLanguageConfigPage';
 import DisputesPage from './pages/disputes/DisputesPage';
 import SettingsPage from './pages/settings/SettingsPage';
 import IntegrationsPage from './pages/integrations/IntegrationsPage';
@@ -115,6 +116,7 @@ export default function App() {
           <Route path="roles"      element={<RolesPage />} />
           <Route path="languages"  element={<LanguagesPage />} />
           <Route path="translations" element={<TranslationsPage />} />
+          <Route path="business/languages" element={<BusinessLanguageConfigPage />} />
           <Route path="reports"    element={<ReportsPage />} />
           <Route path="kitchen"    element={<KitchenPage />} />
           <Route path="service-desk" element={<ServiceDeskPage />} />

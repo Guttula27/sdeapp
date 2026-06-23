@@ -206,6 +206,60 @@ export class BusinessesService {
     return business;
   }
 
+  /**
+   * Read the per-business language config.
+   *   primaryLanguage  — fallback render language for customers who
+   *                      didn't pick one. Defaults to 'en'.
+   *   eagerLanguages   — string array of language codes that get
+   *                      pre-translated on every menu/business edit.
+   *                      Everything else falls to the lazy/on-demand
+   *                      path (D4). Empty array = only the source
+   *                      language gets persisted eagerly.
+   */
+  async getLanguageConfig(businessId: string) {
+    const row = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      select: { id: true, primaryLanguage: true, eagerLanguages: true },
+    });
+    if (!row) throw new NotFoundException('Business not found');
+    return {
+      primaryLanguage: row.primaryLanguage ?? 'en',
+      eagerLanguages: Array.isArray(row.eagerLanguages) ? row.eagerLanguages : [],
+    };
+  }
+
+  async setLanguageConfig(
+    businessId: string,
+    body: { primaryLanguage?: string | null; eagerLanguages?: string[] | null },
+  ) {
+    // Validate every supplied code against the platform language
+    // inventory so a typo can't strand text in an unsupported lang.
+    const supplied = new Set<string>();
+    if (body.primaryLanguage) supplied.add(body.primaryLanguage);
+    if (Array.isArray(body.eagerLanguages)) for (const l of body.eagerLanguages) supplied.add(l);
+    if (supplied.size > 0) {
+      const known = await this.prisma.language.findMany({
+        where: { code: { in: [...supplied] } },
+        select: { code: true },
+      });
+      const knownSet = new Set(known.map((k) => k.code));
+      const unknown = [...supplied].filter((c) => !knownSet.has(c));
+      if (unknown.length) throw new BadRequestException(`Unknown language codes: ${unknown.join(', ')}`);
+    }
+    const updated = await this.prisma.business.update({
+      where: { id: businessId },
+      data: {
+        ...(body.primaryLanguage !== undefined ? { primaryLanguage: body.primaryLanguage || 'en' } : {}),
+        ...(body.eagerLanguages !== undefined ? { eagerLanguages: body.eagerLanguages ?? [] } : {}),
+      },
+      select: { id: true, primaryLanguage: true, eagerLanguages: true },
+    });
+    return {
+      primaryLanguage: updated.primaryLanguage ?? 'en',
+      eagerLanguages: Array.isArray(updated.eagerLanguages) ? updated.eagerLanguages : [],
+    };
+  }
+
   async toggleStatus(id: string) {
     const business = await this.prisma.business.findUnique({ where: { id } });
     if (!business) throw new NotFoundException('Business not found');

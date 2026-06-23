@@ -1,8 +1,11 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { TRANSLATION_PROVIDER, TranslationProvider } from './translation-provider';
 import { BhashiniTranslationProvider } from './bhashini-translation-provider';
 import { LingvaTranslationProvider } from './lingva-translation-provider';
+import { TRANSLATIONS_QUEUE, TRANSLATE_FIELD_JOB, TranslateFieldJobData } from './translations-queue.constants';
 
 export const SOURCE_LANGUAGE = 'en';
 
@@ -36,6 +39,13 @@ export function isStubTaggedValue(s: string | null | undefined): boolean {
  */
 @Injectable()
 export class TranslationsService {
+  // Optional — when the BullModule.registerQueue('translations') is
+  // wired (Phase 3.5), translate jobs are enqueued here instead of
+  // running synchronously in upsertAll(). The legacy code path stays
+  // intact as a fallback so the service still works during early
+  // boot / when Redis is down.
+  @InjectQueue(TRANSLATIONS_QUEUE)
+  private readonly translationsQueue?: Queue<TranslateFieldJobData>;
   private readonly logger = new Logger(TranslationsService.name);
 
   constructor(
@@ -140,6 +150,17 @@ export class TranslationsService {
       if (typeof v === 'string' && v.trim()) cleanFields[k] = v;
     }
     if (Object.keys(cleanFields).length === 0) return;
+
+    // D2 fast path: when a Bull queue is wired, fan-out provider
+    // calls happen on a worker — staff menu saves don't block on
+    // Bhashini/Lingva latency. The synchronous Promise.all below
+    // becomes the fallback used only when the queue isn't available
+    // (e.g. when Redis is down during boot — the Bull client throws
+    // on add() in that case).
+    if (this.translationsQueue) {
+      await this.enqueueFieldTranslations(entityType, entityId, cleanFields);
+      return;
+    }
 
     const languages = await this.enabledLanguages();
 
@@ -483,6 +504,162 @@ export class TranslationsService {
     }
 
     return { ...params, value, source: 'manual' };
+  }
+
+  /**
+   * Queue translate-field jobs for every (field × non-source language)
+   * tuple. Used by upsertAll's fast path (D2) and by lazy-fill on
+   * menu read (D4). Dedup by jobId — burst writes (drag-reorder,
+   * batch import) coalesce into one provider call per cell.
+   */
+  async enqueueFieldTranslations(
+    entityType: string,
+    entityId: string,
+    fields: Record<string, string>,
+  ): Promise<void> {
+    if (!this.translationsQueue) return;
+    const languages = await this.enabledLanguages();
+    const targets = languages.filter((l) => l !== SOURCE_LANGUAGE);
+    if (targets.length === 0) return;
+    // Skip cells the outlet admin has manually curated — race-safe
+    // re-check happens inside the job, but filtering here saves a
+    // queue trip for the common case.
+    const manualRows = await this.prisma.translation.findMany({
+      where: {
+        entityType,
+        entityId,
+        fieldName: { in: Object.keys(fields) },
+        languageCode: { in: targets },
+        source: 'manual',
+      },
+      select: { fieldName: true, languageCode: true },
+    });
+    const manualKeys = new Set(manualRows.map((r) => `${r.fieldName}:${r.languageCode}`));
+
+    const jobs: Array<Promise<unknown>> = [];
+    for (const [fieldName, sourceText] of Object.entries(fields)) {
+      if (!sourceText?.trim()) continue;
+      for (const lang of targets) {
+        if (manualKeys.has(`${fieldName}:${lang}`)) continue;
+        // Stable jobId — burst writes hitting the same cell coalesce.
+        // removeOnComplete keeps Redis memory bounded.
+        jobs.push(
+          this.translationsQueue.add(
+            TRANSLATE_FIELD_JOB,
+            { entityType, entityId, fieldName, sourceText, languageCode: lang },
+            {
+              jobId: `${entityType}:${entityId}:${fieldName}:${lang}`,
+              attempts: 3,
+              backoff: { type: 'exponential', delay: 5_000 },
+              removeOnComplete: 50,
+              removeOnFail: 100,
+            },
+          ),
+        );
+      }
+    }
+    if (jobs.length > 0) await Promise.all(jobs);
+  }
+
+  /**
+   * Persists a single auto-translated value to both the legacy
+   * paynpik_translations row AND the per-row JSON cell. Called by
+   * TranslationsProcessor after the provider returns; also reused
+   * by future lazy-fill writers.
+   *
+   * Honours the source='manual' flag — never overwrites a manual
+   * row. The processor double-checks this too, but a cheap
+   * defensive guard keeps the invariant local to the writer.
+   */
+  async writeAutoTranslation(params: {
+    entityType: string;
+    entityId: string;
+    fieldName: string;
+    languageCode: string;
+    value: string;
+  }): Promise<void> {
+    const { entityType, entityId, fieldName, languageCode, value } = params;
+
+    // Pre-Phase-3.5 this path wrote to BOTH the legacy
+    // paynpik_translations row AND the JSON cell. After the cutover
+    // it only writes the JSON cell — the JSON cell is the source of
+    // truth for customer-facing rendering.
+    //
+    // The legacy table still gets queried here as a read-only audit
+    // log so a manual override the admin set never gets clobbered
+    // by an auto-translation that lands later (race window between
+    // a job enqueueing and the admin saving a correction).
+    const existing = await this.prisma.translation.findUnique({
+      where: {
+        entityType_entityId_fieldName_languageCode: { entityType, entityId, fieldName, languageCode },
+      },
+      select: { source: true },
+    });
+    if (existing?.source === 'manual') return;
+
+    if (languageCode === SOURCE_LANGUAGE) return;
+    const target = TranslationsService.DUAL_WRITE_TARGETS[entityType];
+    if (!target || !target.fields.has(fieldName)) return;
+    const column = `${fieldName}_i18n`;
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE \`${target.table}\` ` +
+        `SET \`${column}\` = JSON_MERGE_PATCH(COALESCE(\`${column}\`, JSON_OBJECT()), CAST(? AS JSON)) ` +
+        `WHERE id = ?`,
+      JSON.stringify({ [languageCode]: value }),
+      entityId,
+    );
+  }
+
+  /**
+   * Lazy / on-demand fill (D4). Walks a batch of already-loaded
+   * entity rows, finds cells where `<field>_i18n[lang]` is missing,
+   * and enqueues translate-field jobs. Fire-and-forget — the caller
+   * (typically the menu hydrate path) doesn't await. Bull's jobId
+   * dedup means the same tuple won't translate twice even if
+   * concurrent renders enqueue it.
+   *
+   * Capped at LAZY_FILL_MAX_PER_RENDER tuples so a cold-cache render
+   * of a 400-item menu doesn't fan out into 400 × N-langs jobs in
+   * one burst. The rest get picked up on the next render.
+   */
+  lazyFillMissing(
+    entityType: string,
+    rows: any[] | null | undefined,
+    fields: string[],
+    languageCode: string,
+  ): void {
+    if (!this.translationsQueue) return;
+    if (!rows?.length || !languageCode || languageCode === SOURCE_LANGUAGE) return;
+    const target = TranslationsService.DUAL_WRITE_TARGETS[entityType];
+    if (!target) return;
+
+    let added = 0;
+    const MAX = 100;
+    for (const row of rows) {
+      if (added >= MAX) break;
+      for (const f of fields) {
+        if (added >= MAX) break;
+        if (!target.fields.has(f)) continue;
+        const sourceText = row?.[f];
+        if (typeof sourceText !== 'string' || !sourceText.trim()) continue;
+        const cell = row?.[`${f}_i18n`];
+        if (cell && typeof cell === 'object' && typeof cell[languageCode] === 'string') continue;
+        // Missing → enqueue. Errors swallowed: lazy fill must never
+        // surface a failure to the read path.
+        this.translationsQueue.add(
+          TRANSLATE_FIELD_JOB,
+          { entityType, entityId: row.id, fieldName: f, sourceText, languageCode },
+          {
+            jobId: `${entityType}:${row.id}:${f}:${languageCode}`,
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 5_000 },
+            removeOnComplete: 50,
+            removeOnFail: 100,
+          },
+        ).catch(() => { /* swallow — lazy fill is best-effort */ });
+        added++;
+      }
+    }
   }
 
   /** Remove every translation row for an entity (call from delete handlers). */

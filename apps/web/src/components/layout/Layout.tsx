@@ -108,9 +108,10 @@ const SETTINGS_CHILDREN: Record<UserTier, NavItem[]> = {
     { to: '/template-approvals', icon: ClipboardCheck, label: 'Template Approvals' },
   ],
   business: [
-    { to: '/settings', icon: User,   label: 'Account' },
-    { to: '/roles',    icon: Shield, label: 'Roles' },
-    { to: '/messaging', icon: MessageCircle, label: 'Messaging' },
+    { to: '/settings',           icon: User,          label: 'Account' },
+    { to: '/roles',              icon: Shield,        label: 'Roles' },
+    { to: '/business/languages', icon: Languages,     label: 'Languages' },
+    { to: '/messaging',          icon: MessageCircle, label: 'Messaging' },
   ],
   outlet: [
     { to: '/settings',     icon: User,        label: 'Account' },
