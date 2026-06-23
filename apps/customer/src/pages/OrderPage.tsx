@@ -1236,37 +1236,35 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
           : 'border-slate-100 hover:border-brand-200 cursor-pointer',
       )}
     >
-      <div className="flex gap-3 p-3 items-center">
+      <div className="flex gap-3 p-3 items-start">
         {item.thumbnailUrl || item.imageUrl ? (
           <img src={item.thumbnailUrl || item.imageUrl} alt={item.name}
             loading="lazy" decoding="async"
-            className={clsx('w-16 h-16 rounded-xl object-cover shrink-0', disabled && 'grayscale')} />
+            className={clsx('w-20 h-20 rounded-xl object-cover shrink-0', disabled && 'grayscale')} />
         ) : (
-          <div className="w-16 h-16 bg-gradient-to-br from-slate-100 to-slate-200 rounded-xl shrink-0 flex items-center justify-center">
+          <div className="w-20 h-20 bg-gradient-to-br from-slate-100 to-slate-200 rounded-xl shrink-0 flex items-center justify-center">
             <span className="text-xl">🍽️</span>
           </div>
         )}
-        <div className="flex-1 min-w-0">
-          {/* Name row — just the food-grade dot + the name. Favourite
-              + Popular/Special/Limited/disabled-reason chips all
-              moved to the row below so the name owns this row
-              outright. Up to 3 lines before truncation — enough for
-              long Telugu / Hindi compound names without becoming a
-              wall of text. */}
+        <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+          {/* Row 1: name. Full width — no badges, no Add button in
+              this row, so long Telugu/Hindi compound names get the
+              entire content column to wrap into (up to 3 lines). */}
           <div className="flex items-start gap-1.5">
             <span className="mt-1.5"><FoodGradeDot grade={item.foodGrade} /></span>
             <p className="text-sm font-bold text-slate-900 leading-tight line-clamp-3 min-w-0 flex-1">{item.name}</p>
           </div>
-          {/* Badge row — favourite toggle + Popular/Special/Limited
-              status flags + variant-count and toppings indicators.
-              Moving all of these out of the name row (where they
-              squeezed Indic scripts) AND out of the right-side
-              actions column (which now carries only the Add button)
-              gave the card a clean three-section layout: image |
-              text+badges | action. flex-wrap so a long combination
-              flows onto multiple lines without breaking the card. */}
-          {(onToggleFavorite || item.isPopular || item.isSpecial || hasVariants || (item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 || (item.hasLimitedStock && item.availableQuantity > 0) || (disabled && disabledReason)) && (
-            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+          {/* Rows 2+3: a two-column layout — badges + price on the
+              left, Add button vertically centred on the right (so it
+              "merges" rowspan-2 against the badges and price rows).
+              This is what eliminated the big empty corner the
+              previous flat-column layout left below short names. */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 min-w-0 flex flex-col gap-1">
+              {/* Row 2: favourite + Popular/Special/Limited chips +
+                  variants/toppings markers. */}
+              {(onToggleFavorite || item.isPopular || item.isSpecial || hasVariants || (item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 || (item.hasLimitedStock && item.availableQuantity > 0) || (disabled && disabledReason)) && (
+                <div className="flex items-center gap-1.5 flex-wrap">
               {onToggleFavorite && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onToggleFavorite(e); }}
@@ -1336,57 +1334,54 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
                   {disabledReason}
                 </span>
               )}
+                </div>
+              )}
+              {item.shortDescription && (
+                <p className="text-[11px] text-slate-400 line-clamp-1">{item.shortDescription}</p>
+              )}
+              {/* Row 3: price + rating + prep time. */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {hasDiscount ? (
+                  <>
+                    <span className="text-sm font-black text-emerald-700">
+                      {hasVariants ? `from ₹${lowDiscounted.toFixed(0)}` : `₹${lowDiscounted.toFixed(0)}`}
+                    </span>
+                    <span className="text-xs text-slate-400 line-through">
+                      ₹{lowPrice.toFixed(0)}
+                    </span>
+                    <span className="inline-flex items-center text-[10px] font-bold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-full">
+                      Save ₹{saveAmount.toFixed(0)}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-sm font-black text-slate-900">{hasVariants ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}</span>
+                )}
+                {item.ratingCount > 0 && (
+                  <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700">
+                    <Star size={9} fill="currentColor" className="text-amber-500" />
+                    {item.ratingAvg.toFixed(1)}
+                    <span className="text-slate-400 font-normal">({item.ratingCount})</span>
+                  </span>
+                )}
+                {item.preparationTime && <span className="text-[10px] text-slate-400 flex items-center gap-0.5"><Clock size={9} /> {item.preparationTime}m</span>}
+              </div>
             </div>
-          )}
-          {item.shortDescription && (
-            <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">{item.shortDescription}</p>
-          )}
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
-            {hasDiscount ? (
-              <>
-                <span className="text-sm font-black text-emerald-700">
-                  {hasVariants ? `from ₹${lowDiscounted.toFixed(0)}` : `₹${lowDiscounted.toFixed(0)}`}
-                </span>
-                <span className="text-xs text-slate-400 line-through">
-                  ₹{lowPrice.toFixed(0)}
-                </span>
-                <span className="inline-flex items-center text-[10px] font-bold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-full">
-                  Save ₹{saveAmount.toFixed(0)}
-                </span>
-              </>
-            ) : (
-              <span className="text-sm font-black text-slate-900">{hasVariants ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}</span>
-            )}
-            {item.ratingCount > 0 && (
-              <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700">
-                <Star size={9} fill="currentColor" className="text-amber-500" />
-                {item.ratingAvg.toFixed(1)}
-                <span className="text-slate-400 font-normal">({item.ratingCount})</span>
-              </span>
-            )}
-            {item.preparationTime && <span className="text-[10px] text-slate-400 flex items-center gap-0.5"><Clock size={9} /> {item.preparationTime}m</span>}
+            {/* Rowspan-2 Add button — vertically centred against the
+                badges (row 2) + price (row 3) stack. Gold "money
+                zone" + charcoal text per the design tokens. */}
+            <button
+              onClick={onQuickAdd}
+              disabled={disabled}
+              className={clsx(
+                'shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold transition-colors',
+                disabled
+                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  : 'bg-gold-500 hover:bg-gold-600 text-charcoal-900',
+              )}
+            >
+              <Plus size={12} /> Add{qty > 0 && ` · ${qty}`}
+            </button>
           </div>
-        </div>
-        <div className="shrink-0 flex items-center">
-          {/* Everything else (heart, Popular, Special, options/toppings
-              chips) moved up into the badge row, so the right column
-              is just the Add button — vertically centred against the
-              card so it doesn't look orphaned next to a tall name. */}
-          <button
-            onClick={onQuickAdd}
-            disabled={disabled}
-            // Per the design token comment in tailwind.config — Add
-            // to Cart belongs to the gold "money zone" alongside the
-            // Place Order / Pay CTAs. Dark text on gold for contrast.
-            className={clsx(
-              'inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors',
-              disabled
-                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                : 'bg-gold-500 hover:bg-gold-600 text-charcoal-900',
-            )}
-          >
-            <Plus size={12} /> Add{qty > 0 && ` · ${qty}`}
-          </button>
         </div>
       </div>
     </div>
