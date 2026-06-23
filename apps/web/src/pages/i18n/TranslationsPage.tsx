@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
-import { Languages as LangIcon, Save, Search, Loader2 } from 'lucide-react';
+import { Languages as LangIcon, Save, Search, Loader2, Sparkles } from 'lucide-react';
 import api from '../../services/api';
 import { RootState } from '../../store';
 
@@ -70,6 +70,10 @@ export default function TranslationsPage() {
   const [total, setTotal] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(false);
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [translatingKey, setTranslatingKey] = useState<string | null>(null);
+  // Bulk-operation flag — "Translate all" / "Save all" set this so
+  // the toolbar buttons disable each other while either is running.
+  const [bulkBusy, setBulkBusy] = useState<null | 'translate' | 'save'>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   // Pull the platform-supported languages list so the admin picks
@@ -128,37 +132,136 @@ export default function TranslationsPage() {
 
   const draftKey = (r: StringRow) => `${r.entityId}:${r.fieldName}`;
 
+  // Persist a single row's draft to the backend. Used by per-row
+  // Save and (in bulk) by saveAll.
+  const persistRow = async (r: StringRow, valueRaw: string) => {
+    const value = valueRaw.trim();
+    if (!value) throw new Error('Translation cannot be empty');
+    await api.put(`/outlets/${outletId}/i18n/strings`, {
+      entityType: r.entityType,
+      entityId: r.entityId,
+      fieldName: r.fieldName,
+      languageCode: lang,
+      value,
+    });
+    const key = draftKey(r);
+    setRows((prev) =>
+      prev.map((row) =>
+        draftKey(row) === key
+          ? { ...row, translatedText: value, source: 'manual' }
+          : row,
+      ),
+    );
+    setDrafts((d) => { const copy = { ...d }; delete copy[key]; return copy; });
+  };
+
   const save = async (r: StringRow) => {
     const key = draftKey(r);
     const value = (drafts[key] ?? '').trim();
-    if (!value) {
-      toast.error('Translation cannot be empty');
-      return;
-    }
+    if (!value) { toast.error('Translation cannot be empty'); return; }
     setSavingKey(key);
     try {
-      await api.put(`/outlets/${outletId}/i18n/strings`, {
-        entityType: r.entityType,
-        entityId: r.entityId,
-        fieldName: r.fieldName,
-        languageCode: lang,
-        value,
-      });
-      setRows((prev) =>
-        prev.map((row) =>
-          draftKey(row) === key
-            ? { ...row, translatedText: value, source: 'manual' }
-            : row,
-        ),
-      );
-      setDrafts((d) => { const copy = { ...d }; delete copy[key]; return copy; });
+      await persistRow(r, value);
       toast.success('Saved — customer menu refreshes on next load');
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to save');
+      toast.error(e?.response?.data?.message || e?.message || 'Failed to save');
     } finally {
       setSavingKey(null);
     }
   };
+
+  // Generate an auto-translation suggestion via the provider chain
+  // and drop it into the row's textarea as a draft. NOT persisted —
+  // the admin must press Save (or Save all) to commit it as a manual
+  // override. Returns the translated string so the bulk path can
+  // re-use it.
+  const translateRow = async (r: StringRow): Promise<string> => {
+    const { data } = await api.post(`/outlets/${outletId}/i18n/translate`, {
+      entityType: r.entityType,
+      sourceText: r.sourceText,
+      languageCode: lang,
+    });
+    const translated: string = data?.data?.translated || '';
+    if (translated) {
+      const key = draftKey(r);
+      setDrafts((d) => ({ ...d, [key]: translated }));
+    }
+    return translated;
+  };
+
+  const translateOne = async (r: StringRow) => {
+    const key = draftKey(r);
+    setTranslatingKey(key);
+    try {
+      const out = await translateRow(r);
+      if (!out) toast.error('Provider returned empty translation');
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Translation failed');
+    } finally {
+      setTranslatingKey(null);
+    }
+  };
+
+  // Translate every row on the current page that doesn't already
+  // have a value (or whose draft is empty). Skips rows that the
+  // admin has already typed into so a bulk press doesn't clobber
+  // careful manual work.
+  const translateAll = async () => {
+    const targets = rows.filter((r) => {
+      const draft = drafts[draftKey(r)];
+      const current = draft ?? r.translatedText;
+      return !current.trim();
+    });
+    if (targets.length === 0) { toast('Nothing to translate on this page'); return; }
+    setBulkBusy('translate');
+    let ok = 0, fail = 0;
+    for (const r of targets) {
+      try { await translateRow(r); ok++; }
+      catch { fail++; }
+    }
+    setBulkBusy(null);
+    if (fail === 0) toast.success(`Translated ${ok} row${ok === 1 ? '' : 's'}`);
+    else toast.error(`Translated ${ok}, failed ${fail}`);
+  };
+
+  // Persist every dirty draft. Skips rows whose draft matches the
+  // already-stored value (nothing to save). Errors per row don't
+  // abort the rest.
+  const saveAll = async () => {
+    const targets = rows.filter((r) => {
+      const draft = drafts[draftKey(r)];
+      return draft !== undefined && draft.trim() && draft !== r.translatedText;
+    });
+    if (targets.length === 0) { toast('Nothing to save'); return; }
+    setBulkBusy('save');
+    let ok = 0, fail = 0;
+    for (const r of targets) {
+      try {
+        await persistRow(r, drafts[draftKey(r)] ?? '');
+        ok++;
+      } catch { fail++; }
+    }
+    setBulkBusy(null);
+    if (fail === 0) toast.success(`Saved ${ok} row${ok === 1 ? '' : 's'}`);
+    else toast.error(`Saved ${ok}, failed ${fail}`);
+  };
+
+  const dirtyCount = useMemo(
+    () => rows.filter((r) => {
+      const draft = drafts[draftKey(r)];
+      return draft !== undefined && draft.trim() && draft !== r.translatedText;
+    }).length,
+    [rows, drafts],
+  );
+
+  const missingCount = useMemo(
+    () => rows.filter((r) => {
+      const draft = drafts[draftKey(r)];
+      const current = draft ?? r.translatedText;
+      return !current.trim();
+    }).length,
+    [rows, drafts],
+  );
 
   const summary = useMemo(() => {
     const counts = rows.reduce(
@@ -249,6 +352,33 @@ export default function TranslationsPage() {
         </div>
       </div>
 
+      {/* Bulk-action toolbar. "Translate all" auto-fills empty rows;
+          "Save all" flushes every dirty draft. Both buttons disable
+          each other while running so an in-flight bulk doesn't race
+          a per-row save. */}
+      {rows.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            className="btn-secondary !py-1.5 !px-3 inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={bulkBusy !== null || missingCount === 0 || loading}
+            onClick={translateAll}
+            title="Auto-translate every row on this page that has no value yet"
+          >
+            {bulkBusy === 'translate' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+            Translate all{missingCount > 0 ? ` (${missingCount})` : ''}
+          </button>
+          <button
+            className="btn-primary !py-1.5 !px-3 inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={bulkBusy !== null || dirtyCount === 0}
+            onClick={saveAll}
+            title="Save every row with a pending edit"
+          >
+            {bulkBusy === 'save' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            Save all{dirtyCount > 0 ? ` (${dirtyCount})` : ''}
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="card overflow-hidden">
         {loading ? (
@@ -268,11 +398,11 @@ export default function TranslationsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-100">
-                <th className="px-5 py-3 w-[18%]">Field</th>
-                <th className="px-5 py-3 w-[33%]">English (source)</th>
-                <th className="px-5 py-3 w-[33%]">Translation</th>
+                <th className="px-5 py-3 w-[14%]">Field</th>
+                <th className="px-5 py-3 w-[30%]">English (source)</th>
+                <th className="px-5 py-3 w-[30%]">Translation</th>
                 <th className="px-5 py-3 w-[8%]">Status</th>
-                <th className="px-5 py-3 w-[8%] text-right">Action</th>
+                <th className="px-5 py-3 w-[18%] text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -305,19 +435,34 @@ export default function TranslationsPage() {
                       </span>
                     </td>
                     <td className="px-5 py-3 text-right">
-                      <button
-                        className="btn-primary !py-1.5 !px-3 disabled:opacity-50 disabled:cursor-not-allowed"
-                        disabled={!isDirty || savingKey === key}
-                        onClick={() => save(r)}
-                      >
-                        {savingKey === key ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : (
-                          <>
-                            <Save size={14} /> Save
-                          </>
-                        )}
-                      </button>
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          className="btn-secondary !py-1.5 !px-2.5 inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={bulkBusy !== null || translatingKey === key || savingKey === key}
+                          onClick={() => translateOne(r)}
+                          title="Auto-translate this row (fills the textarea — you still press Save)"
+                        >
+                          {translatingKey === key ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Sparkles size={14} />
+                          )}
+                          Translate
+                        </button>
+                        <button
+                          className="btn-primary !py-1.5 !px-2.5 inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={!isDirty || savingKey === key || bulkBusy !== null}
+                          onClick={() => save(r)}
+                        >
+                          {savingKey === key ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <>
+                              <Save size={14} /> Save
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

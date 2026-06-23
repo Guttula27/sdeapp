@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Put, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { TranslationsService } from './translations.service';
 import { RedisService } from '../../config/redis/redis.service';
@@ -63,5 +63,28 @@ export class TranslationsAdminController {
     // the 10-min TTL expires.
     await this.redis.incr(`menu:ver:${outletId}`);
     return result;
+  }
+
+  /**
+   * Generate an auto-translation suggestion without persisting it.
+   * The admin Translations page calls this when the user taps
+   * "Translate" on a row — the result fills the textarea as a draft
+   * that the admin can then accept (Save) or edit before saving.
+   *
+   * Distinct from the upsert path because the auto value here is
+   * NOT marked as the canonical translation until the admin presses
+   * Save (which writes it as source='manual'). Avoids polluting the
+   * JSON cell with provider output the admin might reject.
+   */
+  @Post('translate')
+  async translate(
+    @Param('outletId') outletId: string,
+    @Body() body: { entityType: string; sourceText: string; languageCode: string },
+  ) {
+    if (!body?.entityType || !body?.languageCode) {
+      throw new BadRequestException('entityType and languageCode are required');
+    }
+    const translated = await this.translations.translateOnce(outletId, body);
+    return { translated };
   }
 }

@@ -439,6 +439,38 @@ export class TranslationsService {
   }
 
   /**
+   * Synchronous one-shot translate. Calls the provider chain
+   * (Bhashini → Lingva → …) with a source string and returns the
+   * translated text WITHOUT persisting. Used by the outlet-admin
+   * Translations page's "Translate" button so the admin can review
+   * the auto suggestion before pressing Save (which then persists
+   * it with source='manual').
+   *
+   * Throws on provider chain failure so the UI can show an error;
+   * upsertAll uses a different path that swallows the failure and
+   * persists the English source so the customer menu always renders.
+   */
+  async translateOnce(
+    outletId: string,
+    params: { entityType: string; sourceText: string; languageCode: string },
+  ): Promise<string> {
+    const cfg = TranslationsService.ADMIN_LIST[params.entityType];
+    if (!cfg) throw new Error(`Unknown entityType: ${params.entityType}`);
+    if (!params.languageCode || params.languageCode === SOURCE_LANGUAGE) {
+      throw new Error('languageCode must be set and non-source');
+    }
+    const text = (params.sourceText ?? '').trim();
+    if (!text) return '';
+    // outletId is accepted for symmetry with the rest of the admin
+    // endpoints (and future per-business provider routing) but the
+    // chain is global today — no need to validate tenancy on a
+    // read-only translate call.
+    void outletId;
+    const raw = await this.provider.translate(text, SOURCE_LANGUAGE, params.languageCode);
+    return isStubTaggedValue(raw) ? text : raw;
+  }
+
+  /**
    * Save a human-curated correction. Writes to BOTH the legacy
    * translations table (with `source: 'manual'`, so future auto
    * backfills skip it) AND the JSON cell on the entity (which the
