@@ -692,8 +692,14 @@ export default function OrderPage() {
           </button>
         </div>
       )}
-      {/* ── Sticky header ────────────────────────────────────── */}
-      <div className={clsx('bg-white sticky z-20 shadow-sm', isPostpaidTable && openOrder ? 'top-[52px]' : 'top-0')}>
+      {/* ── Sticky header ──────────────────────────────────────
+          Brand-teal banner so the chrome reads consistently with the
+          rest of the customer surface (the MENU strip and BottomNav
+          accents share this language). Top bar's children get
+          inverted text-color treatment for contrast; the menu /
+          categories strips below have their own backgrounds and
+          override the parent. */}
+      <div className={clsx('bg-brand-700 sticky z-20 shadow-sm', isPostpaidTable && openOrder ? 'top-[52px]' : 'top-0')}>
         {/* Top bar */}
         <div className="px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0">
@@ -702,30 +708,31 @@ export default function OrderPage() {
                 if (cart.length > 0 && !window.confirm('Leave and clear cart?')) return;
                 navigate('/');
               }}
-              className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 shrink-0"
+              className="w-8 h-8 flex items-center justify-center text-brand-200 hover:text-white rounded-lg hover:bg-brand-600 shrink-0 transition-colors"
             >
               <LogOut size={17} />
             </button>
             {/* Outlet logo (or business logo as fallback) shown alongside the
                 outlet name so the customer is anchored in the brand context.
-                Falls back to a brand-tinted tile with the initial when no
-                logo has been uploaded. */}
+                Falls back to a lighter-teal tile with the initial when no
+                logo has been uploaded (the canonical brand-400 lifts well
+                against the brand-700 banner). */}
             {(outletMeta?.outletLogoUrl || outletMeta?.businessLogoUrl) ? (
               <img
                 src={outletMeta.outletLogoUrl || outletMeta.businessLogoUrl || ''}
                 alt={outletMeta?.outletName || ''}
-                className="w-9 h-9 rounded-xl object-cover shrink-0 border border-slate-200"
+                className="w-9 h-9 rounded-xl object-cover shrink-0 ring-1 ring-white/20"
               />
             ) : outletMeta?.outletName ? (
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-brand-400 text-white font-black text-sm flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 rounded-xl bg-brand-500 text-white font-black text-sm flex items-center justify-center shrink-0 ring-1 ring-white/20">
                 {outletMeta.outletName.charAt(0).toUpperCase()}
               </div>
             ) : null}
             <div className="min-w-0">
-              <p className="font-bold text-slate-900 text-sm leading-tight truncate">
+              <p className="font-bold text-white text-sm leading-tight truncate">
                 {outletMeta?.outletName || 'Menu'}
               </p>
-              <p className="text-[11px] text-slate-400 truncate">
+              <p className="text-[11px] text-brand-200 truncate">
                 {outletMeta?.businessName && <span>{outletMeta.businessName}</span>}
                 {outletMeta?.businessName && tableId && <span> · </span>}
                 {tableId && <span>Table {tableId.replace('table-', 'T')}</span>}
@@ -738,7 +745,7 @@ export default function OrderPage() {
             {isLoggedIn ? (
               <button
                 onClick={() => navigate('/profile')}
-                className="w-8 h-8 bg-gradient-to-br from-brand-500 to-brand-400 rounded-full flex items-center justify-center text-white font-black text-sm"
+                className="w-8 h-8 bg-brand-500 hover:bg-brand-400 rounded-full flex items-center justify-center text-white font-black text-sm ring-1 ring-white/20 transition-colors"
                 title={`Signed in as ${user?.name}`}
               >
                 {user?.name?.[0]}
@@ -746,7 +753,7 @@ export default function OrderPage() {
             ) : (
               <button
                 onClick={() => navigate('/auth', { state: { from: `/order${window.location.search}` } })}
-                className="flex items-center gap-1 text-xs text-slate-500 hover:text-brand-600 bg-slate-100 hover:bg-brand-50 px-2.5 py-1.5 rounded-lg transition-colors"
+                className="flex items-center gap-1 text-xs text-white bg-brand-600 hover:bg-brand-500 px-2.5 py-1.5 rounded-lg transition-colors"
               >
                 <User size={12} /> Sign in
               </button>
