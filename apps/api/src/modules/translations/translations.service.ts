@@ -408,16 +408,21 @@ export class TranslationsService {
     const rows: any[] = [];
     for (const e of entities as any[]) {
       for (const fieldName of cfg.fields) {
-        const sourceText: string | null = e[fieldName] ?? null;
-        if (!sourceText || !sourceText.trim()) continue;
+        const sourceText: string = (e[fieldName] ?? '') as string;
         const i18nCell = e[`${fieldName}_i18n`] as Record<string, string> | null;
         const jsonValue = i18nCell?.[opts.lang];
         const lg = legacyByKey.get(`${e.id}:${fieldName}`);
         const translatedText =
           (typeof jsonValue === 'string' && jsonValue) ? jsonValue : (lg?.value ?? '');
+        // We deliberately emit rows with empty sourceText too — so the
+        // admin can SEE which optional fields (e.g. Item.description)
+        // are still missing English content and go fix the source in
+        // the menu editor. The frontend disables Translate/Save on
+        // empty-source rows since there's nothing to translate.
+        const hasSource = Boolean(sourceText && sourceText.trim());
         const source: 'manual' | 'auto' | 'missing' =
           (lg?.source === 'manual') ? 'manual'
-          : translatedText ? 'auto'
+          : (hasSource && translatedText) ? 'auto'
           : 'missing';
         rows.push({
           entityType: opts.entityType,

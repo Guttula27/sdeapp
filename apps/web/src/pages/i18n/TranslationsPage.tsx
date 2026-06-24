@@ -202,15 +202,19 @@ export default function TranslationsPage() {
     }
   };
 
-  // Translate every row on the current page that doesn't already
-  // have a value (or whose draft is empty). Skips rows that the
-  // admin has already typed into so a bulk press doesn't clobber
-  // careful manual work.
+  // Translate every row on the current page that isn't a manual
+  // override. We deliberately re-translate auto rows too so the
+  // button works as a "refresh all" even when nothing is missing —
+  // otherwise it would disable itself the moment auto-backfill ran.
+  // Skips rows the admin has actively edited (dirty draft) so an
+  // accidental bulk press doesn't clobber careful manual work.
   const translateAll = async () => {
     const targets = rows.filter((r) => {
+      if (r.source === 'manual') return false;
       const draft = drafts[draftKey(r)];
-      const current = draft ?? r.translatedText;
-      return !current.trim();
+      const isDirty = draft !== undefined && draft.trim() && draft !== r.translatedText;
+      if (isDirty) return false;
+      return Boolean((r.sourceText ?? '').trim());
     });
     if (targets.length === 0) { toast('Nothing to translate on this page'); return; }
     setBulkBusy('translate');
@@ -254,11 +258,16 @@ export default function TranslationsPage() {
     [rows, drafts],
   );
 
-  const missingCount = useMemo(
+  // Rows that the "Translate all" press would touch — every
+  // non-manual row that isn't an in-flight admin edit. Drives the
+  // button's enable state and the count badge.
+  const translatableCount = useMemo(
     () => rows.filter((r) => {
+      if (r.source === 'manual') return false;
       const draft = drafts[draftKey(r)];
-      const current = draft ?? r.translatedText;
-      return !current.trim();
+      const isDirty = draft !== undefined && draft.trim() && draft !== r.translatedText;
+      if (isDirty) return false;
+      return Boolean((r.sourceText ?? '').trim());
     }).length,
     [rows, drafts],
   );
@@ -360,12 +369,12 @@ export default function TranslationsPage() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             className="btn-secondary !py-1.5 !px-3 inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={bulkBusy !== null || missingCount === 0 || loading}
+            disabled={bulkBusy !== null || translatableCount === 0 || loading}
             onClick={translateAll}
-            title="Auto-translate every row on this page that has no value yet"
+            title="Auto-translate every non-manual row on this page (fills missing, refreshes auto). You still press Save to commit."
           >
             {bulkBusy === 'translate' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-            Translate all{missingCount > 0 ? ` (${missingCount})` : ''}
+            Translate all{translatableCount > 0 ? ` (${translatableCount})` : ''}
           </button>
           <button
             className="btn-primary !py-1.5 !px-3 inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -418,14 +427,21 @@ export default function TranslationsPage() {
                       {FIELD_LABELS[r.fieldName] ?? r.fieldName}
                     </td>
                     <td className="px-5 py-3 text-slate-900 align-top">
-                      <div className="line-clamp-2 leading-snug">{r.sourceText}</div>
+                      {(r.sourceText ?? '').trim() ? (
+                        <div className="line-clamp-2 leading-snug">{r.sourceText}</div>
+                      ) : (
+                        <div className="italic text-slate-400 leading-snug">
+                          (no English text — add it in the menu editor first)
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3">
                       <textarea
-                        className="input min-h-[36px] py-1.5 resize-y w-full"
+                        className="input min-h-[36px] py-1.5 resize-y w-full disabled:bg-slate-50 disabled:text-slate-400"
                         rows={1}
                         value={current}
                         placeholder={r.source === 'missing' ? 'Add translation…' : ''}
+                        disabled={!(r.sourceText ?? '').trim()}
                         onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
                       />
                     </td>
@@ -438,9 +454,18 @@ export default function TranslationsPage() {
                       <div className="inline-flex items-center gap-1.5">
                         <button
                           className="btn-secondary !py-1.5 !px-2.5 inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                          disabled={bulkBusy !== null || translatingKey === key || savingKey === key}
+                          disabled={
+                            bulkBusy !== null ||
+                            translatingKey === key ||
+                            savingKey === key ||
+                            !(r.sourceText ?? '').trim()
+                          }
                           onClick={() => translateOne(r)}
-                          title="Auto-translate this row (fills the textarea — you still press Save)"
+                          title={
+                            (r.sourceText ?? '').trim()
+                              ? 'Auto-translate this row (fills the textarea — you still press Save)'
+                              : 'Add English source text first to enable translation'
+                          }
                         >
                           {translatingKey === key ? (
                             <Loader2 size={14} className="animate-spin" />
