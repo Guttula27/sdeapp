@@ -66,6 +66,12 @@ export default function CouponsPage() {
     code: '',
     name: '',
     description: '',
+    // Empty string = "Business-wide". A real outlet id otherwise. We
+    // default this to the page-scope outlet when opening the modal so
+    // the operator's mental model is preserved, but it's editable
+    // here — TAG / ALLOWANCE flows require a specific outlet and the
+    // user shouldn't have to close the modal to change it.
+    outletId: '',
     discountType: 'PERCENT' as 'PERCENT' | 'FIXED',
     discountValue: '10',
     minBillAmount: '',
@@ -90,27 +96,26 @@ export default function CouponsPage() {
   const [form, setForm] = useState(blankForm);
   const [saving, setSaving] = useState(false);
 
-  // Tag + menu lookups for the scope/targeting pickers. Both are
-  // outlet-scoped so we load them lazily whenever the active scope
-  // points at a specific outlet. Business-wide scope leaves them
-  // empty — ALLOWANCE coupons can't be business-wide (their item
-  // scope is outlet-specific) and the form gates on that below.
+  // Tag + menu lookups for the scope/targeting pickers. Driven by the
+  // form's outlet field (not the page-level scope filter), so the
+  // operator can change the target outlet inside the modal without
+  // closing it. Cleared when the field is "Business-wide".
   const [tags, setTags] = useState<Tag[]>([]);
   const [menu, setMenu] = useState<Category[]>([]);
-  const outletIdForPickers = scope !== 'BUSINESS' ? scope : null;
+  const formOutletId = form.outletId || null;
   useEffect(() => {
-    if (!outletIdForPickers) { setTags([]); setMenu([]); return; }
-    api.get(`/outlets/${outletIdForPickers}/customer-tags`)
+    if (!formOutletId) { setTags([]); setMenu([]); return; }
+    api.get(`/outlets/${formOutletId}/customer-tags`)
       .then(({ data }) => setTags(data.data || []))
       .catch(() => setTags([]));
-    api.get(`/outlets/${outletIdForPickers}/menu?includeHidden=true`)
+    api.get(`/outlets/${formOutletId}/menu?includeHidden=true`)
       .then(({ data }) => {
         // getMenu shape: { categories: [{ id, name, subcategories: [{ id, name, items: [...] }] }] }
         const cats: Category[] = data.data?.categories ?? data.categories ?? [];
         setMenu(cats);
       })
       .catch(() => setMenu([]));
-  }, [outletIdForPickers]);
+  }, [formOutletId]);
 
   const [deleteTarget, setDeleteTarget] = useState<Coupon | null>(null);
 
@@ -136,7 +141,10 @@ export default function CouponsPage() {
   useEffect(() => { fetch(); }, [fetch]);
 
   const openCreate = () => {
-    setForm(blankForm);
+    // Default the form's outlet to whichever scope is active on the
+    // page — operator's first click usually wants the same outlet they
+    // were viewing. They can override inside the modal.
+    setForm({ ...blankForm, outletId: scope !== 'BUSINESS' ? scope : '' });
     setModal({ open: true });
   };
 
@@ -147,6 +155,7 @@ export default function CouponsPage() {
       code: c.code,
       name: c.name,
       description: c.description ?? '',
+      outletId: c.outletId ?? '',
       discountType: c.discountType,
       discountValue: String(c.discountValue),
       minBillAmount: c.minBillAmount != null ? String(c.minBillAmount) : '',
@@ -178,12 +187,12 @@ export default function CouponsPage() {
     // ALLOWANCE coupons need an outlet context (scope picker + tag
     // targeting are outlet-scoped). Block the save instead of silently
     // saving a misconfigured business-wide row.
-    if (form.kind === 'ALLOWANCE' && scope === 'BUSINESS') {
-      toast.error('Allowance coupons must be outlet-scoped — pick an outlet at the top first.');
+    if (form.kind === 'ALLOWANCE' && !form.outletId) {
+      toast.error('Allowance coupons must be assigned to a specific outlet.');
       return;
     }
-    if (form.targetType === 'TAG' && scope === 'BUSINESS') {
-      toast.error('Tag targeting requires an outlet scope.');
+    if (form.targetType === 'TAG' && !form.outletId) {
+      toast.error('Tag targeting requires the coupon to be assigned to a specific outlet.');
       return;
     }
 
@@ -216,7 +225,7 @@ export default function CouponsPage() {
         code: form.code.trim().toUpperCase(),
         name: form.name.trim(),
         description: form.description.trim() || undefined,
-        outletId: scope !== 'BUSINESS' ? scope : null,
+        outletId: form.outletId || null,
         discountType: form.discountType,
         discountValue: Number(form.discountValue),
         minBillAmount: form.minBillAmount ? Number(form.minBillAmount) : null,
@@ -387,6 +396,27 @@ export default function CouponsPage() {
           </Field>
 
           <div className="grid grid-cols-2 gap-4">
+            <Field label="Outlet">
+              <select
+                value={form.outletId}
+                onChange={(e) => setForm({
+                  ...form,
+                  outletId: e.target.value,
+                  // Switching outlet invalidates the previous outlet's scope
+                  // and tag picks — wipe them so we don't persist refIds
+                  // from a different outlet's menu.
+                  scopeItemIds: [],
+                  scopeCategoryIds: [],
+                  scopeSubcategoryIds: [],
+                  targetTagIds: [],
+                })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+                required={form.kind === 'ALLOWANCE' || form.targetType === 'TAG'}
+              >
+                <option value="">Business-wide (all outlets)</option>
+                {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+            </Field>
             <Field label="Kind">
               <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as CouponKind })}
                 className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm">
@@ -396,7 +426,7 @@ export default function CouponsPage() {
             </Field>
             <div className="flex items-end text-xs text-slate-500">
               {form.kind === 'ALLOWANCE'
-                ? 'Allowance coupons need an outlet scope and at least one item/category/subcategory below.'
+                ? 'Allowance coupons must target a specific outlet and need at least one item/category/subcategory below.'
                 : ' '}
             </div>
           </div>
@@ -439,9 +469,9 @@ export default function CouponsPage() {
               </div>
 
               <Field label="Eligible items / categories / subcategories">
-                {scope === 'BUSINESS' ? (
+                {!form.outletId ? (
                   <div className="text-xs text-slate-500 italic">
-                    Pick an outlet at the top to choose scope.
+                    Pick an outlet above to load this outlet's menu.
                   </div>
                 ) : (
                   <div className="space-y-2 text-xs">
@@ -553,9 +583,9 @@ export default function CouponsPage() {
               />
             )}
             {form.targetType === 'TAG' && (
-              scope === 'BUSINESS' ? (
+              !form.outletId ? (
                 <div className="text-xs text-slate-500 italic">
-                  Tag targeting requires an outlet scope — pick an outlet at the top first.
+                  Pick an outlet above first — tags are outlet-scoped.
                 </div>
               ) : tags.length === 0 ? (
                 <div className="text-xs text-slate-500 italic">
