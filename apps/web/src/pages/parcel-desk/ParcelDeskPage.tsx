@@ -16,6 +16,7 @@ type Lane = 'pack' | 'handover';
 type OrderRow = {
   id: string;
   orderNumber: string;
+  tokenNumber?: number | null;
   outletId: string;
   status: string;
   isParcel: boolean;
@@ -329,6 +330,11 @@ export default function ParcelDeskPage() {
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                           <span className="font-bold text-slate-900 text-sm">#{o.orderNumber}</span>
+                          {o.tokenNumber != null && (
+                            <span className="text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded-full">
+                              T#{o.tokenNumber}
+                            </span>
+                          )}
                           <span className="text-[10px] font-semibold bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">
                             Parcel
                           </span>

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Patch, Delete, Param, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { MenuService } from './menu.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -22,8 +22,14 @@ export class BusinessMenuController {
   getMenu(
     @Param('businessId') businessId: string,
     @PreferredLanguage() lang: string | null,
+    // Admin/edit views pass includeHidden=true so items toggled to
+    // not-displayed still show up in the list (otherwise the admin
+    // would have no UI affordance to flip visibility back on).
+    @Query('includeHidden') includeHidden?: string,
   ) {
-    return this.menuService.getBusinessMenu(businessId, lang);
+    return this.menuService.getBusinessMenu(businessId, lang, {
+      includeHidden: includeHidden === 'true',
+    });
   }
 
   @Post('categories')
@@ -74,6 +80,20 @@ export class BusinessMenuController {
   @Patch('items/:id')
   updateItem(@Param('id') id: string, @Body() body: any) {
     return this.menuService.updateItem(id, body);
+  }
+
+  // Match the outlet-tier routes so the admin SPA can flip availability
+  // and visibility on business-template items. Service methods are
+  // shared with the outlet path; outletId-keyed cache invalidation
+  // no-ops for template rows (they have no outlet binding).
+  @Patch('items/:id/availability')
+  toggleAvailability(@Param('id') id: string) {
+    return this.menuService.toggleItemAvailability(id);
+  }
+
+  @Patch('items/:id/visibility')
+  toggleVisibility(@Param('id') id: string) {
+    return this.menuService.toggleItemVisibility(id);
   }
 
   @Delete('items/:id')

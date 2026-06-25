@@ -1,10 +1,16 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { allowsSeating } from '../../common/outlet-type';
+import { MenuService } from '../menu/menu.service';
 
 @Injectable()
 export class TableTypesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    // Used to bump the outlet's menu-tree version after price-override
+    // writes so the admin's next read isn't served the stale tree.
+    private menu: MenuService,
+  ) {}
 
   private async assertOutletAllowsSeating(outletId: string) {
     const outlet = await this.prisma.outlet.findUnique({
@@ -130,27 +136,33 @@ export class TableTypesService {
     const existing = await this.prisma.tableTypePrice.findFirst({
       where: { itemId, tableTypeId, variantId: variantId ?? null },
     });
+    let result;
     if (existing) {
-      return this.prisma.tableTypePrice.update({
+      result = await this.prisma.tableTypePrice.update({
         where: { id: existing.id },
         data: { price, ...(gstRate !== undefined ? { gstRate } : {}) },
       });
+    } else {
+      result = await this.prisma.tableTypePrice.create({
+        data: {
+          itemId,
+          tableTypeId,
+          variantId: variantId ?? null,
+          price,
+          gstRate: gstRate ?? null,
+        },
+      });
     }
-    return this.prisma.tableTypePrice.create({
-      data: {
-        itemId,
-        tableTypeId,
-        variantId: variantId ?? null,
-        price,
-        gstRate: gstRate ?? null,
-      },
-    });
+    await this.menu.invalidateOutlet(type.outletId);
+    return result;
   }
 
   async clearItemPrice(tableTypeId: string, itemId: string, variantId?: string) {
+    const type = await this.prisma.tableType.findUnique({ where: { id: tableTypeId }, select: { outletId: true } });
     await this.prisma.tableTypePrice.deleteMany({
       where: { tableTypeId, itemId, variantId: variantId ?? null },
     });
+    if (type) await this.menu.invalidateOutlet(type.outletId);
     return { success: true };
   }
 

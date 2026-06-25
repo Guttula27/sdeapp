@@ -339,7 +339,11 @@ export default function OutletsPage() {
                       onSubmit={(e) => {
                         e.preventDefault();
                         const fd = new FormData(e.currentTarget);
-                        saveOps(outlet.id, { outletType: fd.get('outletType') });
+                        saveOps(outlet.id, {
+                          outletType: fd.get('outletType'),
+                          // Checkbox returns 'on' when checked, null when not — coerce to bool.
+                          aggregatorEnabled: fd.get('aggregatorEnabled') === 'on',
+                        });
                       }}
                       className="grid grid-cols-1 gap-3"
                     >
@@ -353,6 +357,20 @@ export default function OutletsPage() {
                           {OUTLET_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                         </select>
                       </div>
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          name="aggregatorEnabled"
+                          defaultChecked={!!selected.aggregatorEnabled}
+                          className="mt-0.5"
+                        />
+                        <span>
+                          <span className="block text-xs font-semibold text-slate-700">Aggregator integration</span>
+                          <span className="block text-[10px] text-slate-500">
+                            When on, the outlet admin sees the Aggregators settings page (Zomato / Swiggy / Uber Eats). Off by default.
+                          </span>
+                        </span>
+                      </label>
                       <p className="text-[10px] text-slate-400 -mt-1">
                         Prep time, parcel fee and Razorpay Route ID now live on the outlet's own profile.
                       </p>

@@ -74,10 +74,20 @@ export class KitchenStationsService {
     });
   }
 
+  // Returns EVERY station this user is currently the worker for in
+  // this outlet — not just the first match. A single staff member can
+  // be assigned as the currentWorker on multiple stations (e.g. an
+  // overnight shift covering both the tandoor and the curry station);
+  // returning only one used to hide every other station's items from
+  // their kitchen display.
   findMine(outletId: string, userId: string) {
-    return this.prisma.kitchenStation.findFirst({
+    return this.prisma.kitchenStation.findMany({
       where: { outletId, isActive: true, currentWorkerId: userId },
-      include: { items: { select: { id: true, name: true } } },
+      include: {
+        items: { select: { id: true, name: true } },
+        printer: { select: { id: true, name: true, connection: true, address: true } },
+      },
+      orderBy: { createdAt: 'asc' },
     });
   }
 

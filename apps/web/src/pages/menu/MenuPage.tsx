@@ -267,7 +267,7 @@ export default function MenuPage() {
       setLoading(true);
       try {
         const [menuRes, bizRes, menusRes] = await Promise.all([
-          api.get(`/businesses/${businessId}/menu`),
+          api.get(`/businesses/${businessId}/menu`, { params: { includeHidden: 'true' } }),
           api.get(`/businesses/${businessId}`).catch(() => null),
           api.get(`/businesses/${businessId}/menus`).catch(() => null),
         ]);
@@ -680,6 +680,11 @@ export default function MenuPage() {
       preparationTime: form.get('preparationTime') ? Number(form.get('preparationTime')) : undefined,
       isPopular: form.get('isPopular') === 'on',
       isSpecial: form.get('isSpecial') === 'on',
+      // Per-item kitchen slip: when on, each OrderItem row for this
+      // item prints its own kitchen ticket (token + just that line) so
+      // staff can match it back to the customer at hand-off — useful
+      // when the item has custom toppings/variants.
+      printSeparately: form.get('printSeparately') === 'on',
       // Sales unit — NUMBER keeps existing count-based behaviour;
       // GRAMS / MILLILITERS marks the item as portion-based, drives
       // variant naming, and is hinted on the customer UI.
@@ -2005,118 +2010,48 @@ export default function MenuPage() {
         }
       >
         <form id="item-form" onSubmit={saveItem} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Primary photo">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="hidden"
-                onChange={onPickImage}
-              />
-              {itemImage ? (
-                <div className="relative w-32 h-32 rounded-xl overflow-hidden border border-slate-200">
-                  <img src={itemImage} alt="" className="w-full h-full object-cover" />
-                  <div className="absolute inset-0 bg-black/0 hover:bg-black/40 transition-colors flex items-center justify-center gap-1 opacity-0 hover:opacity-100">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="bg-white/90 text-slate-900 text-[10px] font-bold px-2 py-1 rounded-md"
-                    >
-                      Change
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setItemImage(null)}
-                      className="bg-red-500 text-white p-1 rounded-md"
-                      title="Remove"
-                    >
-                      <XIcon size={11} />
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-32 h-32 rounded-xl border-2 border-dashed border-slate-300 hover:border-brand-400 hover:bg-brand-50/30 flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-brand-600 transition-colors"
-                >
-                  <ImagePlus size={20} />
-                  <span className="text-[10px] font-semibold">Primary photo</span>
-                </button>
-              )}
-              <p className="text-[11px] text-slate-400 mt-1.5">
-                Auto-resized to 400&nbsp;px / JPEG so menus load on weak networks. Used everywhere — including the menu thumbnail — unless you set a separate one →
-              </p>
-            </Field>
-            <Field label="Thumbnail (optional)">
-              <input
-                ref={thumbInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="hidden"
-                onChange={onPickThumbnail}
-              />
-              {thumbnail ? (
-                <div className="relative w-24 h-24 rounded-xl overflow-hidden border border-slate-200">
-                  <img src={thumbnail} alt="" className="w-full h-full object-cover" />
+          <Field label="Primary photo">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={onPickImage}
+            />
+            {itemImage ? (
+              <div className="relative w-32 h-32 rounded-xl overflow-hidden border border-slate-200">
+                <img src={itemImage} alt="" className="w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-black/0 hover:bg-black/40 transition-colors flex items-center justify-center gap-1 opacity-0 hover:opacity-100">
                   <button
                     type="button"
-                    onClick={() => setThumbnail(null)}
-                    className="absolute top-1 right-1 bg-red-500 text-white p-0.5 rounded-md"
-                    title="Use the primary photo as thumbnail"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="bg-white/90 text-slate-900 text-[10px] font-bold px-2 py-1 rounded-md"
+                  >
+                    Change
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setItemImage(null)}
+                    className="bg-red-500 text-white p-1 rounded-md"
+                    title="Remove"
                   >
                     <XIcon size={11} />
                   </button>
                 </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => thumbInputRef.current?.click()}
-                  className="w-24 h-24 rounded-xl border-2 border-dashed border-slate-300 hover:border-brand-400 hover:bg-brand-50/30 flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-brand-600 transition-colors"
-                >
-                  <ImagePlus size={16} />
-                  <span className="text-[10px] font-semibold">Thumbnail</span>
-                </button>
-              )}
-              <p className="text-[11px] text-slate-400 mt-1.5">
-                Override only if you want a different image on cards. Leave blank to reuse the primary photo.
-              </p>
-            </Field>
-          </div>
-
-          <Field label="Gallery (optional)">
-            <input
-              ref={galleryInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={onPickGallery}
-            />
-            <div className="flex items-center gap-2 flex-wrap">
-              {gallery.map((g, idx) => (
-                <div key={g.id || idx} className="relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200">
-                  <img src={g.url} alt="" className="w-full h-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => setGallery(prev => prev.filter((_, i) => i !== idx))}
-                    className="absolute top-0.5 right-0.5 bg-red-500 text-white p-0.5 rounded"
-                    title="Remove"
-                  >
-                    <XIcon size={10} />
-                  </button>
-                </div>
-              ))}
+              </div>
+            ) : (
               <button
                 type="button"
-                onClick={() => galleryInputRef.current?.click()}
-                className="w-20 h-20 rounded-lg border-2 border-dashed border-slate-300 hover:border-brand-400 hover:bg-brand-50/30 flex flex-col items-center justify-center gap-0.5 text-slate-400 hover:text-brand-600 transition-colors"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-32 h-32 rounded-xl border-2 border-dashed border-slate-300 hover:border-brand-400 hover:bg-brand-50/30 flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-brand-600 transition-colors"
               >
-                <ImagePlus size={14} />
-                <span className="text-[9px] font-semibold">Add</span>
+                <ImagePlus size={20} />
+                <span className="text-[10px] font-semibold">Primary photo</span>
               </button>
-            </div>
-            <p className="text-[11px] text-slate-400 mt-1.5">JPG / PNG / WebP. ≤1&nbsp;MB each.</p>
+            )}
+            <p className="text-[11px] text-slate-400 mt-1.5">
+              JPG, PNG or WebP, up to 4&nbsp;MB. The image will be auto-adjusted as needed to fit the platform's display specifications.
+            </p>
           </Field>
           <Field label="Item Name">
             <input name="name" defaultValue={itemModal.editing?.name} required className="input" placeholder="e.g. Masala Dosa" />
@@ -2419,6 +2354,16 @@ export default function MenuPage() {
               />
               <span className="text-sm font-medium text-slate-700">Visible on customer menu</span>
               <span className="text-[10px] text-slate-400">(uncheck for bundle-only items, e.g. mini dosa)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                name="printSeparately"
+                defaultChecked={!!itemModal.editing?.printSeparately}
+                className="w-4 h-4 accent-emerald-500 rounded"
+              />
+              <span className="text-sm font-medium text-slate-700">Print as separate kitchen slip</span>
+              <span className="text-[10px] text-slate-400">(token + just this line — helps service identify items with custom toppings/variants)</span>
             </label>
           </div>
 

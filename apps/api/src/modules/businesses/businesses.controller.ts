@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Put, Param, Body, Query, UseGuards, Delete } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { BusinessesService, CreateBusinessDto } from './businesses.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -44,6 +44,27 @@ export class BusinessesController {
   @Patch(':id/toggle-status')
   toggleStatus(@Param('id') id: string) {
     return this.service.toggleStatus(id);
+  }
+
+  // Per-business language config (D5 of perf plan).
+  //   primaryLanguage  — default render language for customers
+  //                      without a preference.
+  //   eagerLanguages   — codes that get pre-translated on every
+  //                      menu/business edit (the rest fall to D4's
+  //                      lazy on-demand path).
+  // Customers can still pick any platform-supported language at any
+  // outlet — this is a cost-control knob, not an availability gate.
+  @Get(':id/language-config')
+  getLanguageConfig(@Param('id') id: string) {
+    return this.service.getLanguageConfig(id);
+  }
+
+  @Put(':id/language-config')
+  setLanguageConfig(
+    @Param('id') id: string,
+    @Body() body: { primaryLanguage?: string | null; eagerLanguages?: string[] | null },
+  ) {
+    return this.service.setLanguageConfig(id, body);
   }
 
   @Get(':id/admin')

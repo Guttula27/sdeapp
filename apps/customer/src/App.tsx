@@ -10,6 +10,8 @@ import OfflineBanner from './components/OfflineBanner';
 import OrderTrackingPage from './pages/OrderTrackingPage';
 import ProfilePage from './pages/ProfilePage';
 import PaymentPage from './pages/PaymentPage';
+import BillsPage from './pages/BillsPage';
+import BillSharePage from './pages/BillSharePage';
 import ReceiptPage from './pages/ReceiptPage';
 import DashboardPage from './pages/DashboardPage';
 import OffersPage from './pages/OffersPage';
@@ -80,6 +82,8 @@ export default function App() {
           <Route path="/s/outlet/:outletId/item/:itemId" element={<ScanResolverPage />} />
           <Route path="/s/outlet/:outletId" element={<ScanResolverPage />} />
           <Route path="/pay"    element={<ProtectedRoute><PaymentPage /></ProtectedRoute>} />
+          <Route path="/bills"          element={<ProtectedRoute><BillsPage /></ProtectedRoute>} />
+          <Route path="/bills/:shareId" element={<ProtectedRoute><BillSharePage /></ProtectedRoute>} />
           <Route path="/receipt/:orderId" element={<ProtectedRoute><ReceiptPage /></ProtectedRoute>} />
           <Route path="/track/:orderId" element={<OrderTrackingPage />} />
           <Route path="/alerts" element={<ProtectedRoute><AlertsPage /></ProtectedRoute>} />

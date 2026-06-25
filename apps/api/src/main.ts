@@ -4,6 +4,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { WinstonModule } from 'nest-winston';
 import * as compression from 'compression';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
@@ -26,6 +27,22 @@ async function bootstrap() {
   app.useBodyParser('urlencoded', { limit: '16mb', extended: true });
 
   app.getHttpAdapter().getInstance().disable('x-powered-by');
+
+  // Standard browser-side security headers (HSTS, X-Content-Type-Options,
+  // Referrer-Policy, X-Frame-Options, etc.). Two opt-outs:
+  //   • CSP — disabled here because Swagger UI uses inline scripts and
+  //     a tight default policy would break it. Tune per deployment if
+  //     you want to enforce CSP (production with Swagger off is the
+  //     natural place).
+  //   • Cross-Origin-Embedder-Policy — disabled because we serve images
+  //     and webhook payloads to clients that don't send CORP headers.
+  // HSTS itself is safe to keep on: browsers ignore it over plain HTTP,
+  // so it's a no-op in local dev and takes effect once HTTPS is in
+  // front in production.
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }));
 
   // gzip every response above the default ~1 KB threshold. The single
   // biggest win is on the menu / reports / orders endpoints where the

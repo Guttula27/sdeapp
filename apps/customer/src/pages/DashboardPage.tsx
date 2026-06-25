@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
-import { ShoppingBag, IndianRupee, Calendar, ChevronRight, Store } from 'lucide-react';
+import { ShoppingBag, Calendar, ChevronRight, Store } from 'lucide-react';
 import api from '../services/api';
 
 interface Stats {
@@ -127,10 +127,13 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* KPI cards */}
-      <div className="px-4 mt-4 grid grid-cols-2 gap-3">
+      {/* KPI cards. Total spend was intentionally removed — the
+          customer dashboard is a positive surface (track orders,
+          discover offers); a running lifetime spend total can feel
+          accusatory next to that. The metric is still computed on
+          the backend (used for outlet-side customer insights). */}
+      <div className="px-4 mt-4">
         <KpiCard label="Orders" value={stats?.totalOrders ?? 0} icon={ShoppingBag} tone="orange" />
-        <KpiCard label="Total spend" value={`₹${Math.round(stats?.totalValue ?? 0).toLocaleString('en-IN')}`} icon={IndianRupee} tone="emerald" />
       </div>
 
       {/* Daily chart */}

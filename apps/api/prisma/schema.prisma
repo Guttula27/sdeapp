@@ -7,6 +7,22 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─────────────────────────────────────────────────────────────
+// Recommended production DATABASE_URL params (append to the URL):
+//   ?connection_limit=20&pool_timeout=10
+//
+// Why: Prisma's default pool is `num_cpus × 2 + 1` — on a typical 4-core
+// container that's 9 connections. Under burst load (e.g. a kitchen-screen
+// reconnect storm or a menu cache cold-fill) Prisma serialises new queries
+// once the pool is exhausted, surfacing as request-side latency spikes
+// before any single query is actually slow. Bumping to 20 buys headroom
+// and the 10 s pool_timeout fails fast instead of hanging.
+//
+// MySQL's own `max_connections` ceiling is the hard limit — keep
+// (connection_limit × api_replicas) < max_connections. Local dev keeps
+// the default; this only matters in deployed environments.
+// ─────────────────────────────────────────────────────────────
+
 // ─── Enums ───────────────────────────────────────────────
 
 enum UserStatus {
@@ -100,6 +116,64 @@ enum PaymentMode {
   CASH
   WALLET
   NET_BANKING
+}
+
+enum OutletShiftStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum CashierShiftStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum RefundStatus {
+  INITIATED       // Cashier filed it; awaiting approval
+  APPROVED        // Approver OK'd; cash refunds complete here, gateway refunds move to PROCESSING
+  PROCESSING      // Razorpay refund API in flight
+  COMPLETED       // Money returned to customer
+  FAILED          // Razorpay rejected or processing errored
+  CANCELLED       // Cancelled before completion
+}
+
+// Lifecycle of a single split-bill share. Each share is independent —
+// one diner's WhatsApp-delivered sub-bill against a parent Order.
+enum SplitShareStatus {
+  PENDING         // Row created; WhatsApp not yet dispatched
+  SENT            // WhatsApp delivered to the diner's phone
+  VIEWED          // Diner opened the share detail in the customer PWA
+  PAID            // Payment row materialised against the share
+  CANCELLED       // Operator cancelled before payment
+  EXPIRED         // Auto-expired by the reminder/expiry job (Phase B)
+}
+
+enum SplitFeeAbsorption {
+  OUTLET          // Default — outlet eats the Razorpay fee, diner pays exactly their share
+  CUSTOMER        // Diner pays share + Razorpay convenience fee + GST on the fee
+}
+
+// Order origin / aggregator channel. DIRECT = walk-in, customer PWA,
+// QR scan — the existing flow. Other values mark orders that came
+// inbound from a third-party marketplace, so reports + the kitchen
+// header can call them out and we can sync status back to the right
+// provider.
+enum AggregatorChannel {
+  DIRECT
+  ZOMATO
+  SWIGGY
+  UBER_EATS
+}
+
+enum AggregatorOrderStatus {
+  RECEIVED       // Inbound webhook fired; we've recorded it
+  ACCEPTED       // We accepted; the kitchen is on it
+  REJECTED       // We declined (out of stock, closed, etc.)
+  PREPARING
+  READY
+  DISPATCHED     // Rider picked up
+  DELIVERED      // Aggregator told us delivery happened
+  CANCELLED
 }
 
 enum SubscriptionStatus {
@@ -212,6 +286,13 @@ model User {
   rewardAccount          CustomerRewardAccount?  @relation("RewardAccount")
   rewardTransactions     RewardTransaction[]     @relation("RewardTransactions")
   orderStatusChanges     OrderStatusHistory[]    @relation("OrderStatusHistoryActor")
+  outletShiftsOpened     OutletShift[]           @relation("OutletShiftOpenedBy")
+  outletShiftsClosed     OutletShift[]           @relation("OutletShiftClosedBy")
+  cashierShifts          CashierShift[]          @relation("CashierShifts")
+  refundsInitiated       Refund[]                @relation("RefundsInitiated")
+  refundsApproved        Refund[]                @relation("RefundsApproved")
+  splitShares            SplitShare[]            @relation("SplitShareCustomer")
+  splitSharesCreated     SplitShare[]            @relation("SplitShareCreatedBy")
   preferredUpiApp        String?
   profileImageUrl        String?                 @db.MediumText
   alertRingtone          String?                 @default("chime")
@@ -477,6 +558,29 @@ model Business {
   discounts Discount[]
   offers    Offer[]
 
+  // ── i18n (Phase 3 of perf plan) ──────────────────────────────
+  // primaryLanguage = customer-facing default when no preference is
+  //   signalled. A Tamil Nadu chain uses 'ta'; defaults to 'en'.
+  // eagerLanguages  = JSON string-array of language codes to
+  //   pre-translate on every menu/business edit. Everything else
+  //   falls to the on-demand lazy path. Typical setting: a primary
+  //   regional language + English + one or two core secondaries.
+  // Customers can still request any platform-supported language at
+  //   any outlet — these knobs only affect provider-cost ergonomics.
+  primaryLanguage  String?    @default("en") @db.VarChar(8)
+  eagerLanguages   Json?
+
+  // Denormalised i18n cells — populated by upsertAll alongside the
+  // legacy paynpik_translations rows. Shape per cell:
+  //   { "hi": "हिंदी value", "ta": "தமிழ் value" }
+  // Source-language (English) value stays in the matching plain
+  // column; the i18n cell never carries the source itself.
+  name_i18n         Json?
+  description_i18n  Json?
+  address_i18n      Json?
+  addressLine1_i18n Json?
+  addressLine2_i18n Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -569,6 +673,9 @@ model Outlet {
   sections               Section[]
   categories             Category[]
   orders                 Order[]
+  outletShifts           OutletShift[]
+  aggregatorIntegrations AggregatorIntegration[]
+  aggregatorCustomers    AggregatorCustomer[]
   tables                 Table[]
   qrCodes                QRCode[]
   kitchenStations        KitchenStation[]
@@ -619,6 +726,38 @@ model Outlet {
   discounts Discount[]
   offers    Offer[]
   printers  Printer[]
+
+  // Split-bill Phase B knobs.
+  //   splitReminderEveryMinutes — gap between auto-reminders to a
+  //     pending share. Default 60 min.
+  //   splitMaxReminders — caps the resend loop so a diner who's
+  //     ignoring the message doesn't get spammed indefinitely. Default 3.
+  //   splitExpireAfterMinutes — total window from share creation;
+  //     once crossed without payment, the share auto-EXPIREs. Default
+  //     1440 (24h).
+  //   splitFeesAbsorbedBy — who pays the Razorpay convenience fee
+  //     when the diner chooses Razorpay. CUSTOMER adds the fee to the
+  //     payment-link total + shows a Convenience Fee line on the
+  //     BillSharePage breakdown. OUTLET (default) eats the fee.
+  splitReminderEveryMinutes Int                @default(60)
+  splitMaxReminders         Int                @default(3)
+  splitExpireAfterMinutes   Int                @default(1440)
+  splitFeesAbsorbedBy       SplitFeeAbsorption @default(OUTLET)
+
+  // Business-admin-controlled feature toggle. When false, the
+  // outlet admin doesn't see the Aggregators sub-page under
+  // Settings, and inbound webhooks for this outlet keep working
+  // only via integrations that were already set up before the flag
+  // was flipped (the AggregatorIntegration table is independent of
+  // this flag). Default false so the toggle is opt-in per outlet.
+  aggregatorEnabled         Boolean            @default(false)
+
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n         Json?
+  description_i18n  Json?
+  address_i18n      Json?
+  addressLine1_i18n Json?
+  addressLine2_i18n Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -723,6 +862,9 @@ model Category {
   // (cascading semantics — see menu.service.getMenu).
   timingSlots   CategoryTimingSlot[]
 
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -760,6 +902,9 @@ model Subcategory {
   discounts   Discount[]
   // Optional per-day availability windows (see CategoryTimingSlot).
   timingSlots SubcategoryTimingSlot[]
+
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -909,6 +1054,13 @@ model Item {
   kitchenStationId String?
   kitchenStation   KitchenStation? @relation(fields: [kitchenStationId], references: [id])
 
+  // When true, each OrderItem row for this item prints its own kitchen
+  // slip (with the order's token and just that line — variant, toppings,
+  // qty, notes) instead of being grouped into the station's combined
+  // ticket. Intended for items where toppings / variants make per-line
+  // identification critical at hand-off.
+  printSeparately Boolean @default(false)
+
   // When true, this Item is a Bundle — at order time the server expands it
   // into its child rows (see ItemBundleChild). Bundles still live under a
   // subcategory and inherit every Item feature (variants, customer-tag /
@@ -939,6 +1091,13 @@ model Item {
   offerGetFor        Offer[]            @relation("OfferGetItem")
   // Optional per-day availability windows (see CategoryTimingSlot).
   timingSlots        ItemTimingSlot[]
+  // Per-aggregator-channel external id mapping (Zomato/Swiggy/etc).
+  aggregatorMappings AggregatorItemMapping[]
+
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n             Json?
+  description_i18n      Json?
+  shortDescription_i18n Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -988,6 +1147,10 @@ model Variant {
   customerTagPrices CustomerTagPrice[]
   tableTypePrices   TableTypePrice[]
   bundleChildLinks  ItemBundleChild[]
+
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n             Json?
+  shortDescription_i18n Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1176,6 +1339,31 @@ model Order {
   staffId    String?
   staff      User?    @relation("StaffOrders", fields: [staffId], references: [id])
 
+  // Cashier shift this order was opened against. Nullable for legacy
+  // orders + orders placed when no cashier shift was active. Z report
+  // counts gross-sales by this column; revenue (payments) is tracked
+  // separately via Payment.cashierShiftId since an order placed in one
+  // shift can be paid in another (postpaid tabs spanning shift change).
+  cashierShiftId String?
+  cashierShift   CashierShift? @relation(fields: [cashierShiftId], references: [id])
+
+  // Channel the order came in through. DIRECT covers walk-in / QR /
+  // customer PWA. ZOMATO / SWIGGY / UBER_EATS mark inbound marketplace
+  // orders so reports can split revenue by channel and the kitchen
+  // display can call out where the order originated. The
+  // AggregatorOrder side-table holds the external IDs + raw payload.
+  channel        AggregatorChannel @default(DIRECT)
+  aggregatorOrder AggregatorOrder?
+
+  // Split-bill denormalised counters. Updated inside the same
+  // transaction as SplitShare row mutations so the OrdersPage detail
+  // and the customer PWA progress pill never need a sub-query to
+  // know "3 of 4 paid".  Zero when the order isn't split-billed.
+  splitTotalShares Int     @default(0)
+  splitPaidShares  Int     @default(0)
+  splitPaidAmount  Decimal @default(0) @db.Decimal(10, 2)
+  splitShares      SplitShare[]
+
   // When non-null, this Order is a child of a ClusterOrder — created as part
   // of a cluster checkout where the customer placed one cart with items from
   // multiple outlets. The parent ClusterOrder holds the unified payment;
@@ -1204,6 +1392,7 @@ model Order {
 
   items          OrderItem[]
   payments       Payment[]
+  refunds        Refund[]
   statusHistory  OrderStatusHistory[]
   disputes       Dispute[]
   customerAlerts CustomerAlert[]
@@ -1212,6 +1401,20 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Hot-path composites (added 2026-06-22, Phase 1 of perf plan):
+  //   • (outletId, createdAt) — every orders-list view filters by outlet
+  //     and sorts by createdAt DESC. The single-column outletId FK index
+  //     forces a filesort over thousands of rows on each render.
+  //   • (outletId, status, createdAt) — service desk + kitchen station
+  //     queries filter by outlet + status IN (...) and want the same
+  //     newest-first sort. Lets the optimiser walk the index in order.
+  //   • (status) — z-reports and global queues filter on status alone.
+  // Single-column outletId/customerId/tableId etc. stay as the implicit
+  // FK indexes Prisma generates; these only add the composite + the
+  // bare status lookup.
+  @@index([outletId, createdAt], map: "idx_orders_outlet_created")
+  @@index([outletId, status, createdAt], map: "idx_orders_outlet_status_created")
+  @@index([status], map: "idx_orders_status")
   @@map("paynpik_orders")
 }
 
@@ -1364,6 +1567,15 @@ model OrderItem {
 
   @@index([menuId])
   @@index([bundleId])
+  // Phase 1 perf composites:
+  //   • (orderId, status, itemId) — the menu popularity GROUP BY scans
+  //     order_items per order and filters by status; the kitchen feed
+  //     does the same shape. Lets join + filter + group-key reads stay
+  //     index-only.
+  //   • (status) — service-desk / kitchen status filters that aren't
+  //     scoped by orderId.
+  @@index([orderId, status, itemId], map: "idx_orderitems_order_status_item")
+  @@index([status], map: "idx_orderitems_status")
   @@map("paynpik_order_items")
 }
 
@@ -1434,12 +1646,392 @@ model Payment {
   orderId         String
   order           Order         @relation(fields: [orderId], references: [id])
 
+  // Cashier shift this payment was recorded against. Stamped at
+  // payment-confirmation time on the active cashier shift of the
+  // staff confirming the payment. The Z report's cash totals and
+  // payment-mode split read this column — not the Order's shift —
+  // so a tab opened in one shift and billed in the next attributes
+  // revenue to the closing shift correctly.
+  cashierShiftId String?
+  cashierShift   CashierShift? @relation(fields: [cashierShiftId], references: [id])
+
   reviewPayback OrderItemReview?
+  refunds       Refund[]            @relation("RefundFromPayment")
+
+  // When this Payment settles a split-bill share, the share row points
+  // back here via SplitShare.paymentId and we mirror the link here so
+  // reports can group payments by share without a reverse join.
+  splitShareId  String?            @unique
+  splitShare    SplitShare?        @relation(fields: [splitShareId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([cashierShiftId, status])
   @@map("paynpik_payments")
+}
+
+// ─── Cashier shifts / end-of-day Z reports ────────────────
+//
+// An OutletShift is the per-outlet envelope ("today's session"). A
+// new one is opened by an outlet admin (or auto-spawned when a
+// cashier first opens their drawer if no envelope exists). Closing
+// the envelope rolls up totals across every cashier shift inside it.
+//
+// CashierShifts are per-cashier drawers under an OutletShift. Each
+// has its own opening float, declared closing cash, expected cash
+// (derived from CASH payments stamped against it), and variance.
+// Z reports can be generated at either level — the cashier level
+// is what the cashier closes their drawer with; the outlet level is
+// what the manager / accountant reads at end of day.
+model OutletShift {
+  id              String              @id @default(cuid())
+  outletId        String
+  outlet          Outlet              @relation(fields: [outletId], references: [id])
+  openedAt        DateTime            @default(now())
+  closedAt        DateTime?
+  // Note string for the operator opening the shift (e.g. "morning")
+  // and an optional close note (variance reason etc.). Free-text.
+  openNote        String?
+  closeNote       String?
+  openedByUserId  String
+  openedBy        User                @relation("OutletShiftOpenedBy", fields: [openedByUserId], references: [id])
+  closedByUserId  String?
+  closedBy        User?               @relation("OutletShiftClosedBy", fields: [closedByUserId], references: [id])
+  status          OutletShiftStatus   @default(ACTIVE)
+  cashierShifts   CashierShift[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([outletId, status])
+  @@map("paynpik_outlet_shifts")
+}
+
+model CashierShift {
+  id              String              @id @default(cuid())
+  outletShiftId   String
+  outletShift     OutletShift         @relation(fields: [outletShiftId], references: [id])
+  // Denormalised so the most common Z-report queries
+  // (outlet/cashier/date scope) can avoid the join.
+  outletId        String
+  cashierId       String
+  cashier         User                @relation("CashierShifts", fields: [cashierId], references: [id])
+  openedAt        DateTime            @default(now())
+  closedAt        DateTime?
+  // Opening cash float the cashier started with. Required at open
+  // — even if zero, the operator declares it explicitly.
+  openingFloat    Decimal             @default(0) @db.Decimal(10, 2)
+  // Set at close: what the cashier physically counted in the drawer.
+  declaredCash    Decimal?            @db.Decimal(10, 2)
+  // Set at close: opening + cash payments - cash refunds across the
+  // shift. The cashier's drawer should hold exactly this much; any
+  // difference between declaredCash and expectedCash is the variance.
+  expectedCash    Decimal?            @db.Decimal(10, 2)
+  variance        Decimal?            @db.Decimal(10, 2)
+  status          CashierShiftStatus  @default(ACTIVE)
+  openNote        String?
+  closeNote       String?
+
+  orders          Order[]
+  payments        Payment[]
+  refunds         Refund[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([cashierId, status])
+  @@index([outletShiftId])
+  @@map("paynpik_cashier_shifts")
+}
+
+// ─── Refunds ──────────────────────────────────────────────
+//
+// The Refund record tracks the workflow (initiate → approve →
+// complete) and serves as the audit trail. When a refund COMPLETES,
+// a sibling Payment row with isRefund=true is created — that's what
+// the Z report's "Refunds issued" block and the cashier drawer
+// reconciliation read. Cash refunds out of the drawer decrement
+// expectedCash; gateway refunds (via Razorpay) are settlement-side
+// only and don't affect the drawer.
+//
+// Partial refunds keep the order at FOR_REFUND; only a refund whose
+// cumulative refunded amount equals the order's totalAmount flips
+// the order to REFUND_COMPLETE.
+model Refund {
+  id                String        @id @default(cuid())
+  orderId           String
+  order             Order         @relation(fields: [orderId], references: [id])
+  // Source payment this refund is drawn against. Required for gateway
+  // refunds (Razorpay needs the original payment_id); for cash-out
+  // refunds against a cash-paid order it's also recorded so reports
+  // can trace each refund back to a specific receipt.
+  paymentId         String?
+  payment           Payment?      @relation("RefundFromPayment", fields: [paymentId], references: [id])
+  amount            Decimal       @db.Decimal(10, 2)
+  // How the money is going back to the customer. Cash refunds are
+  // resolved at the cashier's drawer; UPI/CARD/WALLET/NET_BANKING go
+  // through Razorpay's refund API.
+  mode              PaymentMode
+  reason            String?
+  status            RefundStatus  @default(INITIATED)
+  // Razorpay refund id when gateway-processed. Encrypted at rest the
+  // same way Payment.gatewayRef is, to keep parity with how PSP refs
+  // are handled elsewhere.
+  gatewayRef        String?       @db.Text
+  gatewayResponse   Json?
+  initiatedById     String
+  initiatedBy       User          @relation("RefundsInitiated", fields: [initiatedById], references: [id])
+  approvedById      String?
+  approvedBy        User?         @relation("RefundsApproved", fields: [approvedById], references: [id])
+  // Cashier drawer this refund was settled against (set at
+  // completion time for cash refunds so drawer reconciliation is
+  // correct). Null for gateway refunds.
+  cashierShiftId    String?
+  cashierShift      CashierShift? @relation(fields: [cashierShiftId], references: [id])
+  // Internal notes — failure messages, approver comments.
+  notes             String?
+  createdAt         DateTime      @default(now())
+  approvedAt        DateTime?
+  completedAt       DateTime?
+  updatedAt         DateTime      @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+  @@index([cashierShiftId])
+  @@map("paynpik_refunds")
+}
+
+// ─── Split bill shares ────────────────────────────────────
+//
+// Each row is one diner's sub-bill against a parent Order. The
+// operator creates N shares from the OrdersPage split modal; WhatsApp
+// fires to each phone; the diner taps the deep link, lands on the
+// customer PWA's bill detail, and pays through the existing payment
+// page (UPI or Razorpay) — same flow they'd use for any direct
+// order. We don't model a "primary" share — the operator chases via
+// the per-share Resend / Cancel / Mark cash buttons on the order
+// detail.
+//
+// On payment, Payment.splitShareId points at this row and the parent
+// Order's denormalised splitPaidShares / splitPaidAmount counters
+// bump inside the same transaction. Refunds against a share use the
+// existing Refund flow against the Payment row — no SplitShare-aware
+// changes needed.
+model SplitShare {
+  id              String           @id @default(cuid())
+  orderId         String
+  order           Order            @relation(fields: [orderId], references: [id])
+  // Share amount in rupees. The sum of all non-CANCELLED shares
+  // should equal Order.totalAmount for a fully-split bill; the
+  // operator can underallocate (and pay the rest as cash directly
+  // on the order) but never overallocate — server validates on
+  // create.
+  amount          Decimal          @db.Decimal(10, 2)
+  // Diner identity. Phone is required (it's the delivery channel for
+  // the WhatsApp message); name is optional. customerId is null
+  // until the diner taps the WhatsApp link and the auth/OTP flow
+  // resolves them to a real User row — at which point the existing
+  // phone-hash lookup finds (or creates) the User.
+  customerPhone   String
+  customerName    String?
+  customerId      String?
+  customer        User?            @relation("SplitShareCustomer", fields: [customerId], references: [id])
+  status          SplitShareStatus @default(PENDING)
+  // Settlement link. Populated when the diner pays through the
+  // customer PWA's standard payment page, OR when the operator
+  // clicks "Mark cash" on the per-share action.
+  paymentId       String?          @unique
+  payment         Payment?         @relation
+  // Operator who created the share — recorded for the order log so
+  // staff can trace which cashier filed the split.
+  createdById     String
+  createdBy       User             @relation("SplitShareCreatedBy", fields: [createdById], references: [id])
+  // Lifecycle timestamps for the customer-facing progress display
+  // and the Phase-B reminders job.
+  sentAt          DateTime?
+  viewedAt        DateTime?
+  paidAt          DateTime?
+  cancelledAt     DateTime?
+  // Free-text notes — used today to record "marked cash by operator
+  // on shift X" so the audit trail explains why a share didn't
+  // settle through the gateway.
+  notes           String?
+  // Phase B fields. remindersSent caps the auto-resend job; once it
+  // hits the outlet's splitMaxReminders the share is left alone.
+  // lastReminderAt is the throttle anchor — the job only sends the
+  // next reminder when (now - lastReminderAt) >= splitReminderEvery.
+  // expiresAt is computed at create-time from outlet.splitExpireAfter;
+  // when crossed without a payment, the share auto-flips to EXPIRED.
+  remindersSent   Int       @default(0)
+  lastReminderAt  DateTime?
+  expiresAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([customerPhone])
+  @@index([customerId])
+  @@index([status])
+  @@map("paynpik_split_shares")
+}
+
+// ─── Aggregator integrations (Zomato / Swiggy / Uber Eats) ────────
+//
+// The three records below form the framework for inbound + outbound
+// aggregator support. Per outlet, an AggregatorIntegration row holds
+// the credentials (encrypted JSON) and the per-channel restaurant id
+// the aggregator assigns. AggregatorOrder maps an inbound order to
+// our Order record + holds the raw payload for audit. AggregatorItemMapping
+// maps our Item ids to the per-channel external ids so menu sync /
+// item availability toggles can target the right marketplace row.
+//
+// The actual API calls are implemented per adapter under
+// src/modules/aggregators/adapters; until credentials are configured,
+// the adapters log + no-op (safe to ship without breaking the
+// existing direct-channel flow).
+model AggregatorIntegration {
+  id              String              @id @default(cuid())
+  outletId        String
+  outlet          Outlet              @relation(fields: [outletId], references: [id])
+  channel         AggregatorChannel
+  isActive        Boolean             @default(false)
+  // Encrypted credentials JSON — shape varies per provider
+  // (e.g. Zomato: api_key + restaurant_id; Swiggy: similar with menu_id;
+  // UberEats: client_id + client_secret + store_id).
+  credentialsEnc  String?             @db.Text
+  // Per-channel restaurant identifier, surfaced separately for UI
+  // convenience (the operator pastes this from the aggregator dashboard).
+  externalRestaurantId String?
+  // HMAC secret used to validate inbound webhook signatures.
+  // Stored encrypted; the channel-specific adapter re-encrypts/decrypts.
+  webhookSecretEnc String?            @db.Text
+  // Last successful menu sync to this channel. Drives the "sync menu"
+  // pill on the integrations page so operators see when it last ran.
+  lastMenuSyncAt  DateTime?
+  notes           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([outletId, channel])
+  @@index([channel, isActive])
+  @@map("paynpik_aggregator_integrations")
+}
+
+model AggregatorOrder {
+  id              String              @id @default(cuid())
+  // One-to-one with Order; the inbound webhook creates both rows in
+  // the same transaction. Use the @unique to enforce this at the DB.
+  orderId         String              @unique
+  order           Order               @relation(fields: [orderId], references: [id])
+  channel         AggregatorChannel
+  // The aggregator's order id (Zomato's order_id, Swiggy's order_id,
+  // Uber's order.id). Per-channel-unique with the @@unique below.
+  externalOrderId String
+  // Last status we pushed back to the aggregator. The adapter's
+  // syncStatus is idempotent — re-firing this with the same value is
+  // a no-op on the provider side.
+  status          AggregatorOrderStatus @default(RECEIVED)
+  // Raw inbound payload (encrypted at rest? No — these are inbound
+  // marketplace payloads, not customer PII). Used for audit + replay
+  // when an adapter changes shape.
+  rawPayload      Json?
+  // Last sync attempt response — error message for failures so the
+  // operator can see why a status push didn't land.
+  lastSyncError   String?             @db.Text
+
+  // Marketplace customer link. Nullable because the aggregator may
+  // not expose a stable customer id on every payload, and historical
+  // rows from before this column existed have no link. The Order's
+  // own customerId stays null for aggregator orders — we don't
+  // pollute the User table with synthetic rows for masked phones.
+  aggregatorCustomerId String?
+  aggregatorCustomer   AggregatorCustomer? @relation(fields: [aggregatorCustomerId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([channel, externalOrderId])
+  @@index([channel, status])
+  @@index([aggregatorCustomerId])
+  @@map("paynpik_aggregator_orders")
+}
+
+// Per-marketplace customer record. Separate from User because:
+//   • Aggregators mask phone numbers, so we can't reliably join to
+//     User by phone — the same real person ordering on Zomato vs
+//     direct gives us two different "phones" that we shouldn't
+//     auto-merge.
+//   • The aggregator's stable customer_id (when exposed by the
+//     provider) is a far better identity anchor than the masked phone.
+//   • Reports + the recognition pill on OrdersPage need a clean way
+//     to say "Repeat Swiggy customer · 5th order" without polluting
+//     direct-customer counts.
+//
+// Scoped per-outlet so the recognition counters stay local to where
+// the customer actually orders. A chain with one Swiggy customer
+// across three outlets gets three rows, which is what we want for
+// per-location loyalty/recognition.
+model AggregatorCustomer {
+  id                  String              @id @default(cuid())
+  outletId            String
+  outlet              Outlet              @relation(fields: [outletId], references: [id])
+  channel             AggregatorChannel
+  // The aggregator's stable per-customer identifier. Falls back to
+  // the masked phone when the provider doesn't expose this (rare but
+  // possible). The @@unique below uses outletId+channel+this so the
+  // upsert path can land on a stable row.
+  externalCustomerId  String
+  displayName         String?
+  // Aggregator-proxied phone — typically a number that connects to
+  // the real customer via the aggregator's call-masking service.
+  // Stored for the packing slip and the rider-callback flow.
+  maskedPhone         String?
+  // Denormalised aggregates so the recognition pill can render
+  // without a follow-up COUNT/MAX query per order.
+  firstOrderAt        DateTime            @default(now())
+  lastOrderAt         DateTime            @default(now())
+  orderCount          Int                 @default(0)
+
+  orders              AggregatorOrder[]
+
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  // map: explicitly shortens the index names so MySQL's 64-char
+  // identifier limit doesn't reject them. The default Prisma-generated
+  // names (paynpik_aggregator_customers_outletId_channel_externalCustomerId_key)
+  // were 68 chars and tripped ERROR 1059 on the first deploy attempt.
+  @@unique([outletId, channel, externalCustomerId], map: "paynpik_agg_cust_outlet_chan_ext_key")
+  @@index([channel, externalCustomerId], map: "paynpik_agg_cust_channel_ext_idx")
+  @@map("paynpik_aggregator_customers")
+}
+
+model AggregatorItemMapping {
+  id              String              @id @default(cuid())
+  itemId          String
+  item            Item                @relation(fields: [itemId], references: [id])
+  channel         AggregatorChannel
+  // The aggregator's per-item identifier — populated from the menu
+  // sync response or pasted in from the aggregator dashboard.
+  externalItemId  String
+  // Optional channel-specific price override. When set, the menu
+  // sync pushes this instead of Item.basePrice (aggregator commission
+  // structures often require a bumped price on the marketplace side).
+  externalPrice   Decimal?            @db.Decimal(10, 2)
+  // When false the item is hidden on this channel even if isAvailable
+  // is true. Lets staff stop accepting marketplace orders for a dish
+  // without affecting the dine-in menu.
+  isEnabled       Boolean             @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([itemId, channel])
+  @@index([channel, externalItemId])
+  @@map("paynpik_aggregator_item_mappings")
 }
 
 model Dispute {
@@ -1452,6 +2044,9 @@ model Dispute {
   attachments Json     @default("[]")
   orderId     String
   order       Order    @relation(fields: [orderId], references: [id])
+
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  description_i18n Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1645,6 +2240,9 @@ model CustomerTag {
   itemPrices  CustomerTagPrice[]
   assignments CustomerTagAssignment[]
 
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1699,6 +2297,9 @@ model Topping {
   options   ToppingOption[]
   itemLinks ItemTopping[]
 
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1713,6 +2314,9 @@ model ToppingOption {
   name         String
   priceAdd     Decimal @default(0) @db.Decimal(10, 2)
   displayOrder Int     @default(0)
+
+  // i18n denorm — see Business.* for the shape/lifecycle.
+  name_i18n Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

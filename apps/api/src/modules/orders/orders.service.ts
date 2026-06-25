@@ -18,6 +18,31 @@ import {
   TimingSlot,
 } from '../../common/timing/timing-slots';
 
+// Slim list projection used when callers pass ?slim=true to the orders
+// list endpoints. Keeps the row payload ~250 bytes so a 50-row list
+// stays under ~15 KB — vs ~1 MB for the fat shape that ships every
+// item.item.variant + customer.tags + payments graph. The fat shape
+// remains the default until consumers (admin SPA, kitchen displays,
+// service desk) explicitly opt in. See docs/performance-hardening-plan.md C2.
+const SLIM_LIST_SELECT = {
+  id: true,
+  orderNumber: true,
+  tokenNumber: true,
+  status: true,
+  isParcel: true,
+  isPostpaid: true,
+  totalAmount: true,
+  channel: true,
+  createdAt: true,
+  splitTotalShares: true,
+  splitPaidShares: true,
+  outletId: true,
+  tableId: true,
+  table: { select: { id: true, number: true } },
+  customer: { select: { id: true, name: true } },
+  _count: { select: { items: true } },
+} as const;
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -34,17 +59,20 @@ export class OrdersService {
     private userLookup: UserLookupService,
   ) {}
 
-  /** Hydrate items[].item, items[].variant, and outlet for a batch of orders. */
-  private async hydrateOrders(orders: any[], lang: string | null | undefined) {
+  /**
+   * Hydrate items[].item, items[].variant, and outlet for a batch of
+   * orders. Phase 3 in-memory variant — reads the <field>_i18n JSON
+   * cells that the order's joined entities already carry. Zero DB
+   * roundtrips.
+   */
+  private hydrateOrders(orders: any[], lang: string | null | undefined) {
     if (!lang || lang === 'en' || !orders?.length) return orders;
     const allItems    = orders.flatMap((o: any) => (o.items ?? []).map((oi: any) => oi.item).filter(Boolean));
     const allVariants = orders.flatMap((o: any) => (o.items ?? []).map((oi: any) => oi.variant).filter(Boolean));
     const allOutlets  = orders.map((o: any) => o.outlet).filter(Boolean);
-    await Promise.all([
-      this.translations.hydrate('Item',    allItems,    ['name', 'description'], lang),
-      this.translations.hydrate('Variant', allVariants, ['name', 'shortDescription'], lang),
-      this.translations.hydrate('Outlet',  allOutlets,  ['name', 'address'], lang),
-    ]);
+    this.translations.pickI18nBatch(allItems,    ['name', 'description'], lang);
+    this.translations.pickI18nBatch(allVariants, ['name', 'shortDescription'], lang);
+    this.translations.pickI18nBatch(allOutlets,  ['name', 'address'], lang);
     return orders;
   }
 
@@ -380,6 +408,21 @@ export class OrdersService {
         });
       }
 
+      // Tag the order with the placing cashier's active drawer (if
+      // any). Z reports group orders by cashierShiftId for the
+      // gross-sales numbers; payment-mode revenue comes off the
+      // Payment row (stamped at confirm-time on whoever's drawer
+      // settles the bill). Customer-placed orders (no staff) don't
+      // get tagged — they roll into "house" rather than any cashier.
+      let cashierShiftId: string | null = null;
+      if (resolvedStaffId) {
+        const drawer = await tx.cashierShift.findFirst({
+          where: { outletId, cashierId: resolvedStaffId, status: 'ACTIVE' },
+          select: { id: true },
+        });
+        cashierShiftId = drawer?.id ?? null;
+      }
+
       const created = await tx.order.create({
         data: {
           orderNumber,
@@ -391,6 +434,7 @@ export class OrdersService {
           sectionId: dto.sectionId || null,
           customerId: resolvedCustomerId,
           staffId: resolvedStaffId,
+          cashierShiftId,
           isParcel: dto.isParcel || false,
           isPostpaid: dto.isPostpaid || false,
           notes: dto.notes,
@@ -580,6 +624,9 @@ export class OrdersService {
       // newest orders come first (existing behaviour).
       sortBy?: 'createdAt' | 'totalAmount' | 'orderNumber' | 'status';
       sortDir?: 'asc' | 'desc';
+      // When true, return SLIM_LIST_SELECT rows instead of the fat
+      // include graph. ~60× smaller payload — used by list views.
+      slim?: boolean;
     },
     lang?: string | null,
   ) {
@@ -660,6 +707,24 @@ export class OrdersService {
     const sortDir: 'asc' | 'desc' = filters.sortDir ?? 'desc';
     const orderBy: any = { [sortKey]: sortDir };
 
+    // Slim fast path: skip the fat include graph + the per-item
+    // translation hydrate. The slim shape has no translatable names —
+    // item.name / variant.name aren't pulled in — so there's nothing
+    // for hydrateOrders to do anyway.
+    if (filters.slim) {
+      const [orders, total] = await Promise.all([
+        this.prisma.order.findMany({
+          where,
+          select: SLIM_LIST_SELECT,
+          orderBy,
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        this.prisma.order.count({ where }),
+      ]);
+      return { orders, total, page, limit };
+    }
+
     const [orders, total] = await Promise.all([
       this.prisma.order.findMany({
         where,
@@ -691,6 +756,7 @@ export class OrdersService {
     search?: string;
     sortBy?: 'createdAt' | 'totalAmount' | 'orderNumber' | 'status';
     sortDir?: 'asc' | 'desc';
+    slim?: boolean;
   }, lang?: string | null) {
     const page  = Number(filters.page)  || 1;
     const limit = Number(filters.limit) || 50;
@@ -719,6 +785,21 @@ export class OrdersService {
     const sortDir: 'asc' | 'desc' = filters.sortDir ?? 'desc';
     const orderBy: any = { [sortKey]: sortDir };
 
+    // Same slim fast path as findAll — see SLIM_LIST_SELECT above.
+    if (filters.slim) {
+      const [orders, total] = await Promise.all([
+        this.prisma.order.findMany({
+          where,
+          select: SLIM_LIST_SELECT,
+          orderBy,
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        this.prisma.order.count({ where }),
+      ]);
+      return { orders, total, page, limit };
+    }
+
     const [orders, total] = await Promise.all([
       this.prisma.order.findMany({
         where,
@@ -743,6 +824,72 @@ export class OrdersService {
 
     await this.hydrateOrders(orders, lang);
     return { orders, total, page, limit };
+  }
+
+  /**
+   * Core detail fields. Kitchen view, customer track-order, and the
+   * service desk header don't need the full receipt graph — they want
+   * status, items (snapshots), table, customer name, outlet name.
+   * Total payload sits under ~5 KB per order with ~20 line items.
+   */
+  async findOneSlim(id: string) {
+    return this.prisma.order.findUnique({
+      where: { id },
+      select: {
+        id: true, orderNumber: true, tokenNumber: true, status: true,
+        isParcel: true, isPostpaid: true, notes: true,
+        subtotal: true, taxAmount: true, sgstAmount: true, cgstAmount: true,
+        parcelAmount: true, discountAmount: true, totalAmount: true,
+        channel: true, activeSequence: true, sequenceLabels: true,
+        billRequestedAt: true, createdAt: true, updatedAt: true,
+        splitTotalShares: true, splitPaidShares: true, splitPaidAmount: true,
+        outletId: true, tableId: true, customerId: true,
+        outlet: { select: { id: true, name: true } },
+        table: { select: { id: true, number: true, sectionId: true } },
+        section: { select: { id: true, name: true } },
+        customer: { select: { id: true, name: true } },
+        items: {
+          select: {
+            id: true, quantity: true, unitPrice: true, totalPrice: true,
+            gstRate: true, gstAmount: true, notes: true, status: true,
+            sequenceNumber: true, bundleId: true,
+            itemNameSnapshot: true, variantNameSnapshot: true,
+          },
+        },
+      },
+    });
+  }
+
+  /** Payments rolled up for an order — sub-resource of /orders/:id/payments. */
+  async findPayments(id: string) {
+    return this.prisma.payment.findMany({
+      where: { orderId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /** Status-event timeline — sub-resource of /orders/:id/status-history. */
+  async findStatusHistory(id: string) {
+    return this.prisma.orderStatusHistory.findMany({
+      where: { orderId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /** Disputes raised against this order — sub-resource of /orders/:id/disputes. */
+  async findDisputes(id: string) {
+    return this.prisma.dispute.findMany({
+      where: { orderId: id },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /** Coupon redemptions broken out by code — sub-resource of /orders/:id/coupons. */
+  async findCouponUsages(id: string) {
+    return this.prisma.couponUsage.findMany({
+      where: { orderId: id },
+      select: { discountAmount: true, coupon: { select: { code: true, name: true } } },
+    });
   }
 
   async findOne(id: string, lang?: string | null) {
@@ -797,6 +944,30 @@ export class OrdersService {
         couponUsages: {
           select: { discountAmount: true, coupon: { select: { code: true, name: true } } },
         },
+        // Aggregator side-table — when present, the packing slip
+        // printer surfaces the external order id alongside our
+        // orderNumber so the rider's app and our parcel agree.
+        // Includes the marketplace customer link so OrdersPage can
+        // render a "Repeat Swiggy customer · 5th order" recognition
+        // pill (the regular customer-pill query is User-bound and
+        // won't fire for these — Order.customerId is null).
+        aggregatorOrder: {
+          select: {
+            channel: true,
+            externalOrderId: true,
+            status: true,
+            aggregatorCustomer: {
+              select: {
+                id: true,
+                displayName: true,
+                maskedPhone: true,
+                orderCount: true,
+                firstOrderAt: true,
+                lastOrderAt: true,
+              },
+            },
+          },
+        },
       },
     });
     if (!order) throw new NotFoundException('Order not found');
@@ -840,18 +1011,36 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException('Order not found');
 
-    this.validateStatusTransition(order.status, dto.status, {
-      outletType: order.outlet?.outletType,
-      tableId: order.tableId,
-      isParcel: order.isParcel,
-    });
+    // dto.force = offline reconciliation path. The order was placed
+    // and SERVED while the device was offline; the sync replays the
+    // placement and then jumps the status to SERVED in one go. The
+    // normal state-machine check would reject that jump.
+    if (!dto.force) {
+      this.validateStatusTransition(order.status, dto.status, {
+        outletType: order.outlet?.outletType,
+        tableId: order.tableId,
+        isParcel: order.isParcel,
+      });
+    }
+
+    // Offline replays from the admin POS pass actedAt — the client-
+    // captured time when staff actually pressed the button. Use it for
+    // the statusHistory row so reports show real activity time, not
+    // the eventual sync time. Reject future timestamps and obviously
+    // bogus values (>7d in the past) so a misconfigured client can't
+    // backdate to corrupt analytics.
+    const actedAt = this.resolveActedAt(dto.actedAt);
 
     const updated = await this.prisma.order.update({
       where: { id },
       data: {
         status: dto.status,
         statusHistory: {
-          create: { status: dto.status, changedBy: userId, notes: dto.notes },
+          // Schema has createdAt (default now()), no separate changedAt.
+          // For offline replays the client passes actedAt so reports
+          // reflect when staff actually pressed the button; override
+          // createdAt with that value when present.
+          create: { status: dto.status, changedBy: userId, notes: dto.notes, ...(actedAt ? { createdAt: actedAt } : {}) },
         },
       },
       include: {
@@ -875,7 +1064,8 @@ export class OrdersService {
       from: order.status,
       to: dto.status,
       notes: dto.notes ?? null,
-    });
+      ...(actedAt ? { actedAt: actedAt.toISOString() } : {}),
+    } as any);
 
     // Service-desk lane routing on the new status:
     //   - self-service: kitchen-done → OUT_FOR_SERVICE → "release" lane.
@@ -988,14 +1178,21 @@ export class OrdersService {
 
     if (payload.items?.length) {
       const byId = new Map(order.items.map((it) => [it.id, it]));
+      // PENDING_VERIFICATION items haven't been confirmed to the kitchen
+      // yet (service desk Verify lane), so re-sequencing them is safe.
+      // Once an item moves to PENDING-and-released or beyond, the course
+      // position no longer changes its lifecycle and edits are blocked
+      // to keep the kitchen view honest.
+      const SEQUENCEABLE: OrderItemStatus[] = [
+        OrderItemStatus.PENDING,
+        OrderItemStatus.PENDING_VERIFICATION,
+      ];
       for (const { itemId, sequenceNumber } of payload.items) {
         const item = byId.get(itemId);
         if (!item) throw new BadRequestException(`Item ${itemId} is not part of this order`);
-        // Once an item has started cooking the course-position no longer
-        // changes its lifecycle, so block edits to keep the model honest.
-        if (item.status !== OrderItemStatus.PENDING && item.sequenceNumber !== sequenceNumber) {
+        if (!SEQUENCEABLE.includes(item.status) && item.sequenceNumber !== sequenceNumber) {
           throw new BadRequestException(
-            `Item "${itemId}" is already ${item.status} — sequencing can only be edited on PENDING items`,
+            `Item "${itemId}" is already ${item.status} — sequencing can only be edited on PENDING or PENDING_VERIFICATION items`,
           );
         }
         if (sequenceNumber != null && (!Number.isInteger(sequenceNumber) || sequenceNumber < 1)) {
@@ -1079,7 +1276,7 @@ export class OrdersService {
     }
   }
 
-  async updateItemStatus(orderId: string, orderItemId: string, status: OrderItemStatus, userId?: string) {
+  async updateItemStatus(orderId: string, orderItemId: string, status: OrderItemStatus, userId?: string, actedAtIso?: string) {
     const item = await this.prisma.orderItem.findUnique({
       where: { id: orderItemId },
       include: { order: true, item: true },
@@ -1087,15 +1284,24 @@ export class OrdersService {
     if (!item || item.orderId !== orderId) throw new NotFoundException('Order item not found');
 
     // Station-scoped enforcement: if the caller is currently a station worker,
-    // they can only touch items routed to their station — unless their station
-    // is a master station, which sees everything.
+    // they can only touch items routed to their station(s). Master stations
+    // see everything. A staff member can be the currentWorker on multiple
+    // stations at once (covering tandoor + curry during a shift), so we
+    // fetch the full set and allow the update when:
+    //   • caller works no stations (admin / non-station-bound role)
+    //   • caller works at least one master station
+    //   • the item's kitchenStationId matches any of the caller's stations
     if (userId) {
-      const workerStation = await this.prisma.kitchenStation.findFirst({
+      const workerStations = await this.prisma.kitchenStation.findMany({
         where: { currentWorkerId: userId, outletId: item.order.outletId, isActive: true },
         select: { id: true, isMaster: true },
       });
-      if (workerStation && !workerStation.isMaster && item.item.kitchenStationId !== workerStation.id) {
-        throw new ForbiddenException('You can only update items assigned to your station');
+      if (workerStations.length > 0) {
+        const isMaster = workerStations.some((s) => s.isMaster);
+        const stationIds = new Set(workerStations.map((s) => s.id));
+        if (!isMaster && !stationIds.has(item.item.kitchenStationId ?? '')) {
+          throw new ForbiddenException('You can only update items assigned to your station');
+        }
       }
     }
 
@@ -1142,13 +1348,19 @@ export class OrdersService {
 
     if (updated) {
       this.ordersGateway.emitOrderStatusUpdated(updated.outletId, updated);
+      // actedAt only flows into the audit payload — the OrderItem
+      // schema has no per-status timestamp to backdate. Reports that
+      // consume the audit stream get the real action time; the
+      // OrderItem.status mutation itself is current-time as usual.
+      const actedAt = this.resolveActedAt(actedAtIso);
       this.audit.orderItemStatusChanged({
         actorId: userId ?? null,
         orderId: updated.id,
         orderItemId,
         from: item.status,
         to: status,
-      });
+        ...(actedAt ? { actedAt: actedAt.toISOString() } : {}),
+      } as any);
     }
 
     // Fan-out the service-desk / parcel-desk nudge whenever *any* item
@@ -1254,6 +1466,24 @@ export class OrdersService {
     }
 
     return { order: updated, rolledUp };
+  }
+
+  /**
+   * Validates a client-supplied actedAt (offline replay timestamp) and
+   * returns it as a Date — or null if missing/invalid. Rejects future
+   * timestamps and ones more than 7 days in the past so a misconfigured
+   * client clock can't corrupt reporting. Returning null is the signal
+   * to fall back to the server's now() (Prisma default).
+   */
+  private resolveActedAt(iso?: string | null): Date | null {
+    if (!iso) return null;
+    const t = new Date(iso);
+    if (Number.isNaN(t.getTime())) return null;
+    const now = Date.now();
+    const week = 7 * 24 * 60 * 60 * 1000;
+    if (t.getTime() > now + 60_000) return null;   // >1 min in the future
+    if (t.getTime() < now - week) return null;     // older than the offline window we support
+    return t;
   }
 
   private validateItemTransition(from: OrderItemStatus, to: OrderItemStatus) {
@@ -1734,9 +1964,18 @@ export class OrdersService {
 
   /**
    * Parcel-charge rules:
-   *   - Items with `useCustomParcelCharge`: their own parcelCharge × quantity
-   *   - Any other line + outlet has `parcelChargeEnabled`: add outlet.defaultParcelCharge once
-   *   - Validates each item is `parcelAvailable`
+   *   - If ANY item has a per-item override (useCustomParcelCharge &&
+   *     parcelCharge != null): items with override pay parcelCharge × qty
+   *     and REPLACE the outlet's flat default for the whole bill. Items
+   *     without their own override contribute 0 — the item-level override
+   *     supersedes the outlet default for the whole order.
+   *   - Otherwise, if outlet.parcelChargeEnabled: outlet.defaultParcelCharge
+   *     applied once as a flat per-order fee.
+   *   - Otherwise: 0.
+   *   - Validates each item is `parcelAvailable`.
+   *
+   * Kept in lock-step with PricingService.quoteCart's parcel block so the
+   * /pricing/quote preview always matches the order the server creates.
    */
   private async computeParcelCharge(
     outletId: string,
@@ -1756,8 +1995,8 @@ export class OrdersService {
     });
     const map = new Map(itemRecords.map(i => [i.id, i]));
 
-    let total = 0;
-    let anyUsesUniversal = false;
+    let itemOverrideTotal = 0;
+    let anyOverride = false;
     for (const line of items) {
       const meta = map.get(line.itemId);
       if (!meta) continue;
@@ -1765,15 +2004,13 @@ export class OrdersService {
         throw new BadRequestException(`Item "${meta.name}" is not available for parcel`);
       }
       if (meta.useCustomParcelCharge && meta.parcelCharge != null) {
-        total += Number(meta.parcelCharge) * line.quantity;
-      } else {
-        anyUsesUniversal = true;
+        itemOverrideTotal += Number(meta.parcelCharge) * line.quantity;
+        anyOverride = true;
       }
     }
-    if (anyUsesUniversal && outlet?.parcelChargeEnabled) {
-      total += Number(outlet.defaultParcelCharge);
-    }
-    return total;
+    if (anyOverride) return itemOverrideTotal;
+    if (outlet?.parcelChargeEnabled) return Number(outlet.defaultParcelCharge);
+    return 0;
   }
 
   /**
@@ -1830,8 +2067,18 @@ export class OrdersService {
     let readyNext: OrderStatus[];
     let outForServiceNext: OrderStatus[];
     if (shape === 'self-service') {
-      preparingNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED];
-      readyNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.CANCELLED]; // legacy in-flight orders
+      // PREPARING → READY_FOR_PICKUP supports the partial-release
+      // case: some items are READY, others still being prepared,
+      // staff wants to call the customer to the counter to pick up
+      // what's done while the rest cooks. Without this transition,
+      // staff had to wait until every item was ready before
+      // releasing — which is the wrong UX for self-service.
+      preparingNext = [
+        OrderStatus.OUT_FOR_SERVICE,
+        OrderStatus.READY_FOR_PICKUP,
+        OrderStatus.CANCELLED,
+      ];
+      readyNext = [OrderStatus.OUT_FOR_SERVICE, OrderStatus.READY_FOR_PICKUP, OrderStatus.CANCELLED];
       // Self-service collapses the manual flow: from OUT_FOR_SERVICE staff
       // can either go through READY_FOR_PICKUP (customer-ping lane) or
       // jump straight to SERVED — which is what the admin "Mark Served"
@@ -1939,7 +2186,17 @@ export class OrdersService {
     if (!existing) throw new NotFoundException('Order not found');
     if (!existing.isPostpaid) throw new BadRequestException('Items can only be appended to a postpaid order');
     if (existing.billRequestedAt) throw new BadRequestException('Bill already requested — items can no longer be appended');
-    if (existing.status === OrderStatus.CANCELLED) throw new BadRequestException('Order is cancelled');
+    // SERVED is appendable (table tab "one more naan" scenario) — it gets
+    // reopened below. Other terminal/dispute/refund states are not.
+    if (
+      existing.status === OrderStatus.CANCELLED
+      || existing.status === OrderStatus.DISPUTED
+      || existing.status === OrderStatus.RESOLVED
+      || existing.status === OrderStatus.FOR_REFUND
+      || existing.status === OrderStatus.REFUND_COMPLETE
+    ) {
+      throw new BadRequestException(`Order is in ${existing.status} — items cannot be appended`);
+    }
 
     // Re-resolve pricing context the same way create() does.
     const outlet = await this.prisma.outlet.findUnique({
@@ -1975,6 +2232,15 @@ export class OrdersService {
     // Appended lines on a postpaid order — always — start in
     // PENDING_VERIFICATION so the service desk has a chance to confirm
     // them with the customer before the kitchen picks them up.
+    //
+    // If the order had previously rolled up to SERVED (every prior item
+    // was served — common during a long meal where the customer asks
+    // for "one more naan" after the rest is done), we reopen it to
+    // QUEUED here. Without this, rollupOrderStatus's terminal-state
+    // bail (~line 1349) means the order keeps showing in the Served
+    // bucket on the Kitchen Display even though a fresh PENDING /
+    // PENDING_VERIFICATION item is waiting to be cooked.
+    const reopenFromServed = existing.status === OrderStatus.SERVED;
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.orderItem.createMany({
         data: newItems.map((i) => ({
@@ -1983,6 +2249,21 @@ export class OrdersService {
           status: OrderItemStatus.PENDING_VERIFICATION,
         })) as any,
       });
+      if (reopenFromServed) {
+        await tx.order.update({
+          where: { id: orderId },
+          data: {
+            status: OrderStatus.QUEUED,
+            statusHistory: {
+              create: {
+                status: OrderStatus.QUEUED,
+                changedBy: userId,
+                notes: 'Reopened — items appended after previous SERVED rollup',
+              },
+            },
+          },
+        });
+      }
 
       const allItems = await tx.orderItem.findMany({
         where: { orderId, status: { not: OrderItemStatus.CANCELLED } },
@@ -2380,10 +2661,16 @@ export class OrdersService {
 
     // Terminal / refund / dispute statuses — once an order lands here
     // the service desk has nothing left to do regardless of item state.
+    // READY_FOR_PICKUP is included because that's the post-release
+    // state — the operator already clicked Release for pickup, the
+    // food's on the counter, customer's been pinged. Keeping the
+    // order in the lane after release made the button look broken
+    // (status changed in DB but the row didn't disappear).
     const terminalOrderStatuses: OrderStatus[] = [
       OrderStatus.SERVED, OrderStatus.CANCELLED,
       OrderStatus.DISPUTED, OrderStatus.RESOLVED,
       OrderStatus.FOR_REFUND, OrderStatus.REFUND_COMPLETE,
+      OrderStatus.READY_FOR_PICKUP,
     ];
 
     const [verifyRows, partialReadyRows] = await Promise.all([

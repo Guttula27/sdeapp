@@ -83,6 +83,8 @@ export default function OrderPage() {
     outletLogoUrl?: string | null;
     businessName?: string | null;
     businessLogoUrl?: string | null;
+    parcelChargeEnabled?: boolean;
+    defaultParcelCharge?: number;
   } | null>(null);
   // The open postpaid order on this table — items already submitted, locked
   // from edits, waiting for Bill Now.
@@ -99,6 +101,44 @@ export default function OrderPage() {
   const [activeCategory, setActiveCategory] = useState('');
   const [activeSub, setActiveSub] = useState('');
   const [detailItem, setDetailItem] = useState<any>(null);
+
+  // Wire the half-screen item detail + cart sheet into the browser
+  // history so the mobile back button just closes them instead of
+  // navigating off /order (which on a scan-in flow drops the
+  // customer all the way back to the QR scan screen). Push a marker
+  // state on open, pop it on close — same pattern most native apps
+  // use for transient sheets.
+  useEffect(() => {
+    if (!detailItem) return;
+    const marker = { modal: 'item-detail' as const };
+    window.history.pushState(marker, '');
+    const onPopState = () => setDetailItem(null);
+    window.addEventListener('popstate', onPopState);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      // If the modal closed by other means (X button, Add to cart),
+      // the synthetic entry we pushed is still on the stack. Pop it
+      // so the next back-press doesn't leave the user re-opening a
+      // closed modal.
+      if (window.history.state && (window.history.state as any).modal === 'item-detail') {
+        window.history.back();
+      }
+    };
+  }, [!!detailItem]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!showCart) return;
+    const marker = { modal: 'cart' as const };
+    window.history.pushState(marker, '');
+    const onPopState = () => setShowCart(false);
+    window.addEventListener('popstate', onPopState);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      if (window.history.state && (window.history.state as any).modal === 'cart') {
+        window.history.back();
+      }
+    };
+  }, [showCart]);
 
   // Menu tabs (multi-menu feature). Populated only when the outlet's business
   // has multipleMenusEnabled (otherwise the single Main Menu stays implicit and
@@ -238,6 +278,8 @@ export default function OrderPage() {
               outletLogoUrl: d.outletLogoUrl,
               businessName: d.businessName,
               businessLogoUrl: d.businessLogoUrl,
+              parcelChargeEnabled: !!d.parcelChargeEnabled,
+              defaultParcelCharge: Number(d.defaultParcelCharge ?? 0),
             });
           }
         }
@@ -484,19 +526,31 @@ export default function OrderPage() {
     }
     return s + c.price * c.quantity * (rate / 100);
   }, 0);
-  // Parcel charge preview is computed authoritatively on the server; here we estimate using item-level overrides
-  // (universal outlet charge isn't fetched on the customer side, server will add it on order creation)
-  const parcelPreview = isParcel
-    ? cart.reduce((s, c) => {
-        // Look up the menu item to detect a custom per-item parcel charge
-        for (const cat of menu) for (const sub of cat.subcategories || []) for (const it of sub.items || []) {
-          if (it.id === c.itemId && it.useCustomParcelCharge && it.parcelCharge != null) {
-            return s + Number(it.parcelCharge) * c.quantity;
-          }
-        }
-        return s;
-      }, 0)
-    : 0;
+  // Parcel charge preview. Mirrors OrdersService.computeParcelCharge so
+  // the cart total matches the server's authoritative calc:
+  //   - Any item with its own override (useCustomParcelCharge + parcelCharge)
+  //     contributes parcelCharge × qty AND replaces the outlet flat for
+  //     the whole order. Items without their own override contribute 0.
+  //   - Otherwise outlet.defaultParcelCharge once (flat).
+  //   - Otherwise 0.
+  const parcelPreview = (() => {
+    if (!isParcel) return 0;
+    let itemOverrideTotal = 0;
+    let anyOverride = false;
+    for (const c of cart) {
+      let it: any = null;
+      for (const cat of menu) for (const sub of cat.subcategories || []) for (const i of sub.items || []) {
+        if (i.id === c.itemId) it = i;
+      }
+      if (it?.useCustomParcelCharge && it.parcelCharge != null) {
+        itemOverrideTotal += Number(it.parcelCharge) * c.quantity;
+        anyOverride = true;
+      }
+    }
+    if (anyOverride) return itemOverrideTotal;
+    if (outletMeta?.parcelChargeEnabled) return Number(outletMeta.defaultParcelCharge ?? 0);
+    return 0;
+  })();
   const cartTotal = subtotal + taxAmount + parcelPreview;
   const cartCount = cart.reduce((s, c) => s + c.quantity, 0);
 
@@ -594,11 +648,12 @@ export default function OrderPage() {
   const activeCat = menu.find((c) => c.id === activeCategory);
 
   return (
-    // h-dvh (fixed viewport height) instead of min-h-dvh so the inner
-    // 3-pane flex container can give its aside (subcategory rail) and main
-    // (item list) independent scrollable areas. With min-h-dvh the whole
-    // document scrolls and both panes scroll together with the page.
-    <div className="h-dvh bg-slate-50 flex flex-col overflow-hidden">
+    // h-full (fills the BottomNav <main> which is now the scroll
+    // container) instead of h-dvh so the page can't extend past the
+    // shell. The inner 3-pane flex container has its own
+    // overflow-y-auto on the items pane so the rail + item list scroll
+    // independently of each other and of the header/category strip.
+    <div className="h-full bg-slate-50 flex flex-col overflow-hidden">
       {/* Cached-menu indicator — only shown when the menu came from the
           localStorage fallback (network unavailable or slow). Auto-
           clears on the next successful refresh. */}
@@ -637,8 +692,14 @@ export default function OrderPage() {
           </button>
         </div>
       )}
-      {/* ── Sticky header ────────────────────────────────────── */}
-      <div className={clsx('bg-white sticky z-20 shadow-sm', isPostpaidTable && openOrder ? 'top-[52px]' : 'top-0')}>
+      {/* ── Sticky header ──────────────────────────────────────
+          Brand-teal banner so the chrome reads consistently with the
+          rest of the customer surface (the MENU strip and BottomNav
+          accents share this language). Top bar's children get
+          inverted text-color treatment for contrast; the menu /
+          categories strips below have their own backgrounds and
+          override the parent. */}
+      <div className={clsx('bg-brand-700 sticky z-20 shadow-sm', isPostpaidTable && openOrder ? 'top-[52px]' : 'top-0')}>
         {/* Top bar */}
         <div className="px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0">
@@ -647,30 +708,31 @@ export default function OrderPage() {
                 if (cart.length > 0 && !window.confirm('Leave and clear cart?')) return;
                 navigate('/');
               }}
-              className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 shrink-0"
+              className="w-8 h-8 flex items-center justify-center text-brand-200 hover:text-white rounded-lg hover:bg-brand-600 shrink-0 transition-colors"
             >
               <LogOut size={17} />
             </button>
             {/* Outlet logo (or business logo as fallback) shown alongside the
                 outlet name so the customer is anchored in the brand context.
-                Falls back to a brand-tinted tile with the initial when no
-                logo has been uploaded. */}
+                Falls back to a lighter-teal tile with the initial when no
+                logo has been uploaded (the canonical brand-400 lifts well
+                against the brand-700 banner). */}
             {(outletMeta?.outletLogoUrl || outletMeta?.businessLogoUrl) ? (
               <img
                 src={outletMeta.outletLogoUrl || outletMeta.businessLogoUrl || ''}
                 alt={outletMeta?.outletName || ''}
-                className="w-9 h-9 rounded-xl object-cover shrink-0 border border-slate-200"
+                className="w-9 h-9 rounded-xl object-cover shrink-0 ring-1 ring-white/20"
               />
             ) : outletMeta?.outletName ? (
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-brand-400 text-white font-black text-sm flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 rounded-xl bg-brand-500 text-white font-black text-sm flex items-center justify-center shrink-0 ring-1 ring-white/20">
                 {outletMeta.outletName.charAt(0).toUpperCase()}
               </div>
             ) : null}
             <div className="min-w-0">
-              <p className="font-bold text-slate-900 text-sm leading-tight truncate">
+              <p className="font-bold text-white text-sm leading-tight truncate">
                 {outletMeta?.outletName || 'Menu'}
               </p>
-              <p className="text-[11px] text-slate-400 truncate">
+              <p className="text-[11px] text-brand-200 truncate">
                 {outletMeta?.businessName && <span>{outletMeta.businessName}</span>}
                 {outletMeta?.businessName && tableId && <span> · </span>}
                 {tableId && <span>Table {tableId.replace('table-', 'T')}</span>}
@@ -683,7 +745,7 @@ export default function OrderPage() {
             {isLoggedIn ? (
               <button
                 onClick={() => navigate('/profile')}
-                className="w-8 h-8 bg-gradient-to-br from-brand-500 to-brand-400 rounded-full flex items-center justify-center text-white font-black text-sm"
+                className="w-8 h-8 bg-brand-500 hover:bg-brand-400 rounded-full flex items-center justify-center text-white font-black text-sm ring-1 ring-white/20 transition-colors"
                 title={`Signed in as ${user?.name}`}
               >
                 {user?.name?.[0]}
@@ -691,14 +753,18 @@ export default function OrderPage() {
             ) : (
               <button
                 onClick={() => navigate('/auth', { state: { from: `/order${window.location.search}` } })}
-                className="flex items-center gap-1 text-xs text-slate-500 hover:text-brand-600 bg-slate-100 hover:bg-brand-50 px-2.5 py-1.5 rounded-lg transition-colors"
+                className="flex items-center gap-1 text-xs text-white bg-brand-600 hover:bg-brand-500 px-2.5 py-1.5 rounded-lg transition-colors"
               >
                 <User size={12} /> Sign in
               </button>
             )}
             <button
               onClick={() => setShowCart(true)}
-              className="relative flex items-center gap-2 bg-brand-500 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-sm"
+              // Gold-on-charcoal — per the tailwind config's design
+              // intent (gold is the "money zone": Add to Cart, Place
+              // Order, Pay). Charcoal text because gold + white fails
+              // the contrast checker.
+              className="relative flex items-center gap-2 bg-gold-500 hover:bg-gold-600 text-charcoal-900 px-4 py-2 rounded-full text-sm font-semibold shadow-sm transition-colors"
             >
               <ShoppingCart size={16} />
               Cart
@@ -798,7 +864,9 @@ export default function OrderPage() {
       )}
 
       {/* ── Menu content (3-pane) ────────────────────────────── */}
-      <div className="flex-1 flex min-h-0 pb-24">
+      {/* No pb-24 here — the BottomNav is in-flow in the shell now,
+          not fixed, so we don't need to reserve space for it. */}
+      <div className="flex-1 flex min-h-0">
         {activeCategory === '__special__' ? (
           <main className="flex-1 overflow-y-auto px-3 py-3 space-y-2 min-w-0">
             {(() => {
@@ -866,15 +934,19 @@ export default function OrderPage() {
                 key={sub.id}
                 onClick={() => setActiveSub(sub.id)}
                 className={clsx(
+                  // Subcategory rail's "this is selected" stripe →
+                  // gold. The selection IS a navigation marker, not
+                  // an action, but a hint of gold here ties the rail
+                  // visually to the gold CTAs in the same column.
                   'flex flex-col items-center w-full px-2 py-3 gap-1.5 border-l-[3px] transition-all',
                   active
-                    ? 'border-brand-500 bg-brand-50/60'
+                    ? 'border-gold-500 bg-gold-50/50'
                     : 'border-transparent hover:bg-slate-50',
                 )}
               >
                 <div className={clsx(
                   'w-14 h-14 rounded-xl overflow-hidden border shrink-0',
-                  active ? 'border-brand-300 ring-2 ring-brand-100' : 'border-slate-200',
+                  active ? 'border-gold-300 ring-2 ring-gold-100' : 'border-slate-200',
                 )}>
                   {thumb ? (
                     <img src={thumb} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
@@ -1072,7 +1144,9 @@ export default function OrderPage() {
               <button
                 onClick={isPostpaidTable ? placePostpaid : goToPay}
                 disabled={placing || (!!openStatus && !openStatus.isOpen)}
-                className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-4 rounded-2xl text-base shadow-lg disabled:opacity-60 disabled:cursor-not-allowed transition-all active:scale-[.98]"
+                // Place / pay → gold. Same "money zone" rule as
+                // the header Cart button. Gold gradient for depth.
+                className="w-full bg-gradient-to-r from-gold-500 to-gold-400 text-charcoal-900 font-bold py-4 rounded-2xl text-base shadow-lg disabled:opacity-60 disabled:cursor-not-allowed transition-all active:scale-[.98]"
               >
                 {openStatus && !openStatus.isOpen
                   ? 'Outlet closed'
@@ -1169,118 +1243,155 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
           : 'border-slate-100 hover:border-brand-200 cursor-pointer',
       )}
     >
+      {/* items-center so the (fixed-square) image vertically aligns
+          with the text column's actual content, regardless of
+          whether the name is one line or three. Without this, a
+          short name left empty space below the 80px image while the
+          rest of the text column floated next to the top of it. */}
       <div className="flex gap-3 p-3 items-center">
-        {item.thumbnailUrl || item.imageUrl ? (
-          <img src={item.thumbnailUrl || item.imageUrl} alt={item.name}
-            loading="lazy" decoding="async"
-            className={clsx('w-16 h-16 rounded-xl object-cover shrink-0', disabled && 'grayscale')} />
-        ) : (
-          <div className="w-16 h-16 bg-gradient-to-br from-slate-100 to-slate-200 rounded-xl shrink-0 flex items-center justify-center">
-            <span className="text-xl">🍽️</span>
-          </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap">
+        {/* Image with the veg/non-veg/vegan badge overlaid on the
+            top-right corner. Wrapped in a `relative` shell so the
+            dot is positionally pinned regardless of the underlying
+            element being an <img> or the placeholder gradient.
+            White rounded tile around the dot for legibility against
+            any photo background. */}
+        <div className="relative shrink-0">
+          {item.thumbnailUrl || item.imageUrl ? (
+            <img src={item.thumbnailUrl || item.imageUrl} alt={item.name}
+              loading="lazy" decoding="async"
+              className={clsx('w-20 h-20 rounded-xl object-cover block', disabled && 'grayscale')} />
+          ) : (
+            <div className="w-20 h-20 bg-gradient-to-br from-slate-100 to-slate-200 rounded-xl flex items-center justify-center">
+              <span className="text-xl">🍽️</span>
+            </div>
+          )}
+          <span className="absolute top-1 right-1 inline-flex items-center justify-center bg-white/95 rounded-md shadow-sm p-0.5">
             <FoodGradeDot grade={item.foodGrade} />
-            <p className="text-sm font-bold text-slate-900 leading-tight truncate">{item.name}</p>
-            {item.isPopular && (
-              <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-full">
-                <Star size={8} fill="currentColor" /> Popular
-              </span>
-            )}
-            {item.isSpecial && (
-              <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-rose-50 text-rose-600 px-1.5 py-0.5 rounded-full">
-                ⭐ Special
-              </span>
-            )}
-            {/* Limited-stock chip — exposes the kitchen's per-item
-                inventory so customers know to grab the popular ones
-                fast. Shows the exact count when it gets tight (≤5
-                left), otherwise just the generic "Limited Quantity
-                Available" label so we don't broadcast healthy stock
-                levels into FOMO. Hidden once the item is sold out —
-                in that case `disabledReason` already says so. */}
-            {item.hasLimitedStock && item.availableQuantity > 0 && (
-              <span
-                className={clsx(
-                  'inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full',
-                  item.availableQuantity <= 5
-                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                    : 'bg-amber-50 text-amber-700 border border-amber-100',
-                )}
-                title={`Only ${item.availableQuantity} left in stock`}
-              >
-                {item.availableQuantity <= 5
-                  ? `Only ${item.availableQuantity} left`
-                  : 'Limited Quantity Available'}
-              </span>
-            )}
-            {disabled && disabledReason && (
-              <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full border border-slate-200">
-                {disabledReason}
-              </span>
-            )}
-          </div>
-          {item.shortDescription && (
-            <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">{item.shortDescription}</p>
-          )}
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
-            {hasDiscount ? (
-              <>
-                <span className="text-sm font-black text-emerald-700">
-                  {hasVariants ? `from ₹${lowDiscounted.toFixed(0)}` : `₹${lowDiscounted.toFixed(0)}`}
-                </span>
-                <span className="text-xs text-slate-400 line-through">
-                  ₹{lowPrice.toFixed(0)}
-                </span>
-                <span className="inline-flex items-center text-[10px] font-bold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-full">
-                  Save ₹{saveAmount.toFixed(0)}
-                </span>
-              </>
-            ) : (
-              <span className="text-sm font-black text-slate-900">{hasVariants ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}</span>
-            )}
-            {item.ratingCount > 0 && (
-              <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700">
-                <Star size={9} fill="currentColor" className="text-amber-500" />
-                {item.ratingAvg.toFixed(1)}
-                <span className="text-slate-400 font-normal">({item.ratingCount})</span>
-              </span>
-            )}
-            {(item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 && <span className="text-[10px] text-indigo-600 font-semibold">+ toppings</span>}
-            {item.preparationTime && <span className="text-[10px] text-slate-400 flex items-center gap-0.5"><Clock size={9} /> {item.preparationTime}m</span>}
-          </div>
+          </span>
         </div>
-        <div className="shrink-0 flex flex-col items-end gap-1.5">
-          {onToggleFavorite && (
-            <button
-              onClick={onToggleFavorite}
-              className={clsx(
-                'w-7 h-7 rounded-lg flex items-center justify-center transition-colors',
-                item.isFavorite ? 'bg-red-50 text-red-500' : 'text-slate-300 hover:text-red-400 hover:bg-red-50',
+        {/* Tightened gap from 1.5 → 1 because the previous spacing
+            looked OK only with multi-line names. For 1-line names it
+            made the badge row float weirdly far below. */}
+        <div className="flex-1 min-w-0 flex flex-col gap-1">
+          {/* Row 1: name. Full width, no longer competing with the
+              food-grade dot (which moved onto the image). */}
+          <p className="text-sm font-bold text-slate-900 leading-tight line-clamp-3 min-w-0">{item.name}</p>
+          {/* Row 2: badges. Full content-column width — no Add
+              button squeezing it from the right, so the chip set can
+              run across cleanly. */}
+          {(onToggleFavorite || item.isPopular || item.isSpecial || hasVariants || (item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 || (item.hasLimitedStock && item.availableQuantity > 0) || (disabled && disabledReason)) && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {onToggleFavorite && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggleFavorite(e); }}
+                  className={clsx(
+                    // 32×32 hit target with an 18px icon — clears
+                    // Material's recommended tap-target size.
+                    'inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors',
+                    item.isFavorite ? 'bg-red-50 text-red-500' : 'text-slate-300 hover:text-red-400 hover:bg-red-50',
+                  )}
+                  title={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+                  aria-label={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+                >
+                  <Heart size={18} fill={item.isFavorite ? 'currentColor' : 'none'} />
+                </button>
               )}
-              title={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+              {item.isPopular && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-full">
+                  <Star size={8} fill="currentColor" /> Popular
+                </span>
+              )}
+              {item.isSpecial && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-rose-50 text-rose-600 px-1.5 py-0.5 rounded-full">
+                  ⭐ Special
+                </span>
+              )}
+              {/* Variant count — single chip "Nx options" so the
+                  customer knows tapping opens a chooser. */}
+              {hasVariants && (
+                <span className="inline-flex items-center text-[9px] font-bold bg-brand-50 text-brand-700 px-1.5 py-0.5 rounded-full border border-brand-100">
+                  {item.variants.length} options
+                </span>
+              )}
+              {/* Toppings indicator. */}
+              {(item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 && (
+                <span className="inline-flex items-center text-[9px] font-bold bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full border border-indigo-100">
+                  + toppings
+                </span>
+              )}
+              {/* Limited-stock chip — exact count when ≤5 (mild
+                  scarcity nudge), generic "Limited Quantity
+                  Available" otherwise so we don't broadcast healthy
+                  stock into FOMO. */}
+              {item.hasLimitedStock && item.availableQuantity > 0 && (
+                <span
+                  className={clsx(
+                    'inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full',
+                    item.availableQuantity <= 5
+                      ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                      : 'bg-amber-50 text-amber-700 border border-amber-100',
+                  )}
+                  title={`Only ${item.availableQuantity} left in stock`}
+                >
+                  {item.availableQuantity <= 5
+                    ? `Only ${item.availableQuantity} left`
+                    : 'Limited Quantity Available'}
+                </span>
+              )}
+              {disabled && disabledReason && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full border border-slate-200">
+                  {disabledReason}
+                </span>
+              )}
+            </div>
+          )}
+          {/* Row 3: short description, when present. */}
+          {item.shortDescription && (
+            <p className="text-[11px] text-slate-400 line-clamp-1">{item.shortDescription}</p>
+          )}
+          {/* Row 4: price + rating + prep time on the left, Add
+              button on the right. justify-between splits them so the
+              left stack hugs the start and the gold CTA hugs the
+              end — the "split to the right" from the spec. */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              {hasDiscount ? (
+                <>
+                  <span className="text-sm font-black text-emerald-700">
+                    {hasVariants ? `from ₹${lowDiscounted.toFixed(0)}` : `₹${lowDiscounted.toFixed(0)}`}
+                  </span>
+                  <span className="text-xs text-slate-400 line-through">
+                    ₹{lowPrice.toFixed(0)}
+                  </span>
+                  <span className="inline-flex items-center text-[10px] font-bold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-full">
+                    Save ₹{saveAmount.toFixed(0)}
+                  </span>
+                </>
+              ) : (
+                <span className="text-sm font-black text-slate-900">{hasVariants ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}</span>
+              )}
+              {item.ratingCount > 0 && (
+                <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700">
+                  <Star size={9} fill="currentColor" className="text-amber-500" />
+                  {item.ratingAvg.toFixed(1)}
+                  <span className="text-slate-400 font-normal">({item.ratingCount})</span>
+                </span>
+              )}
+              {item.preparationTime && <span className="text-[10px] text-slate-400 flex items-center gap-0.5"><Clock size={9} /> {item.preparationTime}m</span>}
+            </div>
+            <button
+              onClick={onQuickAdd}
+              disabled={disabled}
+              className={clsx(
+                'shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold transition-colors',
+                disabled
+                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  : 'bg-gold-500 hover:bg-gold-600 text-charcoal-900',
+              )}
             >
-              <Heart size={14} fill={item.isFavorite ? 'currentColor' : 'none'} />
+              <Plus size={12} /> Add{qty > 0 && ` · ${qty}`}
             </button>
-          )}
-          <button
-            onClick={onQuickAdd}
-            disabled={disabled}
-            className={clsx(
-              'inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors',
-              disabled
-                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                : 'bg-brand-500 hover:bg-brand-600 text-white',
-            )}
-          >
-            <Plus size={12} /> Add{qty > 0 && ` · ${qty}`}
-          </button>
-          {hasVariants && (
-            <span className="text-[9px] font-bold uppercase tracking-wider text-brand-600">
-              {item.variants.length} variants
-            </span>
-          )}
+          </div>
         </div>
       </div>
     </div>

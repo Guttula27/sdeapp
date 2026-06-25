@@ -326,20 +326,28 @@ export default function ClusterPage() {
   if (!cluster) return <div className="p-6 text-center text-slate-500">Cluster not found</div>;
 
   return (
-    <div className="pb-40 bg-slate-50 min-h-screen">
-      {/* ── Compact top bar — back + cluster name. No big hero band; the
-          customer is in a known context (the cluster shell), so the
-          screen real-estate goes to the menu instead. ─────────────── */}
-      <div className="bg-white px-3 py-2.5 flex items-center gap-2 shadow-sm sticky top-0 z-30">
-        <button onClick={() => navigate(-1)} className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-slate-100 shrink-0">
+    // h-full fills the BottomNav <main> (which is now the scroll
+    // container). No bottom padding needed — the nav is in-flow in
+    // the shell. Sticky headers below stick to the top of THIS
+    // element's scroll context (the parent <main>).
+    <div className="bg-slate-50">
+      {/* ── Compact top bar — back + cluster name. Brand-teal
+          banner to match OrderPage's outlet header so the customer's
+          context stays visually consistent moving between the two
+          surfaces. ──────────────────────────────────────────────── */}
+      <div className="bg-brand-700 px-3 py-2.5 flex items-center gap-2 shadow-sm sticky top-0 z-30">
+        <button
+          onClick={() => navigate(-1)}
+          className="w-9 h-9 rounded-lg flex items-center justify-center text-brand-200 hover:text-white hover:bg-brand-600 shrink-0 transition-colors"
+        >
           <ChevronLeft size={20} />
         </button>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <Network size={11} className="text-indigo-500 shrink-0" />
-            <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-indigo-500">Cluster</span>
+            <Network size={11} className="text-gold-300 shrink-0" />
+            <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-gold-300">Cluster</span>
           </div>
-          <p className="text-base font-black text-slate-900 leading-tight truncate">{cluster.name}</p>
+          <p className="text-base font-black text-white leading-tight truncate">{cluster.name}</p>
         </div>
       </div>
 
@@ -548,7 +556,7 @@ export default function ClusterPage() {
                       <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-xl">🍽️</div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-slate-900 truncate">{item.name}</p>
+                      <p className="text-sm font-bold text-slate-900 line-clamp-2 break-words">{item.name}</p>
                       {item.shortDescription && <p className="text-[11px] text-slate-400 truncate">{item.shortDescription}</p>}
                       <p className="text-sm font-black text-brand-700 mt-0.5">
                         {item.variants?.length ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}

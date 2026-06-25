@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../config/prisma/prisma.service';
 
 @Injectable()
@@ -37,10 +38,23 @@ export class InventoryService {
   }
 
   async getLowStockAlerts(businessId: string) {
-    const materials = await this.prisma.material.findMany({ where: { businessId } });
-    return materials.filter(
-      (m) => m.reorderLevel && Number(m.currentStock) <= Number(m.reorderLevel),
-    );
+    // Push the (currentStock <= reorderLevel) predicate into MySQL so
+    // we don't pull every material into Node and filter in JS — that
+    // was O(N) on every dashboard refresh. Prisma's typed `where`
+    // can't compare two columns of the same row, so this is the
+    // straightforward raw-SQL form. The `Prisma.sql` template tag
+    // keeps the businessId parameterised — no string interpolation
+    // into the query body.
+    return this.prisma.$queryRaw<
+      Array<Prisma.MaterialGetPayload<Record<string, never>>>
+    >(Prisma.sql`
+      SELECT *
+      FROM paynpik_materials
+      WHERE businessId = ${businessId}
+        AND reorderLevel IS NOT NULL
+        AND currentStock <= reorderLevel
+      ORDER BY name ASC
+    `);
   }
 
   async getPurchaseOrders(businessId: string) {

@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Public } from '../../common/decorators/public.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PaymentMode } from '@prisma/client';
 
 @ApiTags('Payments')
@@ -13,15 +14,22 @@ export class PaymentsController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @Post('initiate')
-  initiate(@Body() body: { orderId: string; mode: PaymentMode; amount: number }) {
-    return this.service.initiatePayment(body.orderId, body.mode, body.amount);
+  initiate(
+    @Body() body: { orderId: string; mode: PaymentMode; amount: number; splitShareId?: string },
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.service.initiatePayment(body.orderId, body.mode, body.amount, userId, body.splitShareId);
   }
 
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @Post(':id/confirm')
-  confirm(@Param('id') id: string, @Body('gatewayRef') gatewayRef: string) {
-    return this.service.confirmPayment(id, gatewayRef);
+  confirm(
+    @Param('id') id: string,
+    @Body('gatewayRef') gatewayRef: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.service.confirmPayment(id, gatewayRef, userId);
   }
 
   @ApiBearerAuth()

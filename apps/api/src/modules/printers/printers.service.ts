@@ -70,7 +70,10 @@ export class PrintersService {
   // station that owns them (via Item.kitchenStationId) — one receipt per
   // station that has at least one line. The caller decides whether to
   // actually print (auto vs. manual; printer present vs. not).
-  async buildKitchenReceipts(orderId: string, opts?: { stationId?: string }): Promise<KitchenReceipt[]> {
+  async buildKitchenReceipts(
+    orderId: string,
+    opts?: { stationId?: string; itemId?: string },
+  ): Promise<KitchenReceipt[]> {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
@@ -82,6 +85,7 @@ export class PrintersService {
             item: {
               select: {
                 name: true,
+                printSeparately: true,
                 kitchenStationId: true,
                 kitchenStation: {
                   select: {
@@ -98,8 +102,60 @@ export class PrintersService {
     });
     if (!order) throw new NotFoundException('Order not found');
 
-    // Group lines by station. Lines on items with no station route to a
-    // synthetic "Unassigned" bucket so they don't go missing.
+    // Per-item filter short-circuit: when the caller asks for a single
+    // OrderItem, build one slip with the order's token + just that line
+    // and return. Used by the kitchen card's per-item print button so
+    // staff can produce a token-tagged slip for any item on demand,
+    // independent of the item's printSeparately flag.
+    if (opts?.itemId) {
+      const li = order.items.find((x) => x.id === opts.itemId);
+      if (!li) return [];
+      const ks = li.item.kitchenStation;
+      const printer = ks?.printer
+        ? {
+            id: ks.printer.id,
+            name: ks.printer.name,
+            connection: ks.printer.connection,
+            address: ks.printer.address ?? null,
+          }
+        : null;
+      const rawNotes = li.notes ?? '';
+      const parts = rawNotes.split('|').map((s) => s.trim()).filter(Boolean);
+      const toppingsPart = parts.find((p) => p.toLowerCase().startsWith('add:')) ?? null;
+      const restNotes = parts.filter((p) => p !== toppingsPart).join(' | ') || null;
+      return [
+        {
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          tokenNumber: order.tokenNumber ?? null,
+          outletName: order.outlet.name,
+          table: order.table?.number ?? null,
+          section: order.section?.name ?? null,
+          isParcel: order.isParcel,
+          printedAt: new Date().toISOString(),
+          stationId: ks?.id ?? '__unassigned__',
+          stationName: ks?.name ?? 'Unassigned',
+          printer,
+          lines: [
+            {
+              itemName: li.item.name,
+              variantName: li.variant?.name ?? null,
+              toppings: toppingsPart ? toppingsPart.replace(/^add:\s*/i, '') : null,
+              quantity: li.quantity,
+              notes: restNotes,
+            },
+          ],
+        },
+      ];
+    }
+
+    // Two output shapes per order item:
+    //   - Item.printSeparately = false → station bucket (one combined
+    //     receipt per station, current behaviour).
+    //   - Item.printSeparately = true  → its own standalone receipt with
+    //     the order token + just that line. Useful for items whose
+    //     variant/toppings make per-line identification critical at
+    //     hand-off (e.g. a coffee with custom syrups).
     type Bucket = {
       stationId: string;
       stationName: string;
@@ -107,39 +163,7 @@ export class PrintersService {
       lines: KitchenReceiptLine[];
     };
     const buckets = new Map<string, Bucket>();
-    for (const li of order.items) {
-      const ks = li.item.kitchenStation;
-      const key = ks?.id ?? '__unassigned__';
-      if (!buckets.has(key)) {
-        buckets.set(key, {
-          stationId: ks?.id ?? '__unassigned__',
-          stationName: ks?.name ?? 'Unassigned',
-          printer: ks?.printer
-            ? {
-                id: ks.printer.id,
-                name: ks.printer.name,
-                connection: ks.printer.connection,
-                address: ks.printer.address ?? null,
-              }
-            : null,
-          lines: [],
-        });
-      }
-      // Notes from order time may include "Add: Cheese, Pepperoni" composed
-      // from the toppings — surface that separately on the ticket and keep
-      // the customer-typed remainder under "notes".
-      const rawNotes = li.notes ?? '';
-      const parts = rawNotes.split('|').map((s) => s.trim()).filter(Boolean);
-      const toppingsPart = parts.find((p) => p.toLowerCase().startsWith('add:')) ?? null;
-      const restNotes = parts.filter((p) => p !== toppingsPart).join(' | ') || null;
-      buckets.get(key)!.lines.push({
-        itemName: li.item.name,
-        variantName: li.variant?.name ?? null,
-        toppings: toppingsPart ? toppingsPart.replace(/^add:\s*/i, '') : null,
-        quantity: li.quantity,
-        notes: restNotes,
-      });
-    }
+    const standalones: KitchenReceipt[] = [];
 
     const baseHeader = {
       orderId: order.id,
@@ -152,6 +176,58 @@ export class PrintersService {
       printedAt: new Date().toISOString(),
     };
 
+    const resolvePrinter = (
+      ks: any,
+    ): KitchenReceipt['printer'] =>
+      ks?.printer
+        ? {
+            id: ks.printer.id,
+            name: ks.printer.name,
+            connection: ks.printer.connection,
+            address: ks.printer.address ?? null,
+          }
+        : null;
+
+    const buildLine = (li: any): KitchenReceiptLine => {
+      // Notes from order time may include "Add: Cheese, Pepperoni"
+      // composed from the toppings — surface that separately on the
+      // ticket and keep the customer-typed remainder under "notes".
+      const rawNotes = li.notes ?? '';
+      const parts = rawNotes.split('|').map((s: string) => s.trim()).filter(Boolean);
+      const toppingsPart = parts.find((p: string) => p.toLowerCase().startsWith('add:')) ?? null;
+      const restNotes = parts.filter((p: string) => p !== toppingsPart).join(' | ') || null;
+      return {
+        itemName: li.item.name,
+        variantName: li.variant?.name ?? null,
+        toppings: toppingsPart ? toppingsPart.replace(/^add:\s*/i, '') : null,
+        quantity: li.quantity,
+        notes: restNotes,
+      };
+    };
+
+    for (const li of order.items) {
+      const ks = li.item.kitchenStation;
+      const stationId = ks?.id ?? '__unassigned__';
+      const stationName = ks?.name ?? 'Unassigned';
+      const printer = resolvePrinter(ks);
+
+      if (li.item.printSeparately) {
+        standalones.push({
+          ...baseHeader,
+          stationId,
+          stationName,
+          printer,
+          lines: [buildLine(li)],
+        });
+        continue;
+      }
+
+      if (!buckets.has(stationId)) {
+        buckets.set(stationId, { stationId, stationName, printer, lines: [] });
+      }
+      buckets.get(stationId)!.lines.push(buildLine(li));
+    }
+
     const all: KitchenReceipt[] = [];
     for (const b of buckets.values()) {
       if (opts?.stationId && b.stationId !== opts.stationId) continue;
@@ -162,6 +238,10 @@ export class PrintersService {
         printer: b.printer,
         lines: b.lines,
       });
+    }
+    for (const r of standalones) {
+      if (opts?.stationId && r.stationId !== opts.stationId) continue;
+      all.push(r);
     }
     return all;
   }

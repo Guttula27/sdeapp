@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { RedisService } from '../../config/redis/redis.service';
 import { TranslationsService } from '../translations/translations.service';
@@ -12,15 +12,49 @@ import {
 // 10 minutes — safety net for any mutation path we forgot to hook.
 // Direct invalidation via invalidateOutlet() is the primary mechanism.
 const MENU_TREE_TTL_SECONDS = 600;
+// Outlet-level rolling aggregates (popular set, review averages) — these
+// are computed from order/review activity, so they don't get bumped by
+// the menu-version counter on every menu edit. Short TTL so a new
+// review or a freshly popular item surfaces within a minute.
+const MENU_AGGREGATE_TTL_SECONDS = 60;
+// Debounce window before a post-mutation cache warm fires. Long enough
+// to coalesce a bulk edit session (drag-reorder, batch price updates,
+// import-from-template) into a single warm; short enough that the first
+// customer after an admin save almost always hits a warm cache.
+const WARM_DEBOUNCE_MS = 2000;
 
 @Injectable()
-export class MenuService {
+export class MenuService implements OnModuleDestroy {
+  private readonly logger = new Logger(MenuService.name);
+  // Per-outlet debounce handle for the post-mutation warm. Cancelled
+  // on each new invalidation; bulk edit sessions collapse to one warm.
+  private readonly warmTimers = new Map<string, NodeJS.Timeout>();
+  // Single-flight guard for the menu-tree cold-cache load. Under a
+  // cold-cache thundering-herd (e.g. 20 concurrent customer scans on
+  // boot, or right after invalidateOutlet), every request used to
+  // fire its own loadMenuTreeFromDb — the stress harness caught
+  // 20× table reads of paynpik_items for one cache miss. Now the
+  // first arrival creates the promise; the rest await it; only one
+  // DB query fires. Cleared once the load resolves so the next
+  // miss-after-eviction starts cleanly. See A6 in
+  // docs/performance-hardening-plan.md.
+  private readonly inFlightTreeLoads = new Map<string, Promise<{ categories: any[] }>>();
+
   constructor(
     private prisma: PrismaService,
     private translations: TranslationsService,
     private discounts: DiscountsService,
     private redis: RedisService,
   ) {}
+
+  onModuleDestroy() {
+    // Drop pending warms on shutdown so an in-flight reload doesn't
+    // leak past Nest's lifecycle. Live warms (already in DB I/O) will
+    // complete and write to a possibly-already-evicted cache key —
+    // harmless.
+    for (const t of this.warmTimers.values()) clearTimeout(t);
+    this.warmTimers.clear();
+  }
 
   // ─── Cache helpers ────────────────────────────────────────
   // Version-counter invalidation: each cache key embeds the current
@@ -31,10 +65,103 @@ export class MenuService {
   private menuVersionKey(outletId: string) {
     return `menu:ver:${outletId}`;
   }
-  private menuTreeKey(outletId: string, version: number, lang: string, includeHidden: boolean) {
-    const langPart = lang || 'en';
+
+  /**
+   * Exposes the outlet's current menu-version counter so the controller
+   * can mint an ETag whose value rotates atomically with every cache
+   * bust. Returns 0 when Redis is down — the ETag still works as a
+   * weak hash and stale responses simply skip the 304 fast path.
+   */
+  async getMenuVersion(outletId: string): Promise<number> {
+    return this.redis.getCounter(this.menuVersionKey(outletId));
+  }
+  private menuTreeKey(outletId: string, version: number, includeHidden: boolean) {
+    // v2: dropped the `:lang:` segment. The cached tree carries every
+    // language's value inside each row's `<field>_i18n` JSON cell;
+    // projectMenu picks the right one per request. One cached tree
+    // per outlet × audience instead of one per (outlet × audience × N
+    // languages) — see docs/performance-hardening-plan.md D3.
     const audience = includeHidden ? 'all' : 'public';
-    return `menu:tree:v1:${outletId}:${version}:${langPart}:${audience}`;
+    return `menu:tree:v2:${outletId}:${version}:${audience}`;
+  }
+  // Outlet-level rolling aggregates. Keyed by outletId + menu-version
+  // counter so a menu edit that adds/removes items doesn't serve a
+  // popular set referencing items the customer can no longer see. TTL
+  // takes care of recency for order/review activity that doesn't go
+  // through invalidateOutlet().
+  private popularItemsKey(outletId: string, version: number) {
+    return `menu:popular:v1:${outletId}:${version}`;
+  }
+  private ratingsKey(outletId: string, version: number) {
+    return `menu:ratings:v1:${outletId}:${version}`;
+  }
+
+  /**
+   * Returns the top-5 item IDs at this outlet by quantity ordered in
+   * the last 30 days. Stress-test evidence (Phase 0 baseline) was that
+   * this query alone accounted for 20.1M of 34M total InnoDB row reads
+   * and hit max 1000 ms under contention. Cached for 60 s so the
+   * customer menu doesn't recompute it on every render.
+   *
+   * Behaves like the original inline query: empty array if nothing has
+   * been ordered in the window, never throws on Redis miss (the cache
+   * helpers degrade to pass-through).
+   */
+  private async getPopularItemIds(outletId: string): Promise<string[]> {
+    const version = await this.redis.getCounter(this.menuVersionKey(outletId));
+    const key = this.popularItemsKey(outletId, version);
+    const cached = await this.redis.getJSON<string[]>(key);
+    if (cached) return cached;
+
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const topGroups = await this.prisma.orderItem.groupBy({
+      by: ['itemId'],
+      where: {
+        order: { outletId, createdAt: { gte: since } },
+        status: { not: 'CANCELLED' },
+      },
+      _sum: { quantity: true },
+      orderBy: { _sum: { quantity: 'desc' } },
+      take: 5,
+    });
+    const ids = topGroups.map((g) => g.itemId);
+    void this.redis.setJSON(key, ids, MENU_AGGREGATE_TTL_SECONDS);
+    return ids;
+  }
+
+  /**
+   * Returns a Map of itemId → {avg, count} for every item rendered on
+   * this menu. Same caching shape as popularity — keyed by outletId +
+   * menu-version, 60 s TTL. Map is serialised as `[key, value][]` so
+   * JSON.stringify round-trips faithfully.
+   */
+  private async getRatingsByItem(
+    outletId: string,
+    itemIds: string[],
+  ): Promise<Map<string, { avg: number; count: number }>> {
+    if (itemIds.length === 0) return new Map();
+    const version = await this.redis.getCounter(this.menuVersionKey(outletId));
+    const key = this.ratingsKey(outletId, version);
+
+    type Entry = [string, { avg: number; count: number }];
+    const cached = await this.redis.getJSON<Entry[]>(key);
+    if (cached) return new Map(cached);
+
+    const rows = await this.prisma.orderItemReview.groupBy({
+      by: ['itemId'],
+      where: { itemId: { in: itemIds } },
+      _avg: { rating: true },
+      _count: { rating: true },
+    });
+    const map = new Map<string, { avg: number; count: number }>();
+    for (const r of rows) {
+      map.set(r.itemId, {
+        avg: r._avg.rating ? Math.round(r._avg.rating * 10) / 10 : 0,
+        count: r._count.rating ?? 0,
+      });
+    }
+    void this.redis.setJSON(key, [...map.entries()] as Entry[], MENU_AGGREGATE_TTL_SECONDS);
+    return map;
   }
 
   /**
@@ -45,10 +172,36 @@ export class MenuService {
    * mutate menu-adjacent data (toppings, customer-tag prices,
    * table-type prices, business-level menu timing slots) should call
    * this too — exposed publicly for that reason.
+   *
+   * Also schedules a debounced background warm of the customer hot
+   * path (lang=en, public). The warm coalesces bursts — drag-reorder
+   * or batch import will fire only one reload — and runs async so it
+   * doesn't slow down the admin's save response. Other variants
+   * (other langs, includeHidden=true) fall back to lazy load on
+   * first read.
    */
   async invalidateOutlet(outletId: string): Promise<void> {
     if (!outletId) return;
     await this.redis.incr(this.menuVersionKey(outletId));
+    this.scheduleWarm(outletId);
+  }
+
+  private scheduleWarm(outletId: string) {
+    const existing = this.warmTimers.get(outletId);
+    if (existing) clearTimeout(existing);
+    const t = setTimeout(() => {
+      this.warmTimers.delete(outletId);
+      // Fire-and-forget. loadMenuTree's cache check will miss (we
+      // just INCR'd the version) so it goes through the DB path and
+      // populates the cache for the next reader.
+      void this.loadMenuTree(outletId, 'en', false).catch((e) =>
+        this.logger.warn(`Cache warm failed for outlet ${outletId}: ${e?.message ?? e}`),
+      );
+    }, WARM_DEBOUNCE_MS);
+    // Don't hold the event loop open just for a warm — let the
+    // process exit cleanly if it's idle.
+    t.unref?.();
+    this.warmTimers.set(outletId, t);
   }
 
   // Outlet-id resolvers — the cache busting needs an outletId but most
@@ -101,8 +254,13 @@ export class MenuService {
   private async invalidateForVariant(id: string)     { const o = await this.outletIdFromVariantId(id);     if (o) await this.invalidateOutlet(o); }
 
   // Translate every menu-bearing entity in a single getMenu response.
-  private async hydrateMenu(categories: any[], lang: string | null | undefined) {
+  private hydrateMenu(categories: any[], lang: string | null | undefined) {
     if (!lang || lang === 'en' || !categories.length) return categories;
+    // Phase 3 fast path: every translatable row already carries its
+    // <field>_i18n JSON cell (selected by Prisma include). pickI18n
+    // mutates the source field in place per requested language — zero
+    // DB roundtrips. Replaces the 5-findMany hydrate that used to fire
+    // on every cache miss.
     const cats: any[] = categories;
     const subs: any[] = categories.flatMap((c) => c.subcategories ?? []);
     const items: any[] = subs.flatMap((s) => s.items ?? []);
@@ -111,14 +269,21 @@ export class MenuService {
       .flatMap((i) => i.itemToppings ?? [])
       .map((t) => t.topping)
       .filter(Boolean);
-
-    await Promise.all([
-      this.translations.hydrate('Category',    cats,     ['name'],                lang),
-      this.translations.hydrate('Subcategory', subs,     ['name'],                lang),
-      this.translations.hydrate('Item',        items,    ['name', 'description'], lang),
-      this.translations.hydrate('Variant',     variants, ['name', 'shortDescription'], lang),
-      this.translations.hydrate('Topping',     toppings, ['name'],                lang),
-    ]);
+    this.translations.pickI18nBatch(cats,     ['name'], lang);
+    this.translations.pickI18nBatch(subs,     ['name'], lang);
+    this.translations.pickI18nBatch(items,    ['name', 'description'], lang);
+    this.translations.pickI18nBatch(variants, ['name', 'shortDescription'], lang);
+    this.translations.pickI18nBatch(toppings, ['name'], lang);
+    // D4 lazy fill: enqueue translate jobs for cells that don't yet
+    // have a value for this language. Customer sees English on this
+    // render; the cached translation lands on the next read. Capped
+    // per-render so a cold-language burst doesn't fan out hundreds
+    // of jobs at once.
+    this.translations.lazyFillMissing('Category',    cats,     ['name'],                    lang);
+    this.translations.lazyFillMissing('Subcategory', subs,     ['name'],                    lang);
+    this.translations.lazyFillMissing('Item',        items,    ['name', 'description'],     lang);
+    this.translations.lazyFillMissing('Variant',     variants, ['name', 'shortDescription'], lang);
+    this.translations.lazyFillMissing('Topping',     toppings, ['name'],                    lang);
     return categories;
   }
 
@@ -233,21 +398,52 @@ export class MenuService {
     includeHidden?: boolean,
   ): Promise<{ categories: any[] }> {
     const version = await this.redis.getCounter(this.menuVersionKey(outletId));
-    const cacheKey = this.menuTreeKey(outletId, version, lang || 'en', !!includeHidden);
+    const cacheKey = this.menuTreeKey(outletId, version, !!includeHidden);
 
     const cached = await this.redis.getJSON<{ categories: any[] }>(cacheKey);
-    if (cached) return cached;
-
-    const tree = await this.loadMenuTreeFromDb(outletId, lang, includeHidden);
-    // Fire-and-forget write — we already have the freshly-loaded tree
-    // to return; a cache write failure shouldn't slow down the response.
-    void this.redis.setJSON(cacheKey, tree, MENU_TREE_TTL_SECONDS);
+    let tree: { categories: any[] };
+    if (cached) {
+      tree = cached;
+    } else {
+      // Single-flight: only the first arrival for a given cache key
+      // fires the DB query. Concurrent siblings await the same
+      // promise and reuse the result. The map entry is keyed on the
+      // FULL cache key so a fresh invalidation (different version)
+      // doesn't collide with an in-flight load for the previous
+      // version.
+      let pending = this.inFlightTreeLoads.get(cacheKey);
+      if (!pending) {
+        pending = (async () => {
+          const loaded = await this.loadMenuTreeFromDb(outletId, includeHidden);
+          // Fire-and-forget write — we already have the freshly-loaded
+          // tree to return; a cache write failure shouldn't slow down
+          // the response.
+          void this.redis.setJSON(cacheKey, loaded, MENU_TREE_TTL_SECONDS);
+          return loaded;
+        })();
+        this.inFlightTreeLoads.set(cacheKey, pending);
+        // Clear the entry once it settles (success or failure) so the
+        // next miss-after-eviction starts cleanly.
+        pending.finally(() => this.inFlightTreeLoads.delete(cacheKey));
+      }
+      const shared = await pending;
+      // Each awaiter needs its own deep copy because hydrateMenu()
+      // mutates in place. The Redis cache-hit branch is already safe
+      // because redis.getJSON returns a fresh JSON.parse — this clone
+      // gives the single-flight branch the same property.
+      tree = JSON.parse(JSON.stringify(shared));
+    }
+    // Per-request language pick. The cached tree carries every
+    // language's value in <field>_i18n cells; pickI18n mutates the
+    // source field per requested language. Operates on a freshly
+    // deserialised copy (redis.getJSON does JSON.parse), so concurrent
+    // requests in different languages don't race.
+    if (lang && lang !== 'en') this.hydrateMenu(tree.categories, lang);
     return tree;
   }
 
   private async loadMenuTreeFromDb(
     outletId: string,
-    lang?: string | null,
     includeHidden?: boolean,
   ): Promise<{ categories: any[] }> {
     const categories = await this.prisma.category.findMany({
@@ -308,7 +504,9 @@ export class MenuService {
       },
     });
 
-    await this.hydrateMenu(categories, lang);
+    // No translation hydration here — the tree is cached
+    // language-agnostic. loadMenuTree() calls hydrateMenu() per request
+    // against the deserialised copy.
     return { categories };
   }
 
@@ -333,17 +531,23 @@ export class MenuService {
     const skipSchedule = !!ctx.includeHidden;
 
     // ── Outlet-menu visibility resolution (out of cache so toggles
-    // don't invalidate). Mirrors the original gating:
-    //   • multipleMenusEnabled = false → only default menu (+ legacy
-    //     unassigned categories with menuId = null)
+    // don't invalidate). Two modes:
+    //   • multipleMenusEnabled = false → the outlet has collapsed every
+    //     menu into a single customer view. Bypass menu-id filtering
+    //     entirely so imports from any business menu (default or not)
+    //     surface to the customer. The previous "default + null only"
+    //     filter silently dropped categories imported from non-default
+    //     menus — and dropped *everything* when the business had no
+    //     isDefault menu seeded (older businesses).
     //   • multipleMenusEnabled = true  → enabled OutletMenu links,
     //     minus table-driven exclusions; default menu always counts.
     const outletMeta = await this.prisma.outlet.findUnique({
       where: { id: outletId },
       select: { multipleMenusEnabled: true, businessId: true },
     });
+    let bypassMenuFilter = false;
     let allowedMenuIds = new Set<string>();
-    let allowNullMenu = false; // single-menu mode also shows unassigned categories
+    let allowNullMenu = false;
     let defaultMenuId: string | null = null;
     if (outletMeta) {
       const defaultMenu = await this.prisma.menu.findFirst({
@@ -352,8 +556,7 @@ export class MenuService {
       });
       defaultMenuId = defaultMenu?.id ?? null;
       if (!outletMeta.multipleMenusEnabled) {
-        if (defaultMenuId) allowedMenuIds.add(defaultMenuId);
-        allowNullMenu = true;
+        bypassMenuFilter = true;
       } else {
         const links = await this.prisma.outletMenu.findMany({
           where: { outletId, isEnabled: true },
@@ -361,6 +564,9 @@ export class MenuService {
         });
         for (const l of links) allowedMenuIds.add(l.menuId);
         if (defaultMenuId) allowedMenuIds.add(defaultMenuId);
+        // Legacy categories created before the menus feature have menuId
+        // = null — those should surface in multi-mode too.
+        allowNullMenu = true;
         // Table-type-level disables (legacy / "Patio table" style
         // grouping) AND section-level disables (physical area: "VIP
         // room", "Bar"). Both apply when a table QR is scanned.
@@ -397,10 +603,12 @@ export class MenuService {
       }
     }
 
-    const categories = tree.categories.filter((c: any) => {
-      if (c.menuId == null) return allowNullMenu;
-      return allowedMenuIds.has(c.menuId);
-    });
+    const categories = bypassMenuFilter
+      ? tree.categories
+      : tree.categories.filter((c: any) => {
+          if (c.menuId == null) return allowNullMenu;
+          return allowedMenuIds.has(c.menuId);
+        });
 
     // Resolve viewer's tag for this outlet (if any) and project effective price
     let viewerTagId: string | null = null;
@@ -421,19 +629,10 @@ export class MenuService {
       if (table?.outletId === outletId) tableTypeId = table.tableTypeId;
     }
 
-    // Auto-detect top 5 ordered items at this outlet over the last 30 days
-    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const topGroups = await this.prisma.orderItem.groupBy({
-      by: ['itemId'],
-      where: {
-        order: { outletId, createdAt: { gte: since } },
-        status: { not: 'CANCELLED' },
-      },
-      _sum: { quantity: true },
-      orderBy: { _sum: { quantity: 'desc' } },
-      take: 5,
-    });
-    const popularSet = new Set(topGroups.map(g => g.itemId));
+    // Auto-detect top 5 ordered items at this outlet over the last 30 days.
+    // Cached for 60 s — the previous inline groupBy was the heaviest read
+    // on the menu hot path (see docs/performance-hardening-plan.md A3).
+    const popularSet = new Set(await this.getPopularItemIds(outletId));
 
     // Viewer's favourites
     let favoriteSet = new Set<string>();
@@ -500,27 +699,14 @@ export class MenuService {
       };
     };
 
-    // Aggregate review stats for every item on the (filtered) menu in one
-    // query so the customer can see the consolidated rating chip without
-    // an extra round-trip.
+    // Aggregate review stats for every item on the (filtered) menu so
+    // the customer sees the consolidated rating chip without an extra
+    // round-trip. Cached for 60 s alongside popularity — same outlet
+    // version key so a menu edit invalidates both atomically.
     const itemIds = categories.flatMap((c: any) =>
       c.subcategories.flatMap((s: any) => s.items.map((i: any) => i.id)),
     );
-    const ratingRows = itemIds.length
-      ? await this.prisma.orderItemReview.groupBy({
-          by: ['itemId'],
-          where: { itemId: { in: itemIds } },
-          _avg: { rating: true },
-          _count: { rating: true },
-        })
-      : [];
-    const ratingByItem = new Map<string, { avg: number; count: number }>();
-    for (const r of ratingRows) {
-      ratingByItem.set(r.itemId, {
-        avg: r._avg.rating ? Math.round(r._avg.rating * 10) / 10 : 0,
-        count: r._count.rating ?? 0,
-      });
-    }
+    const ratingByItem = await this.getRatingsByItem(outletId, itemIds);
 
     // Cascading availability evaluation. Outlet hours and bot
     // category/sub/item per-day slots all cascade — a node is in
@@ -1133,13 +1319,20 @@ export class MenuService {
 
   async deleteVariant(id: string) {
     const outletId = await this.outletIdFromVariantId(id);
-    const orderItemCount = await this.prisma.orderItem.count({ where: { variantId: id } });
-    if (orderItemCount > 0) {
-      const updated = await this.prisma.variant.update({ where: { id }, data: { isAvailable: false } });
-      if (outletId) await this.invalidateOutlet(outletId);
-      return updated;
-    }
-    const result = await this.prisma.variant.delete({ where: { id } });
+    // If past orders reference this variant, the raw delete would FK-fail
+    // (OrderItem.variantId has no ON DELETE rule). Null out the link in
+    // those rows first — variantNameSnapshot was captured at order time
+    // so historical receipts still print the variant label. We previously
+    // soft-deleted (isAvailable=false) here, but the row stayed and
+    // reappeared on the next fetch, making the Menu UI look like the
+    // delete silently failed.
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.orderItem.updateMany({
+        where: { variantId: id },
+        data: { variantId: null },
+      });
+      return tx.variant.delete({ where: { id } });
+    });
     if (outletId) await this.invalidateOutlet(outletId);
     return result;
   }
@@ -1174,7 +1367,11 @@ export class MenuService {
    * set up at the outlet level after import.
    */
 
-  async getBusinessMenu(businessId: string, lang?: string | null) {
+  async getBusinessMenu(
+    businessId: string,
+    lang?: string | null,
+    opts: { includeHidden?: boolean } = {},
+  ) {
     const categories = await this.prisma.category.findMany({
       where: { businessId, isActive: true },
       orderBy: { displayOrder: 'asc' },
@@ -1184,7 +1381,9 @@ export class MenuService {
           orderBy: { displayOrder: 'asc' },
           include: {
             items: {
-              where: { isDisplayed: true },
+              // Admin edit view passes includeHidden so the Visibility
+              // toggle remains discoverable after it's switched off.
+              ...(opts.includeHidden ? {} : { where: { isDisplayed: true } }),
               orderBy: { displayOrder: 'asc' },
               include: { variants: true },
             },
@@ -1429,6 +1628,7 @@ export class MenuService {
                 isPopular: item.isPopular,
                 isAvailable: item.isAvailable,
                 isDisplayed: item.isDisplayed,
+                printSeparately: (item as any).printSeparately ?? false,
                 imageUrl: item.imageUrl,
                 displayOrder: item.displayOrder,
               },

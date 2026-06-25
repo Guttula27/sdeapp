@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CustomersService } from './customers.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -19,8 +19,24 @@ export class CustomersController {
   listOrders(
     @Param('outletId') outletId: string,
     @Param('userId') userId: string,
+    // Cursor pagination. Default page 20, max 100. Use `nextCursor`
+    // from the previous response as `?cursor=` to fetch older orders.
+    @Query('limit')  limit?: string,
+    @Query('cursor') cursor?: string,
   ) {
-    return this.service.listOrders(outletId, userId);
+    return this.service.listOrders(outletId, userId, {
+      limit: limit ? Number(limit) : undefined,
+      cursor: cursor || undefined,
+    });
+  }
+
+  // Per-outlet aggregate stats for the order-detail recognition pill.
+  @Get(':userId/insights')
+  insights(
+    @Param('outletId') outletId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.service.insights(outletId, userId);
   }
 
   @Post()

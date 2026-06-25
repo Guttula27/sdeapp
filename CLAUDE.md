@@ -11,7 +11,7 @@ npm workspaces monorepo. Three deployable apps + one shared types package:
 - `apps/customer` — Vite + React 18 customer PWA (vite-plugin-pwa, html5-qrcode for table QR scan, no Redux — context + hooks).
 - `packages/shared` — exported TypeScript types only (`src/index.ts`); consumed by source path, not built.
 
-`paynpik_db.sql` / `paynpik_db.sql.gz` at the root are a captured DB dump; `app_desc.txt` is the long-form SRS; `changes.txt` and `docs/hardening-backlog.md` are living planning docs (the backlog is load-bearing — read it before touching payments or auditability).
+`paynpik_db.sql` / `paynpik_db.sql.gz` at the root are a captured DB dump; `app_desc.txt` is the long-form SRS; `changes.txt` and `docs/hardening-backlog.md` are living planning docs (the backlog is load-bearing — read it before touching payments or auditability). `docs/whatsapp-templates.md` is the canonical catalogue of every customer-facing WhatsApp / SMS template — **must be updated FIRST** whenever a new message-sending path is added, so the WABA approval submission stays in sync with what the code actually fires.
 
 ## Common commands
 

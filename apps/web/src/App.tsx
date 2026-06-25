@@ -21,6 +21,10 @@ import ServiceStationsPage from './pages/service-stations/ServiceStationsPage';
 import ServiceDeskPage from './pages/service-desk/ServiceDeskPage';
 import ParcelDeskPage from './pages/parcel-desk/ParcelDeskPage';
 import OfflineOrdersPage from './pages/offline-orders/OfflineOrdersPage';
+import ShiftsPage from './pages/shifts/ShiftsPage';
+import RefundsPage from './pages/refunds/RefundsPage';
+import AggregatorsPage from './pages/aggregators/AggregatorsPage';
+import MappingsPage from './pages/aggregators/MappingsPage';
 import TagsPage from './pages/tags/TagsPage';
 import CustomersPage from './pages/customers/CustomersPage';
 import ToppingsPage from './pages/toppings/ToppingsPage';
@@ -30,6 +34,8 @@ import OutletProfilePage from './pages/outlets/OutletProfilePage';
 import StaffPage from './pages/staff/StaffPage';
 import RolesPage from './pages/roles/RolesPage';
 import LanguagesPage from './pages/languages/LanguagesPage';
+import TranslationsPage from './pages/i18n/TranslationsPage';
+import BusinessLanguageConfigPage from './pages/business/BusinessLanguageConfigPage';
 import DisputesPage from './pages/disputes/DisputesPage';
 import SettingsPage from './pages/settings/SettingsPage';
 import IntegrationsPage from './pages/integrations/IntegrationsPage';
@@ -109,11 +115,17 @@ export default function App() {
           <Route path="staff"      element={<StaffPage />} />
           <Route path="roles"      element={<RolesPage />} />
           <Route path="languages"  element={<LanguagesPage />} />
+          <Route path="translations" element={<TranslationsPage />} />
+          <Route path="business/languages" element={<BusinessLanguageConfigPage />} />
           <Route path="reports"    element={<ReportsPage />} />
           <Route path="kitchen"    element={<KitchenPage />} />
           <Route path="service-desk" element={<ServiceDeskPage />} />
           <Route path="parcel-desk" element={<ParcelDeskPage />} />
           <Route path="offline-orders" element={<OfflineOrdersPage />} />
+          <Route path="shifts" element={<ShiftsPage />} />
+          <Route path="refunds" element={<RefundsPage />} />
+          <Route path="aggregators" element={<AggregatorsPage />} />
+          <Route path="aggregators/mappings" element={<MappingsPage />} />
           <Route path="stations"   element={<StationsPage />} />
           <Route path="service-stations" element={<ServiceStationsPage />} />
           <Route path="tags"       element={<TagsPage />} />

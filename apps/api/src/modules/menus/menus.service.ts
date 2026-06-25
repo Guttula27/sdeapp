@@ -342,6 +342,7 @@ export class MenusService {
               isDisplayed: item.isDisplayed,
               isPopular: item.isPopular,
               isSpecial: item.isSpecial,
+              printSeparately: (item as any).printSeparately ?? false,
               displayOrder: item.displayOrder,
               subcategoryId: newSub.id,
               variants: item.variants?.length

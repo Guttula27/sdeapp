@@ -3,7 +3,7 @@ import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, ValidateIf } from 'class-validator';
 import { PrismaService } from '../../config/prisma/prisma.service';
-import { OutletType } from '@prisma/client';
+import { OutletType, SplitFeeAbsorption } from '@prisma/client';
 import { TranslationsService } from '../translations/translations.service';
 import { EncryptionService } from '../../config/crypto/encryption.service';
 import { UserLookupService } from '../../config/crypto/user-lookup.service';
@@ -58,6 +58,18 @@ export class CreateOutletDto {
   // (platform retains the gateway fee). Leave blank to disable Razorpay
   // for this outlet entirely — the customer PWA hides the option.
   @IsString() @IsOptional() razorpayLinkedAccountId?: string;
+
+  // Split-bill Phase B knobs. Edited from the Outlet profile page;
+  // the sweep in SplitBillsService reads them per share.
+  @IsEnum(SplitFeeAbsorption) @IsOptional() splitFeesAbsorbedBy?: SplitFeeAbsorption;
+  @IsInt() @IsOptional() splitReminderEveryMinutes?: number;
+  @IsInt() @IsOptional() splitMaxReminders?: number;
+  @IsInt() @IsOptional() splitExpireAfterMinutes?: number;
+
+  // Per-outlet feature toggle owned by the business admin. Drives
+  // sidebar visibility of the Aggregators settings page on the
+  // outlet-tier nav.
+  @IsBoolean() @IsOptional() aggregatorEnabled?: boolean;
 }
 
 export class CreateSectionDto {
@@ -172,22 +184,51 @@ export class OutletsService {
     return outlets;
   }
 
-  async findOne(id: string, lang?: string | null) {
+  /**
+   * Outlet detail. `mode='config'` (default) returns address, hours,
+   * images, GST/UPI fields — what the outlet profile page needs.
+   * `mode='layout'` adds sections.tables which can be many hundreds
+   * of rows for a busy multi-section outlet. The split keeps the
+   * payload tight on every config-only open (which is most of them)
+   * and the layout/map view fetches the heavy graph on demand.
+   * Existing callers default to `config` and now get a smaller
+   * response without changing their code.
+   *
+   * Sub-resource alternative: GET /outlets/:id/layout returns the
+   * layout block only — useful when a UI already has the config
+   * cached and only needs to refresh the map.
+   */
+  async findOne(id: string, lang?: string | null, mode: 'config' | 'layout' | 'full' = 'config') {
+    const includeLayout = mode === 'layout' || mode === 'full';
     const outlet = await this.prisma.outlet.findUnique({
       where: { id },
       include: {
-        sections: { include: { tables: true } },
+        ...(includeLayout ? { sections: { include: { tables: true } } } : {}),
         images: { orderBy: { displayOrder: 'asc' } },
         hours: { orderBy: [{ dayOfWeek: 'asc' }, { openTime: 'asc' }] },
         _count: { select: { orders: true, tables: true } },
       },
     });
     if (!outlet) throw new NotFoundException('Outlet not found');
-    await this.translations.hydrate('Outlet', outlet, ['name', 'description', 'address', 'addressLine1', 'addressLine2'], lang);
+    // Phase 3 in-memory pick — zero translation-table reads.
+    this.translations.pickI18n(outlet, ['name', 'description', 'address', 'addressLine1', 'addressLine2'], lang);
     // Decrypt sensitive at-rest fields before responding so admin UI
     // sees the cleartext acc_... id when pre-filling the form. The
     // customer-facing getOpenStatus never reads this field plaintext.
     (outlet as any).razorpayLinkedAccountId = this.encryption.decrypt(outlet.razorpayLinkedAccountId);
+    return outlet;
+  }
+
+  /** Sub-resource: just the section/table layout. Used by the map view. */
+  async getLayout(id: string) {
+    const outlet = await this.prisma.outlet.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        sections: { include: { tables: true } },
+      },
+    });
+    if (!outlet) throw new NotFoundException('Outlet not found');
     return outlet;
   }
 
@@ -288,6 +329,11 @@ export class OutletsService {
         // (a boolean) below — we never echo the actual LA id to the
         // customer PWA; that's an internal Razorpay reference.
         razorpayLinkedAccountId: true,
+        // Parcel config travels with open-status so the customer PWA's
+        // cart preview can mirror the server's parcel-charge math
+        // without an extra round-trip to /outlets/:id.
+        parcelChargeEnabled: true,
+        defaultParcelCharge: true,
         // Business name + logo travel alongside so the customer menu
         // header can show the brand identity (logo + name) without an
         // extra round-trip to /businesses/:id.
@@ -307,6 +353,8 @@ export class OutletsService {
       businessName: outlet.business?.name ?? null,
       businessLogoUrl: outlet.business?.logoUrl ?? null,
       outletType: outlet.outletType,
+      parcelChargeEnabled: outlet.parcelChargeEnabled,
+      defaultParcelCharge: Number(outlet.defaultParcelCharge ?? 0),
       // Razorpay routing is enabled for this outlet iff a Linked Account
       // is configured. The customer PWA uses this to hide the Razorpay
       // payment option when the outlet hasn't onboarded for Route — no

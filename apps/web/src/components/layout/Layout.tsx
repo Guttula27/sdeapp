@@ -9,7 +9,7 @@ import {
   Gauge, Menu, Flame, Tag, Sandwich, Plus, LayoutGrid, Shield, Languages, ConciergeBell,
   Plug, MessageCircle, ClipboardCheck, MessageSquare, Network,
   Ticket, Percent as PercentIcon, Package, Gift, Award,
-  CloudOff,
+  CloudOff, Wallet, RotateCcw,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
@@ -34,6 +34,26 @@ function scrubSeatingNav(items: NavItem[]): NavItem[] {
       if (it.children) {
         const kept = it.children.filter((c) => !SEATING_ONLY_PATHS.has(c.to));
         if (kept.length === 0 && SEATING_ONLY_PATHS.has(it.to)) return null;
+        return { ...it, children: kept };
+      }
+      return it;
+    })
+    .filter((x): x is NavItem => x !== null);
+}
+
+// Removes the Aggregators settings sub-page (+ any future top-level
+// aggregator entry) from the nav when the outlet's business admin
+// hasn't enabled the feature. Walks top-level + Settings children
+// like scrubSeatingNav does; "/aggregators/*" matches the bulk
+// mappings page too.
+function stripAggregatorsNav(items: NavItem[]): NavItem[] {
+  const isAggregator = (path: string) =>
+    path === '/aggregators' || path.startsWith('/aggregators/');
+  return items
+    .map((it): NavItem | null => {
+      if (isAggregator(it.to)) return null;
+      if (it.children) {
+        const kept = it.children.filter((c) => !isAggregator(c.to));
         return { ...it, children: kept };
       }
       return it;
@@ -88,19 +108,22 @@ const SETTINGS_CHILDREN: Record<UserTier, NavItem[]> = {
     { to: '/template-approvals', icon: ClipboardCheck, label: 'Template Approvals' },
   ],
   business: [
-    { to: '/settings', icon: User,   label: 'Account' },
-    { to: '/roles',    icon: Shield, label: 'Roles' },
-    { to: '/messaging', icon: MessageCircle, label: 'Messaging' },
+    { to: '/settings',           icon: User,          label: 'Account' },
+    { to: '/roles',              icon: Shield,        label: 'Roles' },
+    { to: '/business/languages', icon: Languages,     label: 'Languages' },
+    { to: '/messaging',          icon: MessageCircle, label: 'Messaging' },
   ],
   outlet: [
-    { to: '/settings',    icon: User,       label: 'Account' },
-    { to: '/roles',       icon: Shield,     label: 'Roles' },
-    { to: '/tags',        icon: Tag,        label: 'Tags' },
-    { to: '/table-types', icon: LayoutGrid, label: 'Dine In Sections' },
-    { to: '/stations',    icon: Flame,      label: 'Stations' },
+    { to: '/settings',     icon: User,        label: 'Account' },
+    { to: '/roles',        icon: Shield,      label: 'Roles' },
+    { to: '/tags',         icon: Tag,         label: 'Tags' },
+    { to: '/table-types',  icon: LayoutGrid,  label: 'Dine In Sections' },
+    { to: '/stations',     icon: Flame,       label: 'Stations' },
     { to: '/service-stations', icon: ConciergeBell, label: 'Service Stations' },
-    { to: '/toppings',    icon: Sandwich,   label: 'Toppings' },
-    { to: '/messaging',   icon: MessageCircle, label: 'Messaging' },
+    { to: '/toppings',     icon: Sandwich,    label: 'Toppings' },
+    { to: '/translations', icon: Languages,   label: 'Translations' },
+    { to: '/messaging',    icon: MessageCircle, label: 'Messaging' },
+    { to: '/aggregators',  icon: Plug,        label: 'Aggregators' },
   ],
   kitchen: [{ to: '/settings', icon: User, label: 'Account' }],
   counter: [{ to: '/settings', icon: User, label: 'Account' }],
@@ -152,6 +175,8 @@ const NAV: Record<UserTier, NavItem[]> = {
     { to: '/service-desk', icon: ConciergeBell, label: 'Service Desk' },
     { to: '/parcel-desk',  icon: Package,       label: 'Parcel Desk' },
     { to: '/offline-orders', icon: CloudOff,    label: 'Offline Orders' },
+    { to: '/shifts',    icon: Wallet,          label: 'Shifts' },
+    { to: '/refunds',   icon: RotateCcw,       label: 'Refunds' },
     { to: '/disputes',  icon: ShieldAlert,     label: 'Disputes' },
     { to: '/feedback',  icon: MessageSquare,   label: 'Feedback' },
     { to: '/staff',     icon: Users,           label: 'Staff' },
@@ -187,6 +212,8 @@ const MINIMAL_NAV: NavItem[] = [
   { to: '/service-desk', icon: ConciergeBell,  label: 'Service Desk', requires: ['VIEW_SERVICE_DESK'] },
   { to: '/parcel-desk',  icon: Package,        label: 'Parcel Desk',  requires: ['VIEW_PARCEL_DESK'] },
   { to: '/offline-orders', icon: CloudOff,     label: 'Offline Orders', requires: ['CREATE_ORDER'] },
+  { to: '/shifts',         icon: Wallet,       label: 'Shifts',          requires: ['CREATE_ORDER', 'COLLECT_PAYMENT'] },
+  { to: '/refunds',        icon: RotateCcw,    label: 'Refunds',         requires: ['CANCEL_ORDER'] },
   { to: '/menu',        icon: UtensilsCrossed, label: 'Menu',        requires: ['VIEW_MENU'] },
   { to: '/customers',   icon: Users,           label: 'Customers',   requires: ['VIEW_CUSTOMERS'] },
   { to: '/disputes',    icon: ShieldAlert,     label: 'Disputes',    requires: ['VIEW_DISPUTES'] },
@@ -460,12 +487,18 @@ export default function Layout() {
   const scrubbed = !!user?.outletId && outletType && !allowsSeating(outletType)
     ? scrubSeatingNav(rawNav)
     : rawNav;
+  // Per-outlet aggregator feature toggle owned by the business admin
+  // (paynpik_outlets.aggregatorEnabled). When false, the outlet admin
+  // shouldn't even see the Aggregators settings sub-page, let alone
+  // configure integrations.
+  const aggregatorEnabled = !!(user?.outlet as any)?.aggregatorEnabled;
+  const afterAggregatorGate = aggregatorEnabled ? scrubbed : stripAggregatorsNav(scrubbed);
   // Dine-in outlet with no sections yet → grey out the Service
   // Stations nav row (still visible so the operator can see it's a
   // future step, but non-clickable with a tooltip explaining why).
   const navItems = hasSections === false
-    ? disableServiceStationsIfNoSections(scrubbed, false)
-    : scrubbed;
+    ? disableServiceStationsIfNoSections(afterAggregatorGate, false)
+    : afterAggregatorGate;
   // Label = the user's actual role name. When the user has no role assigned
   // we hide the badge entirely instead of falling back to a misleading tier
   // label like "Outlet Admin". Tier still drives the color palette.

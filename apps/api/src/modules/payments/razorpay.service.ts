@@ -57,6 +57,33 @@ export class RazorpayService {
     });
   }
 
+  /**
+   * Fires Razorpay's refund API against the original payment_id.
+   * Razorpay processes asynchronously — the returned refund object's
+   * status is "processed" or "pending"; an INSTANT refund is offered
+   * only on some payment instruments. The caller stamps PROCESSING on
+   * the local Refund row and waits for the webhook to flip to
+   * COMPLETED. amount in rupees; receipt is opaque metadata for the
+   * dashboard. notes get attached to the Razorpay record (limit 256
+   * chars per value, max 15 keys).
+   */
+  async createRefund(opts: {
+    razorpayPaymentId: string;
+    amountInRupees: number;
+    notes?: Record<string, string>;
+  }) {
+    const client = this.ensureClient();
+    return client.payments.refund(opts.razorpayPaymentId, {
+      amount: Math.round(opts.amountInRupees * 100),
+      // Razorpay accepts "normal" (T+5 days via standard rails) or
+      // "optimum" (instant if eligible, falls back to normal). Default
+      // to optimum so the customer gets the money faster when
+      // possible.
+      speed: 'optimum',
+      notes: opts.notes,
+    });
+  }
+
   // When stubbed (RAZORPAY_STUB_TRANSFERS=true OR Razorpay is unconfigured),
   // skip the actual gateway call and return a fake Route-shaped order. We
   // still persist the requested transfers[] so the audit trail matches what

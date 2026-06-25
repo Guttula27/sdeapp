@@ -1,4 +1,10 @@
-import type { CustomerReceiptPayload, ReceiptDiscountLine, ReceiptItemLine } from './bluetoothPrinter';
+import type {
+  CustomerReceiptPayload,
+  PackingSlipItemLine,
+  PackingSlipPayload,
+  ReceiptDiscountLine,
+  ReceiptItemLine,
+} from './bluetoothPrinter';
 
 /**
  * Build the CustomerReceiptPayload (ESC/POS-ready) from an order
@@ -200,5 +206,92 @@ export function buildReceiptPayload(order: any): CustomerReceiptPayload {
     roundOff,
     total,
     paidVia,
+  };
+}
+
+/**
+ * Returns true when an order should be printed as an aggregator
+ * packing slip (no prices, just items + customer notes) instead of
+ * the standard customer receipt. Used by every printer entry point so
+ * the decision is made in one place — auto-print on create, manual
+ * "Reprint" on the order detail, and the offline-orders reprint flow
+ * all route through here.
+ *
+ * The rule is simple: anything not on the DIRECT channel is an
+ * aggregator order. Server stamps Order.channel at materialise time.
+ */
+export function isAggregatorOrder(order: any): boolean {
+  const ch = String(order?.channel ?? 'DIRECT').toUpperCase();
+  return ch !== 'DIRECT' && ch !== '';
+}
+
+/**
+ * Build the packing slip payload from an order. Mirrors
+ * buildReceiptPayload's collapse-bundle logic so combos print as one
+ * line with indented children, but strips prices and totals entirely.
+ *
+ * Customer notes come from order.notes (the order-level free-text
+ * field) — the aggregator typically dumps "less spicy" / "no onion"
+ * there at parse time. Per-line notes still surface under each item.
+ */
+export function buildPackingSlipPayload(order: any): PackingSlipPayload {
+  const items: PackingSlipItemLine[] = [];
+  const seen = new Map<string, PackingSlipItemLine>();
+  for (const it of (order.items ?? [])) {
+    const itemName = it.itemNameSnapshot || it.item?.name || 'Item';
+    const variantName = it.variantNameSnapshot ?? it.variant?.name ?? null;
+    const toppings = (it.toppings && Array.isArray(it.toppings))
+      ? it.toppings.map((t: any) => t.label ?? t.name).filter(Boolean).join(', ') || null
+      : null;
+    if (it.bundleId) {
+      let bundle = seen.get(it.bundleId);
+      if (!bundle) {
+        bundle = {
+          itemName: it.bundleParent?.name || 'Combo',
+          variantName: null,
+          quantity: Number(it.quantity),
+          toppings: null,
+        };
+        seen.set(it.bundleId, bundle);
+        items.push(bundle);
+      }
+      // Children get listed as toppings-style sub-rows on the slip
+      // so the picker can verify each combo component is in the bag.
+      items.push({
+        itemName: `  - ${itemName}`,
+        variantName,
+        quantity: Number(it.quantity),
+      });
+    } else {
+      items.push({
+        itemName,
+        variantName,
+        toppings,
+        quantity: Number(it.quantity),
+        notes: it.notes ?? null,
+      });
+    }
+  }
+
+  // Pull the aggregator's order id off the side table when the API
+  // included it. Falls back to null — slip still prints, just without
+  // the second ID line.
+  const externalOrderId = order.aggregatorOrder?.externalOrderId ?? null;
+  // Customer phone often comes through proxied / masked from the
+  // aggregator (e.g. Swiggy returns "+91 99999XXXXX"). Print it as-is
+  // so the rider can dial directly from the slip.
+  const customerPhone = order.customer?.phone ?? null;
+
+  return {
+    orderNumber: String(order.orderNumber),
+    channel: String(order.channel ?? 'DIRECT'),
+    tokenNumber: order.tokenNumber ?? null,
+    externalOrderId,
+    printedAt: new Date().toISOString(),
+    outletName: order.outlet?.name ?? 'Outlet',
+    customerName: order.customer?.name ?? null,
+    customerPhone,
+    items,
+    customerNotes: order.notes ?? null,
   };
 }

@@ -4,12 +4,13 @@ import { Navigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import {
-  CloudOff, CheckCircle2, RefreshCw, Trash2, Printer as PrinterIcon, AlertCircle, Clock,
+  CloudOff, CheckCircle2, RefreshCw, Trash2, Printer as PrinterIcon, AlertCircle, Clock, Receipt,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import { useUserRole } from '../../hooks/useUserRole';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
-import { listOfflineOrders, type OfflineOrder } from '../../utils/idb';
+import { listOfflineOrders, closeOfflineTab, type OfflineOrder } from '../../utils/idb';
+import api from '../../services/api';
 import { drain } from '../../utils/outbox';
 import { replayEntry } from '../../services/api';
 import {
@@ -105,6 +106,135 @@ export default function OfflineOrdersPage() {
     } catch (e: any) {
       toast.error(e?.message || 'Print failed');
     }
+  };
+
+  // Bill = "this tab is done". One click does:
+  //   1. Print the consolidated customer receipt — the physical bill
+  //      handed over, totalling every batch the tab accumulated.
+  //   2. Close the tab locally (isOpenTab=false, servedAt=now) so
+  //      further appends from PlaceOrderPage can't sneak items in.
+  //   3. Fire the consolidated server POST with all batches' items as
+  //      one body, stamped with the bill's Idempotency-Key. The api
+  //      interceptor handles both the online (fires now) and the
+  //      offline (queues to outbox) cases without us branching.
+  //   4. On the online happy path, immediately chain the force-status
+  //      PATCH (CREATED → SERVED, actedAt=bill time) so reports
+  //      attribute revenue to the real bill hour. On the offline
+  //      path, replayEntry's existing chain handles the same thing
+  //      when the drain eventually runs.
+  //
+  // There's intentionally no separate "Mark Served" step — billing
+  // IS the served signal.
+  const bill = async (row: OfflineOrder) => {
+    if (!window.confirm(
+      `Bill ${row.id}? This prints the consolidated bill, closes the offline tab, and syncs as SERVED${row.batches && row.batches.length > 1 ? ` (${row.batches.length} batches)` : ''}.`,
+    )) return;
+    const billedAt = new Date().toISOString();
+    try {
+      // 1. Print first — even if the next step trips on a permission
+      //    or transient error, the customer has the receipt.
+      if (isBluetoothSupported()) {
+        const printerId = row.snapshot?.outlet?.receiptPrinterId ?? null;
+        if (printerId) {
+          try {
+            if (!isPrinterConnected(printerId)) await connectPrinter(printerId);
+            await printCustomerReceipt(printerId, buildReceiptPayload(row.snapshot));
+          } catch (printErr: any) {
+            toast.error(`Receipt print failed: ${printErr?.message || printErr}`);
+          }
+        }
+      }
+
+      // 2. Close the tab locally + stamp servedAt. closeOfflineTab
+      //    does both atomically — once this lands, the running cart
+      //    on PlaceOrderPage can't re-route subsequent items into
+      //    this tab (the sticky-tab lookup filters by isOpenTab).
+      await closeOfflineTab(row.id, billedAt);
+
+      // 3. Build the consolidated POST body from batches. Legacy
+      //    single-batch rows (placed before the sticky-tab schema)
+      //    have no batches array — they ALREADY have a queued
+      //    placement entry from the original PlaceOrderPage submit,
+      //    so we skip the explicit POST below and let the drain
+      //    replay that pre-existing entry (with the chained SERVED
+      //    follow-up via replayEntry).
+      const consolidatedBody = buildConsolidatedPostBody(row);
+      const isLegacyRow = !consolidatedBody;
+      if (isLegacyRow) {
+        toast.success('Billed — legacy order will sync via the existing queued POST', { icon: '📡' });
+        await refresh();
+        void drain(replayEntry).then(() => refresh()).catch(() => { /* best-effort */ });
+        return;
+      }
+
+      // 4. Fire the placement. The api interceptor routes infra-
+      //    transient errors to the outbox with the OFF-... Idempotency-
+      //    Key, where replayEntry's chain takes care of the SERVED
+      //    follow-up. On success here, we fire the chain inline.
+      try {
+        const { data } = await api.post(
+          `/outlets/${row.outletId}/orders`,
+          consolidatedBody,
+          {
+            headers: { 'Idempotency-Key': row.id },
+            __outboxLabel: `Bill ${row.id}`,
+          } as any,
+        );
+        const placed = data?.data;
+        if (placed?.id) {
+          // Chain the SERVED PATCH so the synced order lands at the
+          // bill time, not "now" on the server's clock. servedAt is
+          // already set by closeOfflineTab above.
+          try {
+            await api.patch(
+              `/outlets/${row.outletId}/orders/${placed.id}/status`,
+              { status: 'SERVED', actedAt: billedAt, force: true },
+              { headers: { 'Idempotency-Key': `${row.id}-served` } },
+            );
+          } catch { /* best-effort — order is on the server; staff can complete via OrdersPage */ }
+          toast.success(`Billed and synced as ${placed.orderNumber}`);
+        } else {
+          toast.success('Billed locally — sync pending');
+        }
+      } catch (e: any) {
+        const httpStatus = e?.response?.status ?? 0;
+        const isInfraTransient = !e?.response || httpStatus === 502 || httpStatus === 503 || httpStatus === 504;
+        if (isInfraTransient) {
+          // Interceptor already queued the entry under row.id. servedAt
+          // is set, so replayEntry's chain will fire SERVED when the
+          // drain eventually runs. Tell the operator + refresh.
+          toast.success('Bill queued — will sync as SERVED when network is back', { icon: '📡' });
+        } else {
+          toast.error(e?.response?.data?.message || 'Bill failed on the server');
+        }
+      }
+
+      await refresh();
+      void drain(replayEntry).then(() => refresh()).catch(() => { /* best-effort */ });
+    } catch (e: any) {
+      toast.error(e?.message || 'Could not bill this order');
+    }
+  };
+
+  // Flattens every batch into a single placement body. Returns null
+  // for legacy rows (no batches array — placed before the sticky-tab
+  // schema), letting the bill action fall back to draining the
+  // pre-existing queued entry instead of re-constructing one.
+  const buildConsolidatedPostBody = (row: OfflineOrder): any | null => {
+    const batches = row.batches;
+    if (!batches || batches.length === 0) return null;
+    // Common order-level fields live on the first batch's payload
+    // (table, postpaid flag, customer phone). Later batches duplicate
+    // them, but the first is authoritative for the placement.
+    const head = batches[0].payload ?? {};
+    const allItems: any[] = [];
+    for (const b of batches) {
+      for (const it of b.items) allItems.push(it);
+    }
+    return {
+      ...head,
+      items: allItems,
+    };
   };
 
   const remove = async (row: OfflineOrder) => {
@@ -208,6 +338,14 @@ export default function OfflineOrdersPage() {
                   </td>
                   <td className="px-4 py-3">
                     <StateBadge state={row.syncState} error={row.syncError} />
+                    {row.servedAt && (
+                      <span
+                        className="ml-1 inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 align-middle"
+                        title={`Billed locally at ${new Date(row.servedAt).toLocaleString('en-IN')}`}
+                      >
+                        <Receipt size={9} /> BILLED
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
@@ -218,6 +356,22 @@ export default function OfflineOrdersPage() {
                       >
                         <PrinterIcon size={12} /> Reprint
                       </button>
+                      {/* Bill — visible only while the row is still
+                          pending sync AND hasn't already been billed.
+                          Billing prints the customer receipt and
+                          stamps the local record so the chained sync
+                          lands the server order in SERVED at the bill
+                          time. Service staff never has a separate
+                          "Mark Served" step — billing IS that signal. */}
+                      {row.syncState === 'pending' && !row.servedAt && (
+                        <button
+                          onClick={() => bill(row)}
+                          className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg text-emerald-700 hover:bg-emerald-50 transition-colors"
+                          title="Print the customer receipt and sync as SERVED"
+                        >
+                          <Receipt size={12} /> Bill
+                        </button>
+                      )}
                       <button
                         onClick={() => remove(row)}
                         className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors"

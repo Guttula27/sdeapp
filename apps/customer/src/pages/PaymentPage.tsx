@@ -53,6 +53,10 @@ interface NavState {
   // Postpaid Bill Now path: billOrderId set, cart unset. We settle the
   // existing order (plus optional tip) instead of creating a new one.
   billOrderId?: string;
+  // Split-share pay path: splitShareId set so the Payment row links
+  // back to the share at server side; billOrderId set to the parent
+  // order so the server can validate; total = the share amount.
+  splitShareId?: string;
   outletName?: string;
 }
 
@@ -189,7 +193,15 @@ export default function PaymentPage() {
   })();
   const baseTotal = subTotal + tipAmount;
 
-  const gatewayChargePct = gateway?.charges?.[gatewayMode] ?? 0;
+  // Split-share Phase B: when the outlet's splitFeesAbsorbedBy is
+  // OUTLET (default), the outlet eats the Razorpay surcharge so the
+  // diner pays exactly their share amount. CUSTOMER keeps the
+  // existing direct-order behaviour where the surcharge is added.
+  // Pure direct-order flows (no splitShareId) keep their current
+  // customer-absorbed behaviour untouched.
+  const isSplitShare = !!state?.splitShareId;
+  const splitFeesAbsorbedByOutlet = isSplitShare && outlet?.splitFeesAbsorbedBy === 'OUTLET';
+  const gatewayChargePct = splitFeesAbsorbedByOutlet ? 0 : (gateway?.charges?.[gatewayMode] ?? 0);
   const gatewayCharge = useMemo(
     () => Math.round((baseTotal * gatewayChargePct) / 100 * 100) / 100,
     [baseTotal, gatewayChargePct],
@@ -233,11 +245,23 @@ export default function PaymentPage() {
           orderId: state.billOrderId,
           mode: extra.paymentMode,
           amount: baseTotal,
+          // When the customer paid a split-bill share, pass the
+          // shareId through so the server's confirmPayment hook
+          // settles the share + bumps the order counters + fires
+          // SPLIT_ALL_PAID inside one transaction.
+          splitShareId: state.splitShareId,
         });
         if (extra.paymentMode !== 'CASH' && pay?.data?.paymentId) {
           await api.post(`/payments/${pay.data.paymentId}/confirm`, { gatewayRef: '' });
         }
-        navigate(`/receipt/${state.billOrderId}`, { replace: true });
+        // Land back on the bill detail for split shares (so the
+        // diner sees their share marked Paid + the live progress);
+        // direct Bill Now keeps its existing receipt redirect.
+        if (state.splitShareId) {
+          navigate(`/bills/${state.splitShareId}`, { replace: true });
+        } else {
+          navigate(`/receipt/${state.billOrderId}`, { replace: true });
+        }
         return;
       }
       const { data } = await api.post(`/outlets/${state.outletId}/orders`, {

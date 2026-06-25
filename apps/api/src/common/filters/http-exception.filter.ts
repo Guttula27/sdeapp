@@ -27,7 +27,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
         ? exception.getResponse()
         : 'Internal server error';
 
-    this.logger.error(`${request.method} ${request.url} → ${status}`, exception instanceof Error ? exception.stack : '');
+    // 4xx are client errors (bad input, missing/expired token, missing
+    // permission, not found) — expected, no stack worth keeping. 5xx are
+    // server-side: log at error with the full stack so we can diagnose.
+    const line = `${request.method} ${request.url} → ${status}`;
+    if (status >= 500) {
+      this.logger.error(line, exception instanceof Error ? exception.stack : '');
+    } else {
+      this.logger.warn(line);
+    }
 
     response.status(status).json({
       success: false,

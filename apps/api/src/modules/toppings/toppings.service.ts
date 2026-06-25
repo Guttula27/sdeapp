@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma/prisma.service';
 import { TranslationsService } from '../translations/translations.service';
+import { MenuService } from '../menu/menu.service';
 
 type ToppingOptionDto = { name: string; priceAdd?: number };
 
@@ -9,6 +10,9 @@ export class ToppingsService {
   constructor(
     private prisma: PrismaService,
     private translations: TranslationsService,
+    // Used to bust the outlet's menu-tree cache after item-topping
+    // writes (itemToppings live in the cached tree).
+    private menu: MenuService,
   ) {}
 
   async list(outletId: string, lang?: string | null) {
@@ -108,8 +112,8 @@ export class ToppingsService {
   }
 
   // ─── Item ↔ Topping links ────────────────────────────────
-  setItemToppings(itemId: string, links: { toppingId: string; priceAdd?: number; isRequired?: boolean }[]) {
-    return this.prisma.$transaction(async (tx) => {
+  async setItemToppings(itemId: string, links: { toppingId: string; priceAdd?: number; isRequired?: boolean }[]) {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.itemTopping.deleteMany({ where: { itemId } });
       if (links.length) {
         await tx.itemTopping.createMany({
@@ -126,5 +130,13 @@ export class ToppingsService {
         include: { topping: { include: { options: { orderBy: { displayOrder: 'asc' } } } } },
       });
     });
+    // Bust the menu-tree cache so the next read shows the updated links.
+    const item = await this.prisma.item.findUnique({
+      where: { id: itemId },
+      select: { subcategory: { select: { category: { select: { outletId: true } } } } },
+    });
+    const outletId = item?.subcategory?.category?.outletId;
+    if (outletId) await this.menu.invalidateOutlet(outletId);
+    return result;
   }
 }

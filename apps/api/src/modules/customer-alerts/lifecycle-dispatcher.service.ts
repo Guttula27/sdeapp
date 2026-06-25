@@ -17,7 +17,10 @@ export type LifecycleTrigger =
   | 'ITEM_READY'
   | 'ORDER_READY'
   | 'PICKUP_READY'
-  | 'ORDER_SERVED';
+  | 'ORDER_SERVED'
+  | 'SPLIT_SHARE_DUE'
+  | 'SPLIT_ALL_PAID'
+  | 'SPLIT_SHARE_EXPIRED';
 
 const FALLBACK_BODIES: Record<LifecycleTrigger, string> = {
   ORDER_PLACED:
@@ -30,6 +33,13 @@ const FALLBACK_BODIES: Record<LifecycleTrigger, string> = {
   ORDER_READY: 'Your order {{order_number}} is ready.',
   PICKUP_READY: 'Your parcel order {{order_number}} is packed and ready for pickup at {{outlet_name}}.',
   ORDER_SERVED: 'Order {{order_number}} has been served. Enjoy!',
+  SPLIT_SHARE_DUE:
+    'Hi {{customer_name}}, you have a ₹{{share_amount}} share of a ₹{{order_total}} bill from {{outlet_name}} (split {{share_count}} ways).\n\n' +
+    'Tap to view + pay:\n{{share_link}}',
+  SPLIT_ALL_PAID:
+    'Hi {{customer_name}}, the ₹{{order_total}} split bill at {{outlet_name}} is fully settled. Thanks!',
+  SPLIT_SHARE_EXPIRED:
+    'Hi {{customer_name}}, your ₹{{share_amount}} share of the ₹{{order_total}} bill at {{outlet_name}} has expired without payment. Please reach out to the outlet to settle.',
 };
 
 const TITLES: Record<LifecycleTrigger, string> = {
@@ -39,6 +49,9 @@ const TITLES: Record<LifecycleTrigger, string> = {
   ORDER_READY: 'Order ready',
   PICKUP_READY: 'Ready for pickup',
   ORDER_SERVED: 'Order served',
+  SPLIT_SHARE_DUE: 'Your share is due',
+  SPLIT_ALL_PAID: 'Split bill settled',
+  SPLIT_SHARE_EXPIRED: 'Your split share has expired',
 };
 
 type OrderLine = { name: string; quantity: number; total: number | string };
@@ -64,6 +77,13 @@ type Ctx = {
   tokenNumber?: number | null;
   receiptUrl?: string;
   ringtone?: string | null;
+  // Split-bill markers. Populated by SplitBillsService when firing
+  // SPLIT_SHARE_DUE / SPLIT_ALL_PAID — see docs/whatsapp-templates.md
+  // for the field-to-marker mapping.
+  shareAmount?: number | string;
+  orderTotal?: number | string;
+  shareCount?: number;
+  shareLink?: string;
 };
 
 function render(body: string, vars: Record<string, string | number | null | undefined>) {
@@ -165,6 +185,10 @@ export class LifecycleDispatcherService {
       total: ctx.totalAmount !== undefined ? `₹${Number(ctx.totalAmount).toFixed(0)}` : '',
       token_number: ctx.tokenNumber ?? '',
       receipt_url: ctx.receiptUrl ?? '',
+      share_amount: ctx.shareAmount !== undefined ? Number(ctx.shareAmount).toFixed(0) : '',
+      order_total: ctx.orderTotal !== undefined ? Number(ctx.orderTotal).toFixed(0) : '',
+      share_count: ctx.shareCount ?? '',
+      share_link: ctx.shareLink ?? '',
     });
 
     const provider = await this.whatsappProvider();

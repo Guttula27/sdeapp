@@ -137,6 +137,17 @@ export default function OutletProfilePage() {
     razorpayLinkedAccountId: '',          // Razorpay Route LA, "acc_..."
   });
   const [tokenCounter, setTokenCounter] = useState({ startNumber: '1', nextNumber: 1, nextOrderSequence: 1 });
+  // Split-bill Phase B settings. splitFeesAbsorbedBy controls who
+  // bears the Razorpay convenience fee on split-share payments — see
+  // PaymentPage in the customer PWA for how this flips the displayed
+  // amount. The interval/cap/window fields drive the reminder + auto-
+  // expiry sweep in SplitBillsService.
+  const [splitBill, setSplitBill] = useState({
+    splitFeesAbsorbedBy: 'OUTLET' as 'OUTLET' | 'CUSTOMER',
+    splitReminderEveryMinutes: '60',
+    splitMaxReminders: '3',
+    splitExpireAfterMinutes: '1440',
+  });
   const [savingToken, setSavingToken] = useState(false);
   const [primary, setPrimary] = useState<string | null>(null);
   const [logo, setLogo] = useState<string | null>(null);
@@ -220,6 +231,12 @@ export default function OutletProfilePage() {
         auto: !!o.receiptAutoPrint,
         allowManual: !!o.receiptAllowManualPrint,
         printerId: o.receiptPrinterId ?? null,
+      });
+      setSplitBill({
+        splitFeesAbsorbedBy: (o.splitFeesAbsorbedBy as any) || 'OUTLET',
+        splitReminderEveryMinutes: String(o.splitReminderEveryMinutes ?? 60),
+        splitMaxReminders: String(o.splitMaxReminders ?? 3),
+        splitExpireAfterMinutes: String(o.splitExpireAfterMinutes ?? 1440),
       });
       try {
         const pRes = await api.get(`/outlets/${outletId}/printers`);
@@ -447,6 +464,10 @@ export default function OutletProfilePage() {
         // Empty-string → null so the FK clears when the admin unsets
         // the printer without picking a new one.
         receiptPrinterId: receiptPrint.printerId || null,
+        splitFeesAbsorbedBy: splitBill.splitFeesAbsorbedBy,
+        splitReminderEveryMinutes: Number(splitBill.splitReminderEveryMinutes) || 60,
+        splitMaxReminders: Number(splitBill.splitMaxReminders) || 3,
+        splitExpireAfterMinutes: Number(splitBill.splitExpireAfterMinutes) || 1440,
         defaultPrepTime: ops.defaultPrepTime === '' ? null : Number(ops.defaultPrepTime),
         parcelChargeEnabled: ops.parcelChargeEnabled,
         defaultParcelCharge: Number(ops.defaultParcelCharge) || 0,
@@ -762,7 +783,7 @@ export default function OutletProfilePage() {
               placeholder="e.g. 15"
             />
           </Field>
-          <Field label="Default parcel charge (₹)" hint="Per-order parcel fee. Only applied when the toggle below is on.">
+          <Field label="Default parcel charge (₹)" hint="Per-order parcel fee. Only applied when the toggle below is on, and only when no item in the order sets its own parcel charge — item-level overrides replace this default for that bill.">
             <input
               type="number"
               min={0}
@@ -997,6 +1018,87 @@ export default function OutletProfilePage() {
             ⚠ Toggles above won't take effect until a printer is selected.
           </p>
         )}
+      </div>
+
+      {/* ── Split bills (Phase B knobs) ───────────────────── */}
+      <div className="card p-5 space-y-3">
+        <div>
+          <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Split Bills</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            Reminder cadence + auto-expiry + convenience-fee policy for WhatsApp-delivered split-bill shares.
+          </p>
+        </div>
+
+        <div>
+          <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500">
+            Convenience fee policy (Razorpay)
+          </label>
+          <div className="mt-1 grid grid-cols-2 gap-2">
+            <label className={`border rounded-xl px-3 py-2 cursor-pointer ${splitBill.splitFeesAbsorbedBy === 'OUTLET' ? 'border-brand-500 bg-brand-50' : 'border-slate-200'}`}>
+              <input
+                type="radio"
+                checked={splitBill.splitFeesAbsorbedBy === 'OUTLET'}
+                onChange={() => setSplitBill(p => ({ ...p, splitFeesAbsorbedBy: 'OUTLET' }))}
+                className="mr-2"
+              />
+              <span className="text-xs font-semibold text-slate-800">Outlet absorbs</span>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Diner pays exactly their share. You bear the Razorpay charge.
+              </p>
+            </label>
+            <label className={`border rounded-xl px-3 py-2 cursor-pointer ${splitBill.splitFeesAbsorbedBy === 'CUSTOMER' ? 'border-brand-500 bg-brand-50' : 'border-slate-200'}`}>
+              <input
+                type="radio"
+                checked={splitBill.splitFeesAbsorbedBy === 'CUSTOMER'}
+                onChange={() => setSplitBill(p => ({ ...p, splitFeesAbsorbedBy: 'CUSTOMER' }))}
+                className="mr-2"
+              />
+              <span className="text-xs font-semibold text-slate-800">Diner absorbs</span>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Convenience fee is added to the diner's payment for Razorpay modes.
+              </p>
+            </label>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500">
+              Reminder every (min)
+            </label>
+            <input
+              type="number"
+              min="5"
+              value={splitBill.splitReminderEveryMinutes}
+              onChange={(e) => setSplitBill(p => ({ ...p, splitReminderEveryMinutes: e.target.value }))}
+              className="input mt-1 text-sm tabular-nums"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500">
+              Max reminders
+            </label>
+            <input
+              type="number"
+              min="0"
+              value={splitBill.splitMaxReminders}
+              onChange={(e) => setSplitBill(p => ({ ...p, splitMaxReminders: e.target.value }))}
+              className="input mt-1 text-sm tabular-nums"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500">
+              Expire after (min)
+            </label>
+            <input
+              type="number"
+              min="60"
+              value={splitBill.splitExpireAfterMinutes}
+              onChange={(e) => setSplitBill(p => ({ ...p, splitExpireAfterMinutes: e.target.value }))}
+              className="input mt-1 text-sm tabular-nums"
+            />
+          </div>
+        </div>
       </div>
 
       {/* Imagery */}
