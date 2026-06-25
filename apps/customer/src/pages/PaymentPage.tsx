@@ -538,11 +538,17 @@ export default function PaymentPage() {
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white"
                   >
                     <option value="">No coupon</option>
-                    {availableCoupons.map((c: any) => (
-                      <option key={c.id} value={c.id}>
-                        {c.code} — {c.discountType === 'PERCENT' ? `${c.discountValue}% off` : `₹${c.discountValue} off`}
-                      </option>
-                    ))}
+                    {availableCoupons.map((c: any) => {
+                      const value = c.discountType === 'PERCENT' ? `${c.discountValue}% off` : `₹${c.discountValue} off`;
+                      const suffix = c.kind === 'ALLOWANCE'
+                        ? ` (allowance · ${c.perPeriodQuota}/${(c.resetPeriod || '').toLowerCase()})`
+                        : '';
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.code} — {value}{suffix}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               )}
@@ -572,9 +578,20 @@ export default function PaymentPage() {
                     </div>
                   )}
                   {liveQuote.coupon && (
-                    <div className="flex justify-between text-emerald-700">
-                      <span>Coupon {liveQuote.coupon.code}</span><span>− ₹{liveQuote.coupon.amount.toFixed(2)}</span>
-                    </div>
+                    <>
+                      <div className="flex justify-between text-emerald-700">
+                        <span>Coupon {liveQuote.coupon.code}</span><span>− ₹{liveQuote.coupon.amount.toFixed(2)}</span>
+                      </div>
+                      {/* ALLOWANCE coupons carry itemUnits — surface how many
+                          quota units this redemption consumed so the
+                          employee can see "2 of 5 / week" without opening
+                          a separate ledger view. */}
+                      {liveQuote.coupon.itemUnits != null && liveQuote.coupon.itemUnits > 0 && (
+                        <div className="flex justify-end text-[10px] text-slate-500">
+                          uses {liveQuote.coupon.itemUnits} item{liveQuote.coupon.itemUnits === 1 ? '' : 's'} from your allowance
+                        </div>
+                      )}
+                    </>
                   )}
                   {liveQuote.reward && (
                     <div className="flex justify-between text-emerald-700">

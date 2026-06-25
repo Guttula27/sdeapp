@@ -77,7 +77,10 @@ export type Quote = {
     getItemName: string;
     quantity: number;
   }>;
-  coupon?: { id: string; code: string; name: string; amount: number };
+  // itemUnits is set only for ALLOWANCE coupons — number of quota
+  // units the redemption consumed. Carried into the CouponUsage write
+  // so the next period quote knows what's already been used.
+  coupon?: { id: string; code: string; name: string; amount: number; itemUnits?: number };
   reward?: { points: number; amount: number };
   // Totals
   totalAutoDiscount: number;
@@ -422,16 +425,35 @@ export class PricingService {
     let couponPromo: Quote['coupon'] | undefined;
     if (input.couponId) {
       if (!input.customerId) throw new BadRequestException('Customer required to apply a coupon');
-      const { coupon, discountAmount } = await this.coupons.quote(
+      // ALLOWANCE coupons need per-line context — pass the resolved cart
+      // so coupons.quote can match against item / subcategory / category
+      // scope and compute per-unit discount. STANDARD ignores cart.
+      const cartLines = lines
+        .filter((ln) => !!ln.itemId)
+        .map((ln) => ({
+          itemId: ln.itemId as string,
+          subcategoryId: ln.subcategoryId ?? '',
+          categoryId: ln.categoryId ?? '',
+          qty: ln.quantity,
+          // Use post-line-discount unit price so the coupon discounts
+          // against what the customer actually pays per unit.
+          unitPrice: ln.lineDiscountAmount
+            ? Math.max(0, ln.unitPrice - ln.lineDiscountAmount / Math.max(1, ln.quantity))
+            : ln.unitPrice,
+        }));
+      const { coupon, discountAmount, itemUnits } = await this.coupons.quote(
         input.couponId,
         input.customerId,
         preCustomerTotal,
+        cartLines,
+        input.outletId,
       );
       couponPromo = {
         id: coupon.id,
         code: coupon.code,
         name: coupon.name,
         amount: discountAmount,
+        itemUnits,
       };
     }
     const totalAfterCoupon = Math.max(0, preCustomerTotal - (couponPromo?.amount ?? 0));

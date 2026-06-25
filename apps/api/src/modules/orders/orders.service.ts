@@ -267,6 +267,10 @@ export class OrdersService {
     let discountAmount = 0;
     let appliedCouponId: string | null = null;
     let appliedCouponDiscount = 0;
+    // ALLOWANCE coupons: units this redemption consumed against the
+    // customer's per-period quota. 0 for STANDARD so a kind-flip on
+    // the coupon row can't poison the period-consumed sum.
+    let appliedCouponItemUnits = 0;
     let appliedRewardPoints = 0;
     let appliedRewardAmount = 0;
 
@@ -329,6 +333,7 @@ export class OrdersService {
       discountAmount = Math.max(0, subtotal - quote.subtotal);
       appliedCouponId = quote.coupon?.id ?? null;
       appliedCouponDiscount = quote.coupon?.amount ?? 0;
+      appliedCouponItemUnits = quote.coupon?.itemUnits ?? 0;
       appliedRewardPoints = quote.reward?.points ?? 0;
       appliedRewardAmount = quote.reward?.amount ?? 0;
     } catch (e: any) {
@@ -511,6 +516,7 @@ export class OrdersService {
             userId: resolvedCustomerId,
             orderId: created.id,
             discountAmount: appliedCouponDiscount,
+            itemUnits: appliedCouponItemUnits,
           },
         });
         await tx.coupon.update({
@@ -1066,6 +1072,20 @@ export class OrdersService {
       notes: dto.notes ?? null,
       ...(actedAt ? { actedAt: actedAt.toISOString() } : {}),
     } as any);
+
+    // Void any coupon redemption tied to this order when it goes to a
+    // money-back-or-discarded terminal state. ALLOWANCE coupons rely
+    // on this to restore the customer's per-period quota; STANDARD
+    // rows get voidedAt set too so a future re-issue of the same
+    // coupon to the same customer is honoured. Idempotent — the
+    // voidedAt: null filter means re-running this on an already-voided
+    // row is a no-op.
+    if (dto.status === OrderStatus.CANCELLED || dto.status === OrderStatus.REFUND_COMPLETE) {
+      await this.prisma.couponUsage.updateMany({
+        where: { orderId: id, voidedAt: null },
+        data: { voidedAt: new Date() },
+      });
+    }
 
     // Service-desk lane routing on the new status:
     //   - self-service: kitchen-done → OUT_FOR_SERVICE → "release" lane.

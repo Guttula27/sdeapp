@@ -75,11 +75,26 @@ export class CouponsController {
   }
 
   // ─── Customer: quote a coupon against a bill (preview discount) ─
+  // ALLOWANCE coupons require `cart` (per-line item/sub/cat ids + qty +
+  // unitPrice). `outletId` is also required for ALLOWANCE TAG targeting
+  // so the service can look up the caller's tag assignment at the right
+  // outlet. STANDARD coupons ignore both.
   @Post('coupons/:id/quote')
   quote(
     @Param('id') id: string,
-    @Body() body: { userId: string; billSubtotal: number },
+    @Body() body: {
+      userId: string;
+      billSubtotal: number;
+      outletId?: string;
+      cart?: Array<{
+        itemId: string;
+        subcategoryId: string;
+        categoryId: string;
+        qty: number;
+        unitPrice: number;
+      }>;
+    },
   ) {
-    return this.service.quote(id, body.userId, body.billSubtotal);
+    return this.service.quote(id, body.userId, body.billSubtotal, body.cart, body.outletId);
   }
 }

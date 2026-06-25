@@ -7,6 +7,11 @@ import api from '../../services/api';
 import Modal from '../../components/common/Modal';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 
+type CouponKind = 'STANDARD' | 'ALLOWANCE';
+type ResetPeriod = 'DAILY' | 'WEEKLY' | 'MONTHLY';
+type CouponTargetType = 'ALL' | 'SPECIFIC' | 'TAG';
+type ScopeRow = { kind: 'ITEM' | 'CATEGORY' | 'SUBCATEGORY'; refId: string };
+
 type Coupon = {
   id: string;
   code: string;
@@ -22,11 +27,21 @@ type Coupon = {
   maxUsesPerCustomer: number;
   maxTotalUses?: number | null;
   usesCount: number;
-  targetType: 'ALL' | 'SPECIFIC';
+  targetType: CouponTargetType;
   isActive: boolean;
   targetCustomers?: { user: { id: string; name: string; phone: string } }[];
+  targetTags?: { customerTag: { id: string; name: string; color: string } }[];
+  scopes?: ScopeRow[];
+  kind: CouponKind;
+  resetPeriod?: ResetPeriod | null;
+  perPeriodQuota?: number | null;
   _count?: { usages: number };
 };
+
+type Tag      = { id: string; name: string; color: string };
+type Category = { id: string; name: string; subcategories?: Subcategory[] };
+type Subcategory = { id: string; name: string; items?: MenuItem[] };
+type MenuItem = { id: string; name: string };
 
 const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div>
@@ -47,7 +62,7 @@ export default function CouponsPage() {
   const [loading, setLoading] = useState(true);
 
   const [modal, setModal] = useState<{ open: boolean; editing?: Coupon }>({ open: false });
-  const [form, setForm] = useState({
+  const blankForm = {
     code: '',
     name: '',
     description: '',
@@ -59,11 +74,43 @@ export default function CouponsPage() {
     validUntil: isoDate(new Date(Date.now() + 30 * 86400000)),
     maxUsesPerCustomer: '1',
     maxTotalUses: '',
-    targetType: 'ALL' as 'ALL' | 'SPECIFIC',
+    targetType: 'ALL' as CouponTargetType,
     isActive: true,
     targetPhones: '',  // comma-separated phones; UI shortcut
-  });
+    // ALLOWANCE-specific
+    kind: 'STANDARD' as CouponKind,
+    resetPeriod: 'DAILY' as ResetPeriod,
+    perPeriodQuota: '1',
+    // Targeting + scope: arrays of ids
+    targetTagIds: [] as string[],
+    scopeItemIds: [] as string[],
+    scopeCategoryIds: [] as string[],
+    scopeSubcategoryIds: [] as string[],
+  };
+  const [form, setForm] = useState(blankForm);
   const [saving, setSaving] = useState(false);
+
+  // Tag + menu lookups for the scope/targeting pickers. Both are
+  // outlet-scoped so we load them lazily whenever the active scope
+  // points at a specific outlet. Business-wide scope leaves them
+  // empty — ALLOWANCE coupons can't be business-wide (their item
+  // scope is outlet-specific) and the form gates on that below.
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [menu, setMenu] = useState<Category[]>([]);
+  const outletIdForPickers = scope !== 'BUSINESS' ? scope : null;
+  useEffect(() => {
+    if (!outletIdForPickers) { setTags([]); setMenu([]); return; }
+    api.get(`/outlets/${outletIdForPickers}/customer-tags`)
+      .then(({ data }) => setTags(data.data || []))
+      .catch(() => setTags([]));
+    api.get(`/outlets/${outletIdForPickers}/menu?includeHidden=true`)
+      .then(({ data }) => {
+        // getMenu shape: { categories: [{ id, name, subcategories: [{ id, name, items: [...] }] }] }
+        const cats: Category[] = data.data?.categories ?? data.categories ?? [];
+        setMenu(cats);
+      })
+      .catch(() => setMenu([]));
+  }, [outletIdForPickers]);
 
   const [deleteTarget, setDeleteTarget] = useState<Coupon | null>(null);
 
@@ -89,27 +136,14 @@ export default function CouponsPage() {
   useEffect(() => { fetch(); }, [fetch]);
 
   const openCreate = () => {
-    setForm({
-      code: '',
-      name: '',
-      description: '',
-      discountType: 'PERCENT',
-      discountValue: '10',
-      minBillAmount: '',
-      maxDiscountAmount: '',
-      validFrom: isoDate(new Date()),
-      validUntil: isoDate(new Date(Date.now() + 30 * 86400000)),
-      maxUsesPerCustomer: '1',
-      maxTotalUses: '',
-      targetType: 'ALL',
-      isActive: true,
-      targetPhones: '',
-    });
+    setForm(blankForm);
     setModal({ open: true });
   };
 
   const openEdit = (c: Coupon) => {
+    const scopes = c.scopes || [];
     setForm({
+      ...blankForm,
       code: c.code,
       name: c.name,
       description: c.description ?? '',
@@ -124,13 +158,35 @@ export default function CouponsPage() {
       targetType: c.targetType,
       isActive: c.isActive,
       targetPhones: (c.targetCustomers || []).map(t => t.user.phone).join(', '),
+      kind: c.kind ?? 'STANDARD',
+      resetPeriod: (c.resetPeriod ?? 'DAILY') as ResetPeriod,
+      perPeriodQuota: c.perPeriodQuota != null ? String(c.perPeriodQuota) : '1',
+      targetTagIds: (c.targetTags || []).map((t) => t.customerTag.id),
+      scopeItemIds: scopes.filter((s) => s.kind === 'ITEM').map((s) => s.refId),
+      scopeCategoryIds: scopes.filter((s) => s.kind === 'CATEGORY').map((s) => s.refId),
+      scopeSubcategoryIds: scopes.filter((s) => s.kind === 'SUBCATEGORY').map((s) => s.refId),
     });
     setModal({ open: true, editing: c });
   };
 
+  const toggleId = (list: string[], id: string): string[] =>
+    list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.code.trim() || !form.name.trim()) return;
+    // ALLOWANCE coupons need an outlet context (scope picker + tag
+    // targeting are outlet-scoped). Block the save instead of silently
+    // saving a misconfigured business-wide row.
+    if (form.kind === 'ALLOWANCE' && scope === 'BUSINESS') {
+      toast.error('Allowance coupons must be outlet-scoped — pick an outlet at the top first.');
+      return;
+    }
+    if (form.targetType === 'TAG' && scope === 'BUSINESS') {
+      toast.error('Tag targeting requires an outlet scope.');
+      return;
+    }
+
     setSaving(true);
     try {
       let targetUserIds: string[] | undefined;
@@ -143,6 +199,19 @@ export default function CouponsPage() {
           targetUserIds = [];
         }
       }
+
+      const scopeRows: ScopeRow[] = [];
+      if (form.kind === 'ALLOWANCE') {
+        for (const id of form.scopeItemIds)        scopeRows.push({ kind: 'ITEM', refId: id });
+        for (const id of form.scopeSubcategoryIds) scopeRows.push({ kind: 'SUBCATEGORY', refId: id });
+        for (const id of form.scopeCategoryIds)    scopeRows.push({ kind: 'CATEGORY', refId: id });
+        if (scopeRows.length === 0) {
+          toast.error('Allowance coupons need at least one item / category / subcategory in scope.');
+          setSaving(false);
+          return;
+        }
+      }
+
       const body: any = {
         code: form.code.trim().toUpperCase(),
         name: form.name.trim(),
@@ -158,7 +227,19 @@ export default function CouponsPage() {
         maxTotalUses: form.maxTotalUses ? Number(form.maxTotalUses) : null,
         targetType: form.targetType,
         targetUserIds,
+        targetTagIds: form.targetType === 'TAG' ? form.targetTagIds : undefined,
         isActive: form.isActive,
+        kind: form.kind,
+        ...(form.kind === 'ALLOWANCE'
+          ? {
+              resetPeriod: form.resetPeriod,
+              perPeriodQuota: Number(form.perPeriodQuota) || 1,
+              scope: scopeRows,
+            }
+          : {
+              resetPeriod: null,
+              perPeriodQuota: null,
+            }),
       };
       if (modal.editing) {
         await api.patch(`/coupons/${modal.editing.id}`, body);
@@ -230,6 +311,7 @@ export default function CouponsPage() {
               <tr>
                 <th className="text-left px-4 py-2">Code</th>
                 <th className="text-left px-4 py-2">Name</th>
+                <th className="text-left px-4 py-2">Kind</th>
                 <th className="text-left px-4 py-2">Discount</th>
                 <th className="text-left px-4 py-2">Validity</th>
                 <th className="text-left px-4 py-2">Target</th>
@@ -243,6 +325,15 @@ export default function CouponsPage() {
                 <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-2 font-mono text-xs">{c.code}</td>
                   <td className="px-4 py-2">{c.name}</td>
+                  <td className="px-4 py-2 text-xs">
+                    {c.kind === 'ALLOWANCE' ? (
+                      <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold">
+                        Allowance · {c.perPeriodQuota}/{(c.resetPeriod || '').toLowerCase()}
+                      </span>
+                    ) : (
+                      <span className="text-slate-500">Standard</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2">
                     {c.discountType === 'PERCENT' ? `${c.discountValue}%` : `₹${c.discountValue}`}
                     {c.maxDiscountAmount && <span className="text-xs text-slate-500"> (max ₹{c.maxDiscountAmount})</span>}
@@ -251,7 +342,9 @@ export default function CouponsPage() {
                     {c.validFrom.slice(0, 10)} → {c.validUntil.slice(0, 10)}
                   </td>
                   <td className="px-4 py-2 text-xs">
-                    {c.targetType === 'ALL' ? 'All customers' : `${c.targetCustomers?.length || 0} selected`}
+                    {c.targetType === 'ALL'      ? 'All customers'
+                     : c.targetType === 'TAG'    ? `${c.targetTags?.length || 0} tag(s)`
+                     :                              `${c.targetCustomers?.length || 0} selected`}
                   </td>
                   <td className="px-4 py-2 text-right">
                     {c._count?.usages ?? c.usesCount}
@@ -293,6 +386,21 @@ export default function CouponsPage() {
               className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Optional" />
           </Field>
 
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Kind">
+              <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as CouponKind })}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm">
+                <option value="STANDARD">Standard — flat bill discount</option>
+                <option value="ALLOWANCE">Allowance — N items per period (e.g. employee perks)</option>
+              </select>
+            </Field>
+            <div className="flex items-end text-xs text-slate-500">
+              {form.kind === 'ALLOWANCE'
+                ? 'Allowance coupons need an outlet scope and at least one item/category/subcategory below.'
+                : ' '}
+            </div>
+          </div>
+
           <div className="grid grid-cols-3 gap-4">
             <Field label="Discount Type">
               <select value={form.discountType} onChange={(e) => setForm({ ...form, discountType: e.target.value as any })}
@@ -301,7 +409,7 @@ export default function CouponsPage() {
                 <option value="FIXED">₹ Fixed</option>
               </select>
             </Field>
-            <Field label="Value">
+            <Field label={form.kind === 'ALLOWANCE' ? 'Value (per eligible unit)' : 'Value'}>
               <input type="number" value={form.discountValue} onChange={(e) => setForm({ ...form, discountValue: e.target.value })}
                 className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" min="0" step="0.01" required />
             </Field>
@@ -311,18 +419,99 @@ export default function CouponsPage() {
             </Field>
           </div>
 
+          {form.kind === 'ALLOWANCE' && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3 space-y-3">
+              <div className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Allowance settings</div>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Reset period">
+                  <select value={form.resetPeriod} onChange={(e) => setForm({ ...form, resetPeriod: e.target.value as ResetPeriod })}
+                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
+                    <option value="DAILY">Daily</option>
+                    <option value="WEEKLY">Weekly (Monday → Sunday, UTC)</option>
+                    <option value="MONTHLY">Monthly (1st → end of month)</option>
+                  </select>
+                </Field>
+                <Field label="Items allowed per period">
+                  <input type="number" min="1" value={form.perPeriodQuota}
+                    onChange={(e) => setForm({ ...form, perPeriodQuota: e.target.value })}
+                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" required />
+                </Field>
+              </div>
+
+              <Field label="Eligible items / categories / subcategories">
+                {scope === 'BUSINESS' ? (
+                  <div className="text-xs text-slate-500 italic">
+                    Pick an outlet at the top to choose scope.
+                  </div>
+                ) : (
+                  <div className="space-y-2 text-xs">
+                    {/* Three rolled-up multi-pickers — categories, subcategories, items.
+                        A cart line is eligible if it matches ANY of the selections. */}
+                    <details className="bg-white rounded border border-slate-200 px-3 py-2">
+                      <summary className="cursor-pointer font-semibold text-slate-700">
+                        Categories ({form.scopeCategoryIds.length})
+                      </summary>
+                      <div className="mt-2 max-h-40 overflow-y-auto grid grid-cols-2 gap-1">
+                        {menu.map((c) => (
+                          <label key={c.id} className="flex items-center gap-2 py-0.5">
+                            <input type="checkbox"
+                              checked={form.scopeCategoryIds.includes(c.id)}
+                              onChange={() => setForm({ ...form, scopeCategoryIds: toggleId(form.scopeCategoryIds, c.id) })} />
+                            <span>{c.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </details>
+                    <details className="bg-white rounded border border-slate-200 px-3 py-2">
+                      <summary className="cursor-pointer font-semibold text-slate-700">
+                        Subcategories ({form.scopeSubcategoryIds.length})
+                      </summary>
+                      <div className="mt-2 max-h-40 overflow-y-auto grid grid-cols-2 gap-1">
+                        {menu.flatMap((c) => (c.subcategories || []).map((s) => (
+                          <label key={s.id} className="flex items-center gap-2 py-0.5">
+                            <input type="checkbox"
+                              checked={form.scopeSubcategoryIds.includes(s.id)}
+                              onChange={() => setForm({ ...form, scopeSubcategoryIds: toggleId(form.scopeSubcategoryIds, s.id) })} />
+                            <span>{c.name} → {s.name}</span>
+                          </label>
+                        )))}
+                      </div>
+                    </details>
+                    <details className="bg-white rounded border border-slate-200 px-3 py-2">
+                      <summary className="cursor-pointer font-semibold text-slate-700">
+                        Items ({form.scopeItemIds.length})
+                      </summary>
+                      <div className="mt-2 max-h-60 overflow-y-auto grid grid-cols-2 gap-1">
+                        {menu.flatMap((c) => (c.subcategories || []).flatMap((s) => (s.items || []).map((i) => (
+                          <label key={i.id} className="flex items-center gap-2 py-0.5">
+                            <input type="checkbox"
+                              checked={form.scopeItemIds.includes(i.id)}
+                              onChange={() => setForm({ ...form, scopeItemIds: toggleId(form.scopeItemIds, i.id) })} />
+                            <span>{i.name}</span>
+                          </label>
+                        ))))}
+                      </div>
+                    </details>
+                  </div>
+                )}
+              </Field>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Minimum bill (optional)">
-              <input type="number" value={form.minBillAmount} onChange={(e) => setForm({ ...form, minBillAmount: e.target.value })}
-                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" min="0" step="0.01" />
-            </Field>
+            {form.kind === 'STANDARD' && (
+              <Field label="Minimum bill (optional)">
+                <input type="number" value={form.minBillAmount} onChange={(e) => setForm({ ...form, minBillAmount: e.target.value })}
+                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" min="0" step="0.01" />
+              </Field>
+            )}
             <Field label="Max total uses (optional)">
               <input type="number" value={form.maxTotalUses} onChange={(e) => setForm({ ...form, maxTotalUses: e.target.value })}
                 className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" min="1" />
             </Field>
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className={`grid gap-4 ${form.kind === 'ALLOWANCE' ? 'grid-cols-2' : 'grid-cols-3'}`}>
             <Field label="Valid from">
               <input type="date" value={form.validFrom} onChange={(e) => setForm({ ...form, validFrom: e.target.value })}
                 className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" required />
@@ -331,14 +520,16 @@ export default function CouponsPage() {
               <input type="date" value={form.validUntil} onChange={(e) => setForm({ ...form, validUntil: e.target.value })}
                 className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" required />
             </Field>
-            <Field label="Max uses per customer">
-              <input type="number" value={form.maxUsesPerCustomer} onChange={(e) => setForm({ ...form, maxUsesPerCustomer: e.target.value })}
-                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" min="1" required />
-            </Field>
+            {form.kind === 'STANDARD' && (
+              <Field label="Max uses per customer">
+                <input type="number" value={form.maxUsesPerCustomer} onChange={(e) => setForm({ ...form, maxUsesPerCustomer: e.target.value })}
+                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" min="1" required />
+              </Field>
+            )}
           </div>
 
           <Field label="Target customers">
-            <div className="flex gap-3 items-center mb-2">
+            <div className="flex gap-3 items-center mb-2 flex-wrap">
               <label className="text-sm flex items-center gap-2">
                 <input type="radio" checked={form.targetType === 'ALL'} onChange={() => setForm({ ...form, targetType: 'ALL' })} />
                 All customers
@@ -346,6 +537,10 @@ export default function CouponsPage() {
               <label className="text-sm flex items-center gap-2">
                 <input type="radio" checked={form.targetType === 'SPECIFIC'} onChange={() => setForm({ ...form, targetType: 'SPECIFIC' })} />
                 Specific phone numbers
+              </label>
+              <label className="text-sm flex items-center gap-2">
+                <input type="radio" checked={form.targetType === 'TAG'} onChange={() => setForm({ ...form, targetType: 'TAG' })} />
+                Customer tag(s)
               </label>
             </div>
             {form.targetType === 'SPECIFIC' && (
@@ -356,6 +551,32 @@ export default function CouponsPage() {
                 rows={2}
                 placeholder="Comma-separated phone numbers, e.g. 9876543210, 9123456789"
               />
+            )}
+            {form.targetType === 'TAG' && (
+              scope === 'BUSINESS' ? (
+                <div className="text-xs text-slate-500 italic">
+                  Tag targeting requires an outlet scope — pick an outlet at the top first.
+                </div>
+              ) : tags.length === 0 ? (
+                <div className="text-xs text-slate-500 italic">
+                  This outlet has no customer tags configured yet.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {tags.map((t) => {
+                    const active = form.targetTagIds.includes(t.id);
+                    return (
+                      <button key={t.id} type="button"
+                        onClick={() => setForm({ ...form, targetTagIds: toggleId(form.targetTagIds, t.id) })}
+                        className={`px-3 py-1 rounded-full text-xs font-semibold border ${active ? 'text-white border-transparent' : 'bg-white text-slate-700 border-slate-300'}`}
+                        style={active ? { backgroundColor: t.color } : undefined}
+                      >
+                        {t.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )
             )}
           </Field>
 
