@@ -1,0 +1,31 @@
+datasource db {
+  provider = "postgresql" // Specifies the database engine (PostgreSQL)
+  // url is removed here because it is now defined in prisma.config.js for Prisma v7
+}
+
+generator client {
+  provider = "prisma-client-js" // Tells Prisma to generate the JavaScript client
+}
+
+model User {
+  id        Int      @id @default(autoincrement()) // Primary Key (ID) - auto increments
+  name      String                                 // User's name string
+  email     String   @unique                       // User's unique login email
+  password  String                                 // User's hashed password string
+  role      String   @default("user")              // Access role, defaults to "user"
+  createdAt DateTime @default(now()) @map("created_at") // Tracks creation date/time (mapped to snake_case)
+  books     Book[]                                 // Defines relationship: User can have many books
+
+  @@map("users") // Maps this schema model to the existing "users" table in Postgres
+}
+
+model Book {
+  id        Int      @id @default(autoincrement()) // Primary Key (ID) - auto increments
+  title     String                                 // Title of the book string
+  author    String                                 // Author of the book string
+  addedBy   Int      @map("added_by")              // FK pointing to User.id (mapped to snake_case)
+  createdAt DateTime @default(now()) @map("created_at") // Tracks addition date/time (mapped to snake_case)
+  user      User     @relation(fields: [addedBy], references: [id], onDelete: Cascade) // Establishes relation
+
+  @@map("books") // Maps this schema model to the existing "books" table in Postgres
+}

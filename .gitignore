@@ -1,0 +1,6 @@
+# Excludes the heavy node_modules directory
+node_modules/ 
+
+
+# Excludes your private database passwords and JWT secrets
+.env
