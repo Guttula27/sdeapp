@@ -108,10 +108,14 @@ export default function CouponsPage() {
     api.get(`/outlets/${formOutletId}/customer-tags`)
       .then(({ data }) => setTags(data.data || []))
       .catch(() => setTags([]));
-    api.get(`/outlets/${formOutletId}/menu?includeHidden=true`)
+    api.get(`/outlets/${formOutletId}/menu`, { params: { includeHidden: 'true' } })
       .then(({ data }) => {
-        // getMenu shape: { categories: [{ id, name, subcategories: [{ id, name, items: [...] }] }] }
-        const cats: Category[] = data.data?.categories ?? data.categories ?? [];
+        // The menu endpoint returns the category array DIRECTLY as
+        // `data.data` (the transform interceptor's envelope wraps an
+        // array, not an object) — same pattern as MenuPage.tsx. An
+        // earlier `data.data?.categories` lookup quietly returned []
+        // because arrays don't have a `.categories` prop.
+        const cats: Category[] = Array.isArray(data?.data) ? data.data : [];
         setMenu(cats);
       })
       .catch(() => setMenu([]));
@@ -141,10 +145,12 @@ export default function CouponsPage() {
   useEffect(() => { fetch(); }, [fetch]);
 
   const openCreate = () => {
-    // Default the form's outlet to whichever scope is active on the
-    // page — operator's first click usually wants the same outlet they
-    // were viewing. They can override inside the modal.
-    setForm({ ...blankForm, outletId: scope !== 'BUSINESS' ? scope : '' });
+    // Default the form's outlet to: (1) outlet-admin's own outlet if
+    // they have one on the JWT — they can't create anywhere else;
+    // (2) the page-scope outlet if a business owner has filtered the
+    // list to one; (3) empty (business-wide) otherwise.
+    const initialOutlet = user?.outletId || (scope !== 'BUSINESS' ? scope : '');
+    setForm({ ...blankForm, outletId: initialOutlet });
     setModal({ open: true });
   };
 
@@ -397,25 +403,46 @@ export default function CouponsPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <Field label="Outlet">
-              <select
-                value={form.outletId}
-                onChange={(e) => setForm({
-                  ...form,
-                  outletId: e.target.value,
-                  // Switching outlet invalidates the previous outlet's scope
-                  // and tag picks — wipe them so we don't persist refIds
-                  // from a different outlet's menu.
-                  scopeItemIds: [],
-                  scopeCategoryIds: [],
-                  scopeSubcategoryIds: [],
-                  targetTagIds: [],
-                })}
-                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
-                required={form.kind === 'ALLOWANCE' || form.targetType === 'TAG'}
-              >
-                <option value="">Business-wide (all outlets)</option>
-                {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </select>
+              {(() => {
+                // Lock the field when there is no meaningful choice to
+                // make: outlet-admin accounts can only create coupons
+                // for their own outlet (server enforces this anyway),
+                // and a business owner who has filtered the page to a
+                // specific outlet has already declared the context —
+                // showing the full dropdown is just clutter that
+                // implies the wrong choice space.
+                const locked =
+                  !!user?.outletId || (scope !== 'BUSINESS' && !modal.editing);
+                if (locked) {
+                  const o = outlets.find((x) => x.id === form.outletId);
+                  return (
+                    <div className="w-full border border-slate-200 bg-slate-50 rounded-md px-3 py-2 text-sm text-slate-700">
+                      {o?.name || form.outletId || '—'}
+                    </div>
+                  );
+                }
+                return (
+                  <select
+                    value={form.outletId}
+                    onChange={(e) => setForm({
+                      ...form,
+                      outletId: e.target.value,
+                      // Switching outlet invalidates the previous outlet's scope
+                      // and tag picks — wipe them so we don't persist refIds
+                      // from a different outlet's menu.
+                      scopeItemIds: [],
+                      scopeCategoryIds: [],
+                      scopeSubcategoryIds: [],
+                      targetTagIds: [],
+                    })}
+                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm"
+                    required={form.kind === 'ALLOWANCE' || form.targetType === 'TAG'}
+                  >
+                    <option value="">Business-wide (all outlets)</option>
+                    {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </select>
+                );
+              })()}
             </Field>
             <Field label="Kind">
               <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as CouponKind })}
