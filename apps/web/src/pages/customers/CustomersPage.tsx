@@ -53,7 +53,14 @@ export default function CustomersPage() {
     setLoadingOrders(true);
     try {
       const { data } = await api.get(`/outlets/${outletId}/customers/${customer.id}/orders`);
-      setCustomerOrders(data.data || []);
+      // The customer-orders endpoint returns a paginated envelope
+      //   { items, nextCursor, limit }
+      // (changed in the perf-phase-2 cursor-pagination work). Earlier
+      // versions returned a bare array, so we defensively accept both
+      // shapes — `data.data` can be the array directly OR the wrapper.
+      const payload = data.data ?? data;
+      const list = Array.isArray(payload) ? payload : (payload?.items ?? []);
+      setCustomerOrders(Array.isArray(list) ? list : []);
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to load orders');
     } finally {
