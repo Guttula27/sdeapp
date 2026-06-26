@@ -428,7 +428,7 @@ export default function CustomersPage() {
                     <ShoppingBag size={14} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-semibold text-slate-800 truncate">
                         #{o.orderNumber}{o.tokenNumber != null && <span className="text-slate-400 font-normal"> · Token {o.tokenNumber}</span>}
                       </p>
@@ -442,6 +442,7 @@ export default function CustomersPage() {
                       >
                         {o.status}
                       </span>
+                      <PaymentChip order={o} />
                     </div>
                     <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
                       <Clock size={10} />
@@ -486,6 +487,7 @@ export default function CustomersPage() {
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200">
               <span className="w-2 h-2 rounded-full bg-slate-500" />
               <span className="text-xs font-semibold text-slate-700">{orderDetail.status}</span>
+              <PaymentChip order={orderDetail} />
             </div>
 
             <div className="space-y-2">
@@ -496,8 +498,18 @@ export default function CustomersPage() {
                     {it.quantity}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-slate-800 truncate">{it.item?.name}</p>
-                    {it.variant && <p className="text-xs text-slate-400">{it.variant.name}</p>}
+                    {/* The customer-orders endpoint returns the slim
+                        shape (perf-phase-2) — item / variant relations
+                        aren't selected. Read the snapshot fields
+                        (frozen at order time so receipts stay stable
+                        through name edits), with the relation as a
+                        legacy fallback. */}
+                    <p className="text-sm font-semibold text-slate-800 truncate">
+                      {it.itemNameSnapshot ?? it.item?.name ?? '—'}
+                    </p>
+                    {(it.variantNameSnapshot || it.variant?.name) && (
+                      <p className="text-xs text-slate-400">{it.variantNameSnapshot ?? it.variant?.name}</p>
+                    )}
                     {it.notes && <p className="text-[11px] text-slate-400 italic mt-0.5">{it.notes}</p>}
                   </div>
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600 whitespace-nowrap">
@@ -595,5 +607,43 @@ export default function CustomersPage() {
         </form>
       </Modal>
     </div>
+  );
+}
+
+/**
+ * Compact chip summarising how an order was settled. Three branches:
+ *   1) DUES   — pay-later debit on the customer's ledger, not voided.
+ *   2) PAID   — has a Payment row with status SUCCESS (real refunds
+ *               excluded so a refund row doesn't masquerade as a paid
+ *               settlement).
+ *   3) UNPAID — anything else (postpaid tab waiting for Bill Now,
+ *               pending Razorpay, cancelled / refunded fully…).
+ *
+ * Reads slim fields the customer-orders endpoint now projects:
+ *   order.payments[], order.duesLedger[].
+ */
+function PaymentChip({ order }: { order: any }) {
+  const duesLive = (order?.duesLedger ?? []).some((d: any) => !d.voidedAt);
+  if (duesLive) {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap bg-amber-100 text-amber-800 border border-amber-200">
+        Dues · pay later
+      </span>
+    );
+  }
+  const settledPayment = (order?.payments ?? []).find(
+    (p: any) => p.status === 'SUCCESS' && !p.isRefund,
+  );
+  if (settledPayment) {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap bg-emerald-100 text-emerald-800 border border-emerald-200">
+        Paid · {settledPayment.mode}
+      </span>
+    );
+  }
+  return (
+    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap bg-slate-100 text-slate-600 border border-slate-200">
+      Unpaid
+    </span>
   );
 }
