@@ -500,57 +500,126 @@ export default function CouponsPage() {
                   <div className="text-xs text-slate-500 italic">
                     Pick an outlet above to load this outlet's menu.
                   </div>
-                ) : (
-                  <div className="space-y-2 text-xs">
-                    {/* Three rolled-up multi-pickers — categories, subcategories, items.
-                        A cart line is eligible if it matches ANY of the selections. */}
-                    <details className="bg-white rounded border border-slate-200 px-3 py-2">
-                      <summary className="cursor-pointer font-semibold text-slate-700">
-                        Categories ({form.scopeCategoryIds.length})
-                      </summary>
-                      <div className="mt-2 max-h-40 overflow-y-auto grid grid-cols-2 gap-1">
-                        {menu.map((c) => (
-                          <label key={c.id} className="flex items-center gap-2 py-0.5">
-                            <input type="checkbox"
-                              checked={form.scopeCategoryIds.includes(c.id)}
-                              onChange={() => setForm({ ...form, scopeCategoryIds: toggleId(form.scopeCategoryIds, c.id) })} />
-                            <span>{c.name}</span>
-                          </label>
-                        ))}
+                ) : (() => {
+                  // Cascade-cover: picking a Category implicitly covers
+                  // every subcategory and item under it; picking a
+                  // Subcategory implicitly covers every item under it.
+                  // Backend eligibility is OR across the saved rows, so
+                  // we don't duplicate covered children into the saved
+                  // scope — they just render as locked-checked so the
+                  // admin can see what's already in scope. To deselect a
+                  // covered child, uncheck its parent.
+                  const catNameById     = new Map<string, string>();
+                  const subParentCatId  = new Map<string, string>();
+                  const subNameById     = new Map<string, string>();
+                  for (const c of menu) {
+                    catNameById.set(c.id, c.name);
+                    for (const s of c.subcategories || []) {
+                      subParentCatId.set(s.id, c.id);
+                      subNameById.set(s.id, s.name);
+                    }
+                  }
+                  const isSubCovered = (subId: string) =>
+                    form.scopeCategoryIds.includes(subParentCatId.get(subId) || '');
+                  const isItemCoveredByCat = (catId: string) => form.scopeCategoryIds.includes(catId);
+                  const isItemCoveredBySub = (subId: string) =>
+                    form.scopeSubcategoryIds.includes(subId) || isSubCovered(subId);
+
+                  // Effective counts (what's actually eligible) so the
+                  // summary doesn't undercount when a category covers a
+                  // dozen items the admin never had to tick by hand.
+                  const effectiveSubIds = new Set<string>(form.scopeSubcategoryIds);
+                  for (const c of menu) {
+                    if (!form.scopeCategoryIds.includes(c.id)) continue;
+                    for (const s of c.subcategories || []) effectiveSubIds.add(s.id);
+                  }
+                  const effectiveItemIds = new Set<string>(form.scopeItemIds);
+                  for (const c of menu) {
+                    for (const s of c.subcategories || []) {
+                      if (!isItemCoveredByCat(c.id) && !isItemCoveredBySub(s.id)) continue;
+                      for (const i of s.items || []) effectiveItemIds.add(i.id);
+                    }
+                  }
+                  return (
+                    <div className="space-y-2 text-xs">
+                      <details className="bg-white rounded border border-slate-200 px-3 py-2" open>
+                        <summary className="cursor-pointer font-semibold text-slate-700">
+                          Categories ({form.scopeCategoryIds.length})
+                        </summary>
+                        <div className="mt-2 max-h-40 overflow-y-auto grid grid-cols-2 gap-1">
+                          {menu.map((c) => (
+                            <label key={c.id} className="flex items-center gap-2 py-0.5">
+                              <input type="checkbox"
+                                checked={form.scopeCategoryIds.includes(c.id)}
+                                onChange={() => setForm({ ...form, scopeCategoryIds: toggleId(form.scopeCategoryIds, c.id) })} />
+                              <span>{c.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </details>
+                      <details className="bg-white rounded border border-slate-200 px-3 py-2">
+                        <summary className="cursor-pointer font-semibold text-slate-700">
+                          Subcategories ({effectiveSubIds.size}
+                          {effectiveSubIds.size !== form.scopeSubcategoryIds.length
+                            ? ` — ${form.scopeSubcategoryIds.length} picked, ${effectiveSubIds.size - form.scopeSubcategoryIds.length} via Category`
+                            : ''})
+                        </summary>
+                        <div className="mt-2 max-h-40 overflow-y-auto grid grid-cols-2 gap-1">
+                          {menu.flatMap((c) => (c.subcategories || []).map((s) => {
+                            const covered = isSubCovered(s.id);
+                            const checked = covered || form.scopeSubcategoryIds.includes(s.id);
+                            return (
+                              <label key={s.id}
+                                className={`flex items-center gap-2 py-0.5 ${covered ? 'opacity-60' : ''}`}
+                                title={covered ? `Covered by Category "${catNameById.get(subParentCatId.get(s.id) || '')}"` : undefined}>
+                                <input type="checkbox"
+                                  disabled={covered}
+                                  checked={checked}
+                                  onChange={() => setForm({ ...form, scopeSubcategoryIds: toggleId(form.scopeSubcategoryIds, s.id) })} />
+                                <span>{c.name} → {s.name}</span>
+                              </label>
+                            );
+                          }))}
+                        </div>
+                      </details>
+                      <details className="bg-white rounded border border-slate-200 px-3 py-2">
+                        <summary className="cursor-pointer font-semibold text-slate-700">
+                          Items ({effectiveItemIds.size}
+                          {effectiveItemIds.size !== form.scopeItemIds.length
+                            ? ` — ${form.scopeItemIds.length} picked, ${effectiveItemIds.size - form.scopeItemIds.length} via Category/Subcategory`
+                            : ''})
+                        </summary>
+                        <div className="mt-2 max-h-60 overflow-y-auto grid grid-cols-2 gap-1">
+                          {menu.flatMap((c) => (c.subcategories || []).flatMap((s) => (s.items || []).map((i) => {
+                            const byCat = isItemCoveredByCat(c.id);
+                            const bySub = isItemCoveredBySub(s.id);
+                            const covered = byCat || bySub;
+                            const checked = covered || form.scopeItemIds.includes(i.id);
+                            const reason = byCat
+                              ? `Covered by Category "${c.name}"`
+                              : bySub
+                              ? `Covered by Subcategory "${s.name}"`
+                              : undefined;
+                            return (
+                              <label key={i.id}
+                                className={`flex items-center gap-2 py-0.5 ${covered ? 'opacity-60' : ''}`}
+                                title={reason}>
+                                <input type="checkbox"
+                                  disabled={covered}
+                                  checked={checked}
+                                  onChange={() => setForm({ ...form, scopeItemIds: toggleId(form.scopeItemIds, i.id) })} />
+                                <span>{i.name}</span>
+                              </label>
+                            );
+                          })))}
+                        </div>
+                      </details>
+                      <div className="text-[11px] text-slate-500 px-1">
+                        Tick a Category to cover every subcategory and item under it. Covered rows show greyed-out; untick the parent to pick from them individually.
                       </div>
-                    </details>
-                    <details className="bg-white rounded border border-slate-200 px-3 py-2">
-                      <summary className="cursor-pointer font-semibold text-slate-700">
-                        Subcategories ({form.scopeSubcategoryIds.length})
-                      </summary>
-                      <div className="mt-2 max-h-40 overflow-y-auto grid grid-cols-2 gap-1">
-                        {menu.flatMap((c) => (c.subcategories || []).map((s) => (
-                          <label key={s.id} className="flex items-center gap-2 py-0.5">
-                            <input type="checkbox"
-                              checked={form.scopeSubcategoryIds.includes(s.id)}
-                              onChange={() => setForm({ ...form, scopeSubcategoryIds: toggleId(form.scopeSubcategoryIds, s.id) })} />
-                            <span>{c.name} → {s.name}</span>
-                          </label>
-                        )))}
-                      </div>
-                    </details>
-                    <details className="bg-white rounded border border-slate-200 px-3 py-2">
-                      <summary className="cursor-pointer font-semibold text-slate-700">
-                        Items ({form.scopeItemIds.length})
-                      </summary>
-                      <div className="mt-2 max-h-60 overflow-y-auto grid grid-cols-2 gap-1">
-                        {menu.flatMap((c) => (c.subcategories || []).flatMap((s) => (s.items || []).map((i) => (
-                          <label key={i.id} className="flex items-center gap-2 py-0.5">
-                            <input type="checkbox"
-                              checked={form.scopeItemIds.includes(i.id)}
-                              onChange={() => setForm({ ...form, scopeItemIds: toggleId(form.scopeItemIds, i.id) })} />
-                            <span>{i.name}</span>
-                          </label>
-                        ))))}
-                      </div>
-                    </details>
-                  </div>
-                )}
+                    </div>
+                  );
+                })()}
               </Field>
             </div>
           )}
