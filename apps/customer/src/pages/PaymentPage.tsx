@@ -292,10 +292,11 @@ export default function PaymentPage() {
   };
 
   const finishUpi      = () => placeOrder({ paymentMode: 'UPI' });
-  const finishBypass   = () => placeOrder({
-    paymentMode: 'UPI',
-    notes: 'TEST BYPASS: payment auto-marked SUCCESS during dev testing.',
-  });
+  // Bypass (dev testing) — historically wrote a payment-meta string into
+  // order.notes, which then leaked onto the kitchen card (notes is for
+  // the chef's "no chilli please"-style instructions). Drop the note;
+  // the bypass intent is already recorded in the Payment row itself.
+  const finishBypass   = () => placeOrder({ paymentMode: 'UPI' });
 
   // Gateway flow opens Razorpay checkout. Unlike UPI/Bypass which mark the
   // Payment SUCCESS at order-creation time, this path leaves the Payment
