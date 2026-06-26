@@ -17,6 +17,7 @@ import DashboardPage from './pages/DashboardPage';
 import OffersPage from './pages/OffersPage';
 import AlertsPage from './pages/AlertsPage';
 import ScanResolverPage from './pages/ScanResolverPage';
+import MyDuesPage from './pages/MyDuesPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoggedIn } = useCustomerAuth();
@@ -87,6 +88,7 @@ export default function App() {
           <Route path="/receipt/:orderId" element={<ProtectedRoute><ReceiptPage /></ProtectedRoute>} />
           <Route path="/track/:orderId" element={<OrderTrackingPage />} />
           <Route path="/alerts" element={<ProtectedRoute><AlertsPage /></ProtectedRoute>} />
+          <Route path="/dues"   element={<ProtectedRoute><MyDuesPage /></ProtectedRoute>} />
         </Route>
 
         <Route path="/" element={<Navigate to="/home" replace />} />

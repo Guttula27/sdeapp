@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import {
   LogOut, User, Phone, Mail, Camera, X as XIcon,
   Volume2, Bell, QrCode, CreditCard, Save, Languages, Vibrate,
+  Wallet, ChevronRight,
 } from 'lucide-react';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 import api from '../services/api';
@@ -322,6 +323,22 @@ export default function ProfilePage() {
             <input value={email} onChange={e => setEmail(e.target.value)} className="input" placeholder="optional" />
           </Field>
         </div>
+
+        {/* My Dues — only renders the navigation tile; the actual page
+            lives at /dues. Cheap, no balance fetch at profile time. */}
+        <button
+          onClick={() => navigate('/dues')}
+          className="w-full text-left bg-white rounded-2xl shadow-lg border border-slate-100 p-4 flex items-center gap-3"
+        >
+          <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+            <Wallet size={16} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-slate-900">My Dues</p>
+            <p className="text-xs text-slate-500">Outstanding pay-later balances & quick settle</p>
+          </div>
+          <ChevronRight size={16} className="text-slate-300 shrink-0" />
+        </button>
 
         {/* Alerts */}
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-4 space-y-3">

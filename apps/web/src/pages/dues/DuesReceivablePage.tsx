@@ -149,26 +149,109 @@ export default function DuesReceivablePage() {
 
   const isMultiOutlet = tier !== 'outlet' && outlets.length > 1;
 
+  const activeOutletName = outlets.find((o) => o.id === outletId)?.name ?? '';
+
+  // CSV export — customer-wise, follows the table's visible columns.
+  // Period bounds are echoed in the file name so the download is
+  // self-describing for follow-up cycles. Lives client-side because
+  // the row count is small (one row per customer) and the data is
+  // already in memory.
+  const exportCsv = () => {
+    if (rows.length === 0) {
+      toast('Nothing to export');
+      return;
+    }
+    const esc = (v: string | number | null | undefined) => {
+      const s = v == null ? '' : String(v);
+      // Wrap in quotes when the value has separators or quotes; escape quotes.
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = [
+      'Customer', 'Phone', 'Tag', 'Max ceiling (₹)',
+      'Outstanding (₹)', 'Charged in range (₹)', 'Collected in range (₹)',
+    ];
+    const lines = rows.map((r) => [
+      esc(r.name),
+      esc(r.phone),
+      esc(r.tag?.name ?? ''),
+      esc(r.tag?.maxDueAmount ?? ''),
+      esc(r.currentBalance.toFixed(2)),
+      esc(r.ordersInRangeTotal.toFixed(2)),
+      esc(r.settlementsInRangeTotal.toFixed(2)),
+    ].join(','));
+    // Totals row last — easy for the admin pasting into Excel to see
+    // the bottom line without an extra step.
+    lines.push([
+      esc('TOTAL'), '', '', '',
+      esc(totals.currentBalance.toFixed(2)),
+      esc(totals.ordersInRangeTotal.toFixed(2)),
+      esc(totals.settlementsInRangeTotal.toFixed(2)),
+    ].join(','));
+    const csv = [header.join(','), ...lines].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const slug = (activeOutletName || 'outlet').replace(/\s+/g, '_').toLowerCase();
+    a.href = url;
+    a.download = `dues-receivable_${slug}_${ordersFrom}_to_${ordersTo}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-5">
+      {/* Print rules: hide controls + chrome, fit the table to the page.
+          Scoped via .print-hide on elements that shouldn't appear on
+          paper (action buttons, period filters, settle column, modal). */}
+      <style>{`
+        @media print {
+          .print-hide { display: none !important; }
+          nav, aside, header { display: none !important; }
+          body { background: white !important; }
+          table { font-size: 11px; }
+          .card { box-shadow: none !important; border: 1px solid #e2e8f0 !important; }
+        }
+      `}</style>
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="page-title">Dues — Receivable</h1>
-          <p className="page-subtitle">Customers carrying outstanding pay-later balances.</p>
+          <p className="page-subtitle">
+            Customers carrying outstanding pay-later balances{activeOutletName ? ` — ${activeOutletName}` : ''}.
+          </p>
         </div>
-        {isMultiOutlet && (
-          <select
-            value={outletId}
-            onChange={(e) => setOutletId(e.target.value)}
-            className="input py-2 px-3 text-sm font-medium min-w-[180px]"
+        <div className="flex items-center gap-2 flex-wrap print-hide">
+          <button
+            className="btn-secondary !py-1.5 !px-3 text-xs"
+            disabled={rows.length === 0}
+            onClick={exportCsv}
+            title="Download the customer-wise rows as CSV (totals appended)"
           >
-            {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-          </select>
-        )}
+            Export CSV
+          </button>
+          <button
+            className="btn-secondary !py-1.5 !px-3 text-xs"
+            disabled={rows.length === 0}
+            onClick={() => window.print()}
+            title="Open the print dialog. The .print-hide chrome below is suppressed in print CSS."
+          >
+            Print
+          </button>
+          {isMultiOutlet && (
+            <select
+              value={outletId}
+              onChange={(e) => setOutletId(e.target.value)}
+              className="input py-2 px-3 text-sm font-medium min-w-[180px]"
+            >
+              {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          )}
+        </div>
       </div>
 
       {/* Period filters — two independent windows. */}
-      <div className="card p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="card p-4 grid grid-cols-1 md:grid-cols-2 gap-4 print-hide">
         <div className="space-y-2">
           <p className="text-[11px] font-semibold text-slate-600 uppercase tracking-wide">Orders in range</p>
           <div className="grid grid-cols-2 gap-2">
@@ -209,7 +292,7 @@ export default function DuesReceivablePage() {
                 <th className="text-right px-4 py-2">Outstanding</th>
                 <th className="text-right px-4 py-2">Charged (range)</th>
                 <th className="text-right px-4 py-2">Collected (range)</th>
-                <th className="text-right px-4 py-2"></th>
+                <th className="text-right px-4 py-2 print-hide"></th>
               </tr>
             </thead>
             <tbody>
@@ -241,7 +324,7 @@ export default function DuesReceivablePage() {
                   </td>
                   <td className="px-4 py-2 text-right text-slate-700">₹{r.ordersInRangeTotal.toFixed(2)}</td>
                   <td className="px-4 py-2 text-right text-emerald-700">₹{r.settlementsInRangeTotal.toFixed(2)}</td>
-                  <td className="px-4 py-2 text-right">
+                  <td className="px-4 py-2 text-right print-hide">
                     {can.settleCustomerDues ? (
                       <button
                         className="btn-primary !py-1 !px-2.5 text-xs disabled:opacity-50"

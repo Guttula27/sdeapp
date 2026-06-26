@@ -337,6 +337,65 @@ export class CustomerDuesService {
     return { tag: assignment.customerTag, currentBalance: balance };
   }
 
+  /**
+   * Customer-facing "My Dues" data — one row per outlet where the
+   * customer has any pay-later activity. Returns current balance,
+   * outlet display fields (name + UPI ID for the deeplink target),
+   * and the tag context. Skips outlets with a non-positive balance
+   * (already settled) so the PWA list isn't padded with zeros.
+   */
+  async listMyDues(userId: string) {
+    const ledgerOutlets = await this.prisma.customerDuesLedger.findMany({
+      where: { userId, voidedAt: null },
+      select: { outletId: true },
+      distinct: ['outletId'],
+    });
+    if (ledgerOutlets.length === 0) return [];
+
+    const outletIds = ledgerOutlets.map((r) => r.outletId);
+    const outlets = await this.prisma.outlet.findMany({
+      where: { id: { in: outletIds } },
+      select: {
+        id: true, name: true, upiId: true, businessId: true,
+        business: { select: { name: true } },
+      },
+    });
+    const outletById = new Map(outlets.map((o) => [o.id, o]));
+
+    // Pull tag info per (user, outlet) for the display chip.
+    const assignments = await this.prisma.customerTagAssignment.findMany({
+      where: { userId, outletId: { in: outletIds } },
+      include: { customerTag: { select: { id: true, name: true, color: true, allowPayLater: true, maxDueAmount: true } } },
+    });
+    const tagByOutlet = new Map(assignments.map((a) => [a.outletId, a.customerTag]));
+
+    const rows: any[] = [];
+    for (const oid of outletIds) {
+      const balance = await this.getBalance(userId, oid);
+      if (balance <= 0) continue;
+      const o = outletById.get(oid);
+      const tag = tagByOutlet.get(oid);
+      rows.push({
+        outletId: oid,
+        outletName: o?.name ?? null,
+        businessName: o?.business?.name ?? null,
+        outletUpiId: o?.upiId ?? null,
+        currentBalance: balance,
+        tag: tag
+          ? {
+              id: tag.id,
+              name: tag.name,
+              color: tag.color,
+              allowPayLater: tag.allowPayLater,
+              maxDueAmount: tag.maxDueAmount ? Number(tag.maxDueAmount) : null,
+            }
+          : null,
+      });
+    }
+    rows.sort((a, b) => b.currentBalance - a.currentBalance);
+    return rows;
+  }
+
   // Lookup helper used by the customer PWA to decide whether to show
   // the "Pay later?" prompt at checkout. Cheap, single-row read.
   async lookupPayLater(userId: string, outletId: string) {
