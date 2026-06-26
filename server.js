@@ -9,13 +9,10 @@ const app = express(); // Instantiates the Express application
 
 app.use(express.json()); // Global middleware to parse JSON request bodies
 app.use(morgan('dev')); // Global middleware to log HTTP requests to console in dev format
+app.use(express.static('public')); // Serves index.html from 'public' folder automatically on '/'
 
 app.use('/api/auth', authRoutes); // Mounts authentication routes under /api/auth
 app.use('/api/books', bookRoutes); // Mounts book routes under /api/books
-
-app.get('/', (req, res) => {
-  res.status(200).json({ message: 'Welcome to the Book Collection REST API! (Prisma Version)' }); // Welcome route
-});
 
 const PORT = process.env.PORT || 5000; // Reads port from env, defaults to 5000
 
