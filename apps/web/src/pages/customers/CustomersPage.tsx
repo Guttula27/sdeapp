@@ -72,16 +72,30 @@ export default function CustomersPage() {
       .catch(() => {});
   }, [businessId]);
 
+  // userId -> outstanding dues balance for the active outlet. Populated
+  // off the receivable endpoint so we don't hit GET /balance per row.
+  const [duesByUser, setDuesByUser] = useState<Record<string, number>>({});
+
   const fetchAll = useCallback(async () => {
     if (!outletId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [c, t] = await Promise.all([
+      const [c, t, d] = await Promise.all([
         api.get(`/outlets/${outletId}/customers`),
         api.get(`/outlets/${outletId}/customer-tags`),
+        // Receivable returns one row per customer with any pay-later
+        // activity. Customers without activity are absent from the
+        // response → treat as zero. Failure is non-fatal so the page
+        // still renders without the dues column.
+        api.get(`/outlets/${outletId}/dues/receivable`).catch(() => ({ data: { data: [] } })),
       ]);
       setCustomers(c.data.data || []);
       setTags(t.data.data || []);
+      const map: Record<string, number> = {};
+      for (const row of (d.data.data || d.data || []) as Array<{ userId: string; currentBalance: number }>) {
+        map[row.userId] = row.currentBalance;
+      }
+      setDuesByUser(map);
     } finally {
       setLoading(false);
     }
@@ -244,6 +258,7 @@ export default function CustomersPage() {
                     Last Order {sortBy === 'RECENT' && '↓'}
                   </button>
                 </th>
+                <th className="px-4 pt-3 pb-1 text-right font-semibold">Dues</th>
                 <th className="px-4 pt-3 pb-1 text-left font-semibold">Tag</th>
               </tr>
               {/* Inline filter row inside the header */}
@@ -293,6 +308,7 @@ export default function CustomersPage() {
                     </button>
                   )}
                 </th>
+                <th className="px-4 pb-2 normal-case font-normal" />
                 <th className="px-4 pb-2 normal-case font-normal">
                   <select
                     value={tagFilter}
@@ -333,6 +349,13 @@ export default function CustomersPage() {
                   <td className="px-4 py-3 text-right font-bold text-slate-700">₹{c.totalSpend.toFixed(0)}</td>
                   <td className="px-4 py-3 text-slate-500 text-xs">
                     {c.lastOrderAt ? dayjs(c.lastOrderAt).fromNow() : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {duesByUser[c.id] > 0 ? (
+                      <span className="font-bold text-rose-700">₹{duesByUser[c.id].toFixed(2)}</span>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center gap-2">

@@ -26,21 +26,39 @@ export class CustomerTagsService {
     return tags;
   }
 
-  async create(outletId: string, data: { name: string; color?: string }) {
+  async create(
+    outletId: string,
+    data: { name: string; color?: string; allowPayLater?: boolean; maxDueAmount?: number | null },
+  ) {
     const name = data.name?.trim();
     if (!name) throw new BadRequestException('Tag name is required');
     const exists = await this.prisma.customerTag.findUnique({
       where: { outletId_name: { outletId, name } },
     });
     if (exists) throw new BadRequestException('A tag with that name already exists');
+    if (data.maxDueAmount != null && data.maxDueAmount < 0) {
+      throw new BadRequestException('maxDueAmount must be ≥ 0');
+    }
     const tag = await this.prisma.customerTag.create({
-      data: { outletId, name, color: data.color || '#f97316' },
+      data: {
+        outletId,
+        name,
+        color: data.color || '#f97316',
+        allowPayLater: !!data.allowPayLater,
+        // Force the ceiling off when pay-later is off — keeps the row's
+        // intent unambiguous and the admin form's enable/disable logic
+        // simple.
+        maxDueAmount: data.allowPayLater && data.maxDueAmount != null ? data.maxDueAmount : null,
+      },
     });
     await this.translations.upsertAll('CustomerTag', tag.id, { name: tag.name });
     return tag;
   }
 
-  async update(id: string, data: { name?: string; color?: string }) {
+  async update(
+    id: string,
+    data: { name?: string; color?: string; allowPayLater?: boolean; maxDueAmount?: number | null },
+  ) {
     const tag = await this.prisma.customerTag.findUnique({ where: { id } });
     if (!tag) throw new NotFoundException('Tag not found');
     if (data.name) {
@@ -49,11 +67,23 @@ export class CustomerTagsService {
       });
       if (clash) throw new BadRequestException('A tag with that name already exists');
     }
+    if (data.maxDueAmount != null && data.maxDueAmount < 0) {
+      throw new BadRequestException('maxDueAmount must be ≥ 0');
+    }
+    // If pay-later is being switched off, clear the ceiling alongside —
+    // a stranded maxDueAmount on a non-pay-later tag is confusing.
+    const clearingPayLater = data.allowPayLater === false;
     const updated = await this.prisma.customerTag.update({
       where: { id },
       data: {
         ...(data.name !== undefined ? { name: data.name.trim() } : {}),
         ...(data.color !== undefined ? { color: data.color } : {}),
+        ...(data.allowPayLater !== undefined ? { allowPayLater: data.allowPayLater } : {}),
+        ...(clearingPayLater
+          ? { maxDueAmount: null }
+          : data.maxDueAmount !== undefined
+          ? { maxDueAmount: data.maxDueAmount }
+          : {}),
       },
     });
     if (data.name !== undefined) {

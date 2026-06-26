@@ -266,39 +266,41 @@ model User {
   // unchanged.
   ownerScope UserOwnerScope?
 
-  customerOrders         Order[]                 @relation("CustomerOrders")
-  staffOrders            Order[]                 @relation("StaffOrders")
-  customerClusterOrders  ClusterOrder[]          @relation("CustomerClusterOrders")
+  customerOrders         Order[]                  @relation("CustomerOrders")
+  staffOrders            Order[]                  @relation("StaffOrders")
+  customerClusterOrders  ClusterOrder[]           @relation("CustomerClusterOrders")
   customerAlerts         CustomerAlert[]
   sessions               Session[]
   pushSubscriptions      PushSubscription[]
   auditLogs              AuditLog[]
-  kitchenStations        KitchenStation[]        @relation("StationWorker")
+  kitchenStations        KitchenStation[]         @relation("StationWorker")
   serviceStationWorkers  ServiceStationWorker[]
-  customerTagAssignments CustomerTagAssignment[] @relation("UserCustomerTagAssignments")
+  customerTagAssignments CustomerTagAssignment[]  @relation("UserCustomerTagAssignments")
   favorites              Favorite[]
-  outletLinks            OutletCustomer[]        @relation("UserOutletLinks")
+  outletLinks            OutletCustomer[]         @relation("UserOutletLinks")
   responsibilities       UserResponsibility[]
-  orderItemReviews       OrderItemReview[]       @relation("ReviewByCustomer")
-  reviewReplies          OrderItemReview[]       @relation("ReviewReplyBy")
-  couponTargets          CouponCustomer[]        @relation("CouponTargets")
-  couponUsages           CouponUsage[]           @relation("CouponUsages")
-  rewardAccount          CustomerRewardAccount?  @relation("RewardAccount")
-  rewardTransactions     RewardTransaction[]     @relation("RewardTransactions")
-  orderStatusChanges     OrderStatusHistory[]    @relation("OrderStatusHistoryActor")
-  outletShiftsOpened     OutletShift[]           @relation("OutletShiftOpenedBy")
-  outletShiftsClosed     OutletShift[]           @relation("OutletShiftClosedBy")
-  cashierShifts          CashierShift[]          @relation("CashierShifts")
-  refundsInitiated       Refund[]                @relation("RefundsInitiated")
-  refundsApproved        Refund[]                @relation("RefundsApproved")
-  splitShares            SplitShare[]            @relation("SplitShareCustomer")
-  splitSharesCreated     SplitShare[]            @relation("SplitShareCreatedBy")
+  orderItemReviews       OrderItemReview[]        @relation("ReviewByCustomer")
+  reviewReplies          OrderItemReview[]        @relation("ReviewReplyBy")
+  couponTargets          CouponCustomer[]         @relation("CouponTargets")
+  duesLedger             CustomerDuesLedger[]     @relation("UserDuesLedger")
+  duesSettlements        CustomerDuesSettlement[] @relation("UserDuesSettlements")
+  couponUsages           CouponUsage[]            @relation("CouponUsages")
+  rewardAccount          CustomerRewardAccount?   @relation("RewardAccount")
+  rewardTransactions     RewardTransaction[]      @relation("RewardTransactions")
+  orderStatusChanges     OrderStatusHistory[]     @relation("OrderStatusHistoryActor")
+  outletShiftsOpened     OutletShift[]            @relation("OutletShiftOpenedBy")
+  outletShiftsClosed     OutletShift[]            @relation("OutletShiftClosedBy")
+  cashierShifts          CashierShift[]           @relation("CashierShifts")
+  refundsInitiated       Refund[]                 @relation("RefundsInitiated")
+  refundsApproved        Refund[]                 @relation("RefundsApproved")
+  splitShares            SplitShare[]             @relation("SplitShareCustomer")
+  splitSharesCreated     SplitShare[]             @relation("SplitShareCreatedBy")
   preferredUpiApp        String?
-  profileImageUrl        String?                 @db.MediumText
-  alertRingtone          String?                 @default("chime")
-  alertVolume            Int?                    @default(70)
-  mustChangePassword     Boolean                 @default(false)
-  preferredLanguage      String?                 @default("en")
+  profileImageUrl        String?                  @db.MediumText
+  alertRingtone          String?                  @default("chime")
+  alertVolume            Int?                     @default(70)
+  mustChangePassword     Boolean                  @default(false)
+  preferredLanguage      String?                  @default("en")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -558,6 +560,9 @@ model Business {
   discounts Discount[]
   offers    Offer[]
 
+  duesLedger      CustomerDuesLedger[]     @relation("BusinessDuesLedger")
+  duesSettlements CustomerDuesSettlement[] @relation("BusinessDuesSettlements")
+
   // ── i18n (Phase 3 of perf plan) ──────────────────────────────
   // primaryLanguage = customer-facing default when no preference is
   //   signalled. A Tamil Nadu chain uses 'ta'; defaults to 'en'.
@@ -681,12 +686,14 @@ model Outlet {
   kitchenStations        KitchenStation[]
   serviceStations        ServiceStation[]
   customerTags           CustomerTag[]
-  customerTagAssignments CustomerTagAssignment[] @relation("OutletCustomerTagAssignments")
+  customerTagAssignments CustomerTagAssignment[]  @relation("OutletCustomerTagAssignments")
+  duesLedger             CustomerDuesLedger[]     @relation("OutletDuesLedger")
+  duesSettlements        CustomerDuesSettlement[] @relation("OutletDuesSettlements")
   toppings               Topping[]
   images                 OutletImage[]
   hours                  OutletHour[]
   tableTypes             TableType[]
-  customerLinks          OutletCustomer[]        @relation("OutletCustomerLinks")
+  customerLinks          OutletCustomer[]         @relation("OutletCustomerLinks")
   roles                  Role[]
   menus                  OutletMenu[]
   messageTemplates       MessageTemplate[]
@@ -1397,6 +1404,7 @@ model Order {
   disputes       Dispute[]
   customerAlerts CustomerAlert[]
   couponUsages   CouponUsage[]
+  duesLedger     CustomerDuesLedger[] @relation("OrderDuesLedger")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2242,6 +2250,18 @@ model CustomerTag {
   // ALLOWANCE-coupon targeting — back-relation for CouponTargetTag.
   couponTargets CouponTargetTag[]
 
+  // Pay-later (employee dues) flag. When ON, customers assigned this
+  // tag get the "Pay later?" prompt at checkout and may place an
+  // order that becomes a DEBIT entry on the customer's dues ledger
+  // instead of going through the payment screen. Settlement happens
+  // separately via the Receivable tab. See docs/cluster-… (TODO doc)
+  allowPayLater Boolean  @default(false)
+  // Optional ceiling on outstanding dues per customer carrying this
+  // tag. Server-side check at order placement: rejects pay-later
+  // orders if (current balance + order total) would exceed this
+  // amount. Null = no ceiling.
+  maxDueAmount  Decimal? @db.Decimal(10, 2)
+
   // i18n denorm — see Business.* for the shape/lifecycle.
   name_i18n Json?
 
@@ -2285,6 +2305,87 @@ model CustomerTagAssignment {
 
   @@unique([userId, outletId])
   @@map("paynpik_customer_tag_assignments")
+}
+
+// ─── Customer dues (pay-later) ──────────────────────────────
+// Double-entry ledger. A pay-later order writes a DEBIT row of the
+// order total; a settlement writes a CREDIT row of the paid amount
+// and a CustomerDuesSettlement parent that captures the payment
+// method + actor + reference. Running balance for a customer at an
+// outlet is SUM(DEBIT) - SUM(CREDIT) over rows where voidedAt IS NULL.
+//
+// Settlements are not tied 1:1 to orders — a single ₹500 payment
+// can clear three earlier ₹100 / ₹200 / ₹200 orders. The relationship
+// is "customer pays a lump; we credit the ledger" rather than
+// "customer pays this specific bill."
+
+model CustomerDuesLedger {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation("UserDuesLedger", fields: [userId], references: [id], onDelete: Cascade)
+  businessId String
+  business   Business @relation("BusinessDuesLedger", fields: [businessId], references: [id], onDelete: Cascade)
+  outletId   String
+  outlet     Outlet   @relation("OutletDuesLedger", fields: [outletId], references: [id], onDelete: Cascade)
+
+  /// 'DEBIT' (customer incurred a charge — typically an order placed
+  /// as pay-later) | 'CREDIT' (customer paid something off; references
+  /// the parent settlement).
+  kind   String  @db.VarChar(10)
+  amount Decimal @db.Decimal(10, 2)
+
+  /// DEBIT-only: the order this debit covers. Used for the void hook
+  /// when the order is cancelled / refunded.
+  orderId      String?
+  order        Order?                  @relation("OrderDuesLedger", fields: [orderId], references: [id])
+  /// CREDIT-only: the settlement that wrote this credit row.
+  settlementId String?
+  settlement   CustomerDuesSettlement? @relation(fields: [settlementId], references: [id])
+
+  notes    String?
+  /// Set when the linked order is cancelled / refunded so the balance
+  /// is restored. Period queries filter `voidedAt IS NULL`.
+  voidedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, outletId])
+  @@index([outletId, createdAt])
+  @@index([orderId])
+  @@map("paynpik_customer_dues_ledger")
+}
+
+model CustomerDuesSettlement {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation("UserDuesSettlements", fields: [userId], references: [id], onDelete: Cascade)
+  businessId String
+  business   Business @relation("BusinessDuesSettlements", fields: [businessId], references: [id], onDelete: Cascade)
+  outletId   String
+  outlet     Outlet   @relation("OutletDuesSettlements", fields: [outletId], references: [id], onDelete: Cascade)
+
+  amount Decimal @db.Decimal(10, 2)
+
+  /// 'CASH' | 'UPI' | 'CARD' | 'RAZORPAY' | 'OTHER'. Free-form string
+  /// (not the PaymentMode enum) because 'OTHER' covers salary-deduction
+  /// or any out-of-band settlement that doesn't map to a payment rail.
+  paymentMode String  @db.VarChar(20)
+  /// Optional reference: UPI txn id, Razorpay payment id, settlement
+  /// memo. Free-form per `paymentMode`.
+  reference   String? @db.VarChar(120)
+  notes       String?
+
+  /// Staff member who recorded the settlement. Audit trail; not a
+  /// FK target relation to keep User's outbound list lean.
+  settledBy String?
+
+  createdAt DateTime @default(now())
+
+  ledgerEntries CustomerDuesLedger[]
+
+  @@index([userId, outletId])
+  @@index([outletId, createdAt])
+  @@map("paynpik_customer_dues_settlements")
 }
 
 // ─── Toppings (outlet-level catalog) ──────────────────────

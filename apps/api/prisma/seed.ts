@@ -47,6 +47,7 @@ const RESPONSIBILITY_DEFS: Array<{ name: string; module: string; description: st
   // Payments
   { name: 'COLLECT_PAYMENT',         module: 'PAYMENTS',   description: 'Initiate and confirm payments' },
   { name: 'VIEW_PAYMENTS',           module: 'PAYMENTS',   description: 'View payment history per order' },
+  { name: 'SETTLE_CUSTOMER_DUES',    module: 'PAYMENTS',   description: 'Settle customer dues (pay-later balances) — cash / UPI / Razorpay / other' },
 
   // Kitchen
   { name: 'VIEW_KITCHEN',            module: 'KITCHEN',    description: 'View the kitchen display / KDS queue' },

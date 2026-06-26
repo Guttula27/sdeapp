@@ -78,6 +78,7 @@ export function useUserRole() {
     // Payments
     collectPayment:       has('COLLECT_PAYMENT'),
     viewPayments:         has('VIEW_PAYMENTS'),
+    settleCustomerDues:   has('SETTLE_CUSTOMER_DUES'),
 
     // Kitchen
     viewKitchen:          has('VIEW_KITCHEN'),

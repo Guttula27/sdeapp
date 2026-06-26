@@ -12,6 +12,7 @@ import { LifecycleDispatcherService } from '../customer-alerts/lifecycle-dispatc
 import { PricingService } from '../pricing/pricing.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { ServiceStationsService } from '../service-stations/service-stations.service';
+import { CustomerDuesService } from '../customer-dues/customer-dues.service';
 import {
   evaluateCascade,
   nowInOutletTz,
@@ -57,6 +58,7 @@ export class OrdersService {
     private audit: AuditLogService,
     private encryption: EncryptionService,
     private userLookup: UserLookupService,
+    private customerDues: CustomerDuesService,
   ) {}
 
   /**
@@ -344,6 +346,25 @@ export class OrdersService {
       // No promotions requested — silently fall back to the un-promo bill.
     }
 
+    // Pay-later gate. When set, the customer expects the order to be
+    // booked as dues (no immediate payment). We pre-check here so a
+    // tag mismatch / ceiling overflow fails fast — before stock
+    // decrement, order-number issuance, etc. — rather than rolling
+    // back inside the transaction. Mutual exclusion with paymentMode:
+    // a request claiming both is contradictory (pay now AND later).
+    if (dto.payLater) {
+      if (dto.paymentMode) {
+        throw new BadRequestException('Cannot pay later AND pay now in the same request');
+      }
+      if (!resolvedCustomerId) {
+        throw new BadRequestException('Pay-later requires an identified customer');
+      }
+      // Throws BadRequestException with a customer-readable message
+      // when the customer's tag doesn't allow pay-later or the order
+      // would push them over the configured ceiling.
+      await this.customerDues.assertCanPayLater(resolvedCustomerId, outletId, totalAmount);
+    }
+
     // Pull-and-increment the outlet's persistent order sequence and configurable
     // token counter atomically. Atomic increment prevents collisions when two
     // orders are placed concurrently.
@@ -506,6 +527,25 @@ export class OrdersService {
           },
         },
       });
+
+      // Pay-later: record a DEBIT on the customer's dues ledger inside
+      // the same transaction as the order, so a rollback (stock race,
+      // coupon failure later in this tx) takes the ledger row with it.
+      if (dto.payLater && resolvedCustomerId) {
+        const outletRow = await tx.outlet.findUnique({
+          where: { id: outletId },
+          select: { businessId: true },
+        });
+        if (!outletRow) throw new BadRequestException('Outlet not found');
+        await this.customerDues.recordOrderDebit(tx, {
+          userId:     resolvedCustomerId,
+          businessId: outletRow.businessId,
+          outletId,
+          orderId:    created.id,
+          amount:     totalAmount,
+          notes:      `Pay-later · ${orderNumber}`,
+        });
+      }
 
       // Persist the coupon redemption (ledger row + counter increment) inside
       // the same transaction as the order — atomic against double-claims.
@@ -1083,6 +1123,13 @@ export class OrdersService {
     if (dto.status === OrderStatus.CANCELLED || dto.status === OrderStatus.REFUND_COMPLETE) {
       await this.prisma.couponUsage.updateMany({
         where: { orderId: id, voidedAt: null },
+        data: { voidedAt: new Date() },
+      });
+      // Same hook for the pay-later DEBIT: cancelled / refunded orders
+      // restore the customer's dues balance. updateMany filters
+      // voidedAt IS NULL → idempotent on re-firing.
+      await this.prisma.customerDuesLedger.updateMany({
+        where: { orderId: id, kind: 'DEBIT', voidedAt: null },
         data: { voidedAt: new Date() },
       });
     }

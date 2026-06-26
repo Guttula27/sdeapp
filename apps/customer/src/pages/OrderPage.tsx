@@ -554,17 +554,20 @@ export default function OrderPage() {
   const cartTotal = subtotal + taxAmount + parcelPreview;
   const cartCount = cart.reduce((s, c) => s + c.quantity, 0);
 
-  const goToPay = () => {
-    if (!cart.length) return;
-    if (openStatus && !openStatus.isOpen) {
-      toast.error(`Outlet is currently closed${openStatus.reason ? ` · ${openStatus.reason}` : ''}`);
-      return;
-    }
-    if (!isLoggedIn) {
-      toast('Sign in to continue', { icon: '🔐' });
-      navigate('/auth', { state: { from: `/order${window.location.search}` } });
-      return;
-    }
+  // Pay-later prompt state. When the customer carries a CustomerTag
+  // with allowPayLater=true at this outlet, the cart's Place Order
+  // button first shows a confirm: pay now (→ /pay) or pay later
+  // (→ order placed immediately with payLater=true; settled offline).
+  const [payLaterPrompt, setPayLaterPrompt] = useState<null | {
+    tagName: string | null;
+    currentBalance: number;
+    ceiling: number | null;
+  }>(null);
+  const [submittingPayLater, setSubmittingPayLater] = useState(false);
+
+  // Lift the actual /pay navigation out so both the "Pay now" button on
+  // the dialog and the no-pay-later-tag fast path can call it.
+  const navigateToPayment = () => {
     navigate('/pay', {
       state: {
         outletId,
@@ -577,6 +580,69 @@ export default function OrderPage() {
         total: cartTotal,
       },
     });
+  };
+
+  const goToPay = async () => {
+    if (!cart.length) return;
+    if (openStatus && !openStatus.isOpen) {
+      toast.error(`Outlet is currently closed${openStatus.reason ? ` · ${openStatus.reason}` : ''}`);
+      return;
+    }
+    if (!isLoggedIn) {
+      toast('Sign in to continue', { icon: '🔐' });
+      navigate('/auth', { state: { from: `/order${window.location.search}` } });
+      return;
+    }
+    // Lookup is cheap (one row); not gated by a feature flag because
+    // a missing tag short-circuits to "no, just pay now". Network failure
+    // falls through to the normal payment screen — never blocks the
+    // customer.
+    try {
+      const { data } = await api.get(`/outlets/${outletId}/dues/me/${user!.id}`);
+      const info = data?.data ?? data;
+      if (info?.allowPayLater) {
+        setPayLaterPrompt({
+          tagName: info.tagName ?? null,
+          currentBalance: Number(info.currentBalance ?? 0),
+          ceiling: info.ceiling != null ? Number(info.ceiling) : null,
+        });
+        return;
+      }
+    } catch {
+      // ignore — defaults to normal payment flow
+    }
+    navigateToPayment();
+  };
+
+  // Place the order as pay-later (DEBIT on the customer's dues ledger).
+  // Skips the payment screen entirely — there's nothing to charge.
+  const placePayLater = async () => {
+    if (!cart.length) return;
+    setSubmittingPayLater(true);
+    try {
+      const { data } = await api.post(`/outlets/${outletId}/orders`, {
+        tableId: tableId || undefined,
+        isParcel,
+        payLater: true,
+        items: cart.map((c) => ({
+          itemId: c.itemId,
+          variantId: c.variantId,
+          quantity: c.quantity,
+          toppings: c.toppings?.map((t) => ({ toppingId: t.toppingId, optionId: t.optionId })) || undefined,
+          bundleSelections: c.bundleSelections,
+        })),
+      });
+      try { sessionStorage.removeItem(`cart-${outletId}`); } catch {}
+      setCart([]);
+      setShowCart(false);
+      setPayLaterPrompt(null);
+      toast.success('Order placed — added to your dues.');
+      navigate(`/receipt/${data.data.id}`, { replace: true });
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Failed to place order');
+    } finally {
+      setSubmittingPayLater(false);
+    }
   };
 
   // Postpaid: place items without payment; open tab keeps accepting more
@@ -1183,6 +1249,67 @@ export default function OrderPage() {
             setShowCart(true);
           }}
         />
+      )}
+
+      {/* Pay-later prompt — appears when the customer has a tag with
+          allowPayLater=true. Two paths: pay now (regular /pay screen)
+          or pay later (POSTs the order with payLater=true and lands
+          on the receipt; the amount becomes a DEBIT on their dues
+          ledger). Shown as a full-screen modal so it can't be missed
+          and there's no accidental dismiss-and-pay-now. */}
+      {payLaterPrompt && (
+        <div
+          className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 p-3"
+          onClick={() => { if (!submittingPayLater) setPayLaterPrompt(null); }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Pay later?</h3>
+              <p className="text-sm text-slate-600 mt-1">
+                {payLaterPrompt.tagName
+                  ? `As a ${payLaterPrompt.tagName} member, you can add this order to your dues and settle it later.`
+                  : 'You can add this order to your dues and settle it later.'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 space-y-1">
+              <div className="flex items-center justify-between">
+                <span>This order</span>
+                <span className="font-bold">₹{cartTotal.toFixed(2)}</span>
+              </div>
+              {payLaterPrompt.currentBalance > 0 && (
+                <div className="flex items-center justify-between text-slate-500">
+                  <span>Current dues balance</span>
+                  <span>₹{payLaterPrompt.currentBalance.toFixed(2)}</span>
+                </div>
+              )}
+              {payLaterPrompt.ceiling != null && (
+                <div className="flex items-center justify-between text-slate-500">
+                  <span>Allowed up to</span>
+                  <span>₹{payLaterPrompt.ceiling.toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                disabled={submittingPayLater}
+                onClick={() => { setPayLaterPrompt(null); navigateToPayment(); }}
+              >
+                Pay now
+              </button>
+              <button
+                className="px-4 py-2.5 rounded-xl bg-gold-500 hover:bg-gold-600 text-charcoal-900 text-sm font-bold disabled:opacity-50"
+                disabled={submittingPayLater}
+                onClick={placePayLater}
+              >
+                {submittingPayLater ? 'Placing…' : 'Yes, pay later'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

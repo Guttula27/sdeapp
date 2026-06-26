@@ -8,6 +8,7 @@ import { PricingModule } from '../pricing/pricing.module';
 import { RewardsModule } from '../rewards/rewards.module';
 import { CouponsModule } from '../coupons/coupons.module';
 import { ServiceStationsModule } from '../service-stations/service-stations.module';
+import { CustomerDuesModule } from '../customer-dues/customer-dues.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { ServiceStationsModule } from '../service-stations/service-stations.modu
     RewardsModule,
     CouponsModule,
     ServiceStationsModule,
+    CustomerDuesModule,
   ],
   controllers: [OrdersBrowseController, OrdersController],
   providers: [OrdersService, OrdersGateway],

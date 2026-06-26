@@ -215,7 +215,10 @@ const MINIMAL_NAV: NavItem[] = [
   { to: '/shifts',         icon: Wallet,       label: 'Shifts',          requires: ['CREATE_ORDER', 'COLLECT_PAYMENT'] },
   { to: '/refunds',        icon: RotateCcw,    label: 'Refunds',         requires: ['CANCEL_ORDER'] },
   { to: '/menu',        icon: UtensilsCrossed, label: 'Menu',        requires: ['VIEW_MENU'] },
-  { to: '/customers',   icon: Users,           label: 'Customers',   requires: ['VIEW_CUSTOMERS'] },
+  { to: '/customers',   icon: Users,           label: 'Customers',   requires: ['VIEW_CUSTOMERS'], children: [
+    { to: '/customers',        icon: Users,  label: 'All' },
+    { to: '/dues/receivable',  icon: Wallet, label: 'Dues · Receivable', requires: ['VIEW_CUSTOMERS'] },
+  ]},
   { to: '/disputes',    icon: ShieldAlert,     label: 'Disputes',    requires: ['VIEW_DISPUTES'] },
   { to: '/feedback',    icon: MessageSquare,   label: 'Feedback',    requires: ['MANAGE_DISPUTES', 'MANAGE_CUSTOMERS'] },
   { to: '/reports',     icon: BarChart3,       label: 'Reports',     requires: ['VIEW_REPORTS'] },
