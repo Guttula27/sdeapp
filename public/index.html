@@ -3,14 +3,59 @@
 <head>
   <meta charset="UTF-8">
   <title>Book Collection</title>
+  <!-- Links our premium glassmorphism styling -->
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>Book Collection Dashboard</h1>
-  
-  <!-- This is an empty list. JavaScript will add items here dynamically! -->
-  <ul id="books-list"></ul>
 
-  <!-- This runs our app.js file -->
+  <h1>Book Collection Dashboard</h1>
+
+  <!-- 1. AUTH CONTAINER (Shown when logged out) -->
+  <div id="auth-section">
+    <h2>Login</h2>
+    <form id="login-form">
+      <input type="email" id="login-email" placeholder="Email" required>
+      <input type="password" id="login-password" placeholder="Password" required>
+      <button type="submit">Login</button>
+    </form>
+
+    <hr>
+
+    <h2>Register</h2>
+    <form id="register-form">
+      <input type="text" id="register-name" placeholder="Full Name" required>
+      <input type="email" id="register-email" placeholder="Email" required>
+      <input type="password" id="register-password" placeholder="Password" required>
+      <select id="register-role">
+        <option value="user">User</option>
+        <option value="admin">Admin</option>
+      </select>
+      <button type="submit">Register</button>
+    </form>
+  </div>
+
+  <!-- 2. DASHBOARD CONTAINER (Shown when logged in) -->
+  <div id="dashboard-section" style="display: none;">
+    <h2>Welcome Back, <span id="user-name-display"></span>!</h2>
+    <button id="logout-button">Logout</button>
+
+    <hr>
+
+    <h3>Add a New Book</h3>
+    <form id="add-book-form">
+      <input type="text" id="book-title" placeholder="Book Title" required>
+      <input type="text" id="book-author" placeholder="Book Author" required>
+      <button type="submit">Add Book</button>
+    </form>
+  </div>
+
+  <!-- 3. PUBLIC BOOKS LIST -->
+  <div>
+    <h2>Books Collection</h2>
+    <ul id="books-list"></ul>
+  </div>
+
+  <!-- Connects our JavaScript logic -->
   <script src="app.js"></script>
 </body>
 </html>

@@ -1,0 +1,134 @@
+/* ==========================================
+   Dashboard Stylesheet (Premium Dark Glassmorphism)
+   ========================================== */
+
+/* 1. Global Reset & Google Font Import */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
+
+* {
+  box-sizing: border-box; /* Ensures padding doesn't affect width calculations */
+  margin: 0; padding: 0; /* Clears browser default spaces */
+  font-family: 'Outfit', sans-serif; /* Uses modern, premium typeface */
+}
+
+body {
+  background: linear-gradient(135deg, #0f172a, #1e1b4b); /* Deep dark blue gradient */
+  color: #f8fafc; /* Crisp off-white text color */
+  min-height: 100vh; /* Spans full height of the viewport */
+  display: flex; flex-direction: column; align-items: center; /* Centers elements vertically */
+  padding: 40px 20px; /* Padding around page edges */
+}
+
+h1 {
+  font-size: 2.5rem; font-weight: 800; /* Bold typography */
+  background: linear-gradient(to right, #38bdf8, #818cf8); /* Gradient text colors */
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; /* Clips background to text shapes */
+  margin-bottom: 30px; text-align: center; /* Center-aligned space */
+}
+
+h2, h3 {
+  font-weight: 600; color: #38bdf8; /* Accent color for subheadings */
+  margin-bottom: 15px; /* Margin under header */
+}
+
+/* 2. Glassmorphism Card Container */
+div, #auth-section, #dashboard-section {
+  background: rgba(255, 255, 255, 0.03); /* Translucent white card background */
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); /* Blurs backdrop for glass look */
+  border: 1px solid rgba(255, 255, 255, 0.08); /* Faint glass border line */
+  border-radius: 16px; /* Smooth rounded corners */
+  padding: 24px; /* Padding inside the cards */
+  width: 100%; max-width: 550px; /* Fixed maximum width constraint */
+  margin-bottom: 24px; /* Vertical gap between cards */
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); /* Soft deep drop shadow */
+}
+
+hr {
+  border: none; border-top: 1px solid rgba(255, 255, 255, 0.1); /* Subtle divider line */
+  margin: 20px 0; /* Space around divider */
+}
+
+/* 3. Form Inputs & Select Options */
+form {
+  display: flex; flex-direction: column; gap: 12px; /* Stacks inputs with equal spacing */
+  margin-bottom: 15px; /* Gap below the form */
+}
+
+input, select {
+  background: rgba(15, 23, 42, 0.6); /* Translucent dark input boxes */
+  border: 1px solid rgba(255, 255, 255, 0.1); /* Light borders */
+  border-radius: 8px; /* Slightly rounded corners */
+  padding: 12px 16px; /* Space inside input boxes */
+  color: #f8fafc; font-size: 1rem; /* Text size and color */
+  transition: all 0.3s ease; /* Smooth transition for focus state */
+}
+
+input:focus, select:focus {
+  outline: none; /* Removes browser default highlight ring */
+  border-color: #38bdf8; /* Changes border to blue accent */
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.3); /* Adds subtle neon blue glow */
+}
+
+select option {
+  background: #0f172a; color: #f8fafc; /* Style dropdown menu choices */
+}
+
+/* 4. Action Buttons */
+button {
+  background: linear-gradient(135deg, #38bdf8, #818cf8); /* Vibrant neon gradient */
+  border: none; border-radius: 8px; /* Clean sharp corners */
+  padding: 12px 20px; font-weight: 600; /* Bold label text */
+  color: #0f172a; cursor: pointer; /* Dark text and pointer finger hover cursor */
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); /* Snappy animation curve */
+}
+
+button:hover {
+  transform: translateY(-2px); /* Lifts button up slightly on hover */
+  box-shadow: 0 5px 15px rgba(56, 189, 248, 0.4); /* Glow shadow expands */
+}
+
+button:active {
+  transform: translateY(0); /* Drops button back on click */
+}
+
+/* Specific Style for Logout Button */
+#logout-button {
+  background: transparent; border: 1px solid #ef4444; /* Red border style */
+  color: #ef4444; margin-top: 10px; /* Red text label color */
+}
+
+#logout-button:hover {
+  background: #ef4444; color: #0f172a; /* Inverts color block on hover */
+  box-shadow: 0 5px 15px rgba(239, 68, 68, 0.3); /* Soft red neon glow */
+}
+
+/* 5. Dynamic Books List Rendering */
+ul {
+  list-style: none; /* Removes default bullet points */
+  display: flex; flex-direction: column; gap: 10px; /* Vertical gap between list items */
+}
+
+li {
+  background: rgba(255, 255, 255, 0.02); /* Faint list item background */
+  border-radius: 8px; padding: 12px 16px; /* Round borders and spacing */
+  display: flex; justify-content: space-between; align-items: center; /* Side-by-side book info and button */
+  border-left: 3px solid #818cf8; /* Left accent line */
+  animation: fadeIn 0.5s ease; /* Fade-in animation on creation */
+}
+
+/* Delete Button next to List Item */
+li button {
+  background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; /* Ghost red style */
+  color: #ef4444; padding: 4px 10px; font-size: 0.8rem; /* Tiny size constraints */
+}
+
+li button:hover {
+  background: #ef4444; color: #0f172a; /* Fills block color on hover */
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4); /* Light red shadow */
+}
+
+/* 6. Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); } /* Animation starts invisible and lower */
+  to { opacity: 1; transform: translateY(0); } /* Animation ends visible and centered */
+}
