@@ -2,65 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Book Collection Dashboard</title>
+  <title>Book Collection</title>
 </head>
 <body>
-
   <h1>Book Collection Dashboard</h1>
+  
+  <!-- This is an empty list. JavaScript will add items here dynamically! -->
+  <ul id="books-list"></ul>
 
-  <!-- 1. AUTH SECTION (Visible only when LOGGED OUT) -->
-  <!-- We wrap it in a div so we can easily hide/show it using JavaScript -->
-  <div id="auth-section">
-    <h2>Login</h2>
-    <!-- We use id attributes so JavaScript can grab these forms and inputs easily -->
-    <form id="login-form">
-      <input type="email" id="login-email" placeholder="Email" required>
-      <input type="password" id="login-password" placeholder="Password" required>
-      <button type="submit">Login</button>
-    </form>
-
-    <hr> <!-- Horizontal line separator -->
-
-    <h2>Register</h2>
-    <form id="register-form">
-      <input type="text" id="register-name" placeholder="Full Name" required>
-      <input type="email" id="register-email" placeholder="Email" required>
-      <input type="password" id="register-password" placeholder="Password" required>
-      <!-- We allow selecting role for testing user vs admin actions -->
-      <select id="register-role">
-        <option value="user">User</option>
-        <option value="admin">Admin</option>
-      </select>
-      <button type="submit">Register</button>
-    </form>
-  </div>
-
-  <!-- 2. DASHBOARD SECTION (Visible only when LOGGED IN) -->
-  <!-- By default, we hide this using style="display: none;" until user logs in -->
-  <div id="dashboard-section" style="display: none;">
-    <h2>Welcome, <span id="user-name-display"></span>!</h2>
-    <button id="logout-button">Logout</button>
-
-    <hr>
-
-    <h3>Add a New Book</h3>
-    <form id="add-book-form">
-      <input type="text" id="book-title" placeholder="Book Title" required>
-      <input type="text" id="book-author" placeholder="Book Author" required>
-      <button type="submit">Add Book</button>
-    </form>
-  </div>
-
-  <hr>
-
-  <!-- 3. PUBLIC BOOKS LIST SECTION (Always visible) -->
-  <div>
-    <h2>Books Collection</h2>
-    <!-- This empty list will be populated dynamically by JavaScript using data from GET /api/books -->
-    <ul id="books-list"></ul>
-  </div>
-
-  <!-- 4. Link our frontend JavaScript logic file -->
+  <!-- This runs our app.js file -->
   <script src="app.js"></script>
 </body>
 </html>
