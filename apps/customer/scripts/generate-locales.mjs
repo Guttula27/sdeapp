@@ -90,7 +90,7 @@ console.log(`→ Generating locales for: ${targetLangs.join(', ')}${force ? ' (f
 // Same mirror order + circuit-breaker shape as the platform's
 // LingvaTranslationProvider so behaviour stays predictable.
 const HOSTS = process.env.LINGVA_URL
-  ? [process.env.LINGVA_URL.replace(/\/$/, '')]
+  ? process.env.LINGVA_URL.split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean)
   : ['https://lingva.lunar.icu', 'https://lingva.ml', 'https://translate.plausibility.cloud'];
 const FETCH_TIMEOUT_MS = parseInt(process.env.LINGVA_TIMEOUT_MS || '8000', 10);
 const blockedHosts = new Map();
@@ -115,20 +115,39 @@ function thawPlaceholders(translated, map) {
 
 // Polite per-request gap to keep Lingva's public mirrors happy.
 const REQUEST_GAP_MS = parseInt(process.env.LINGVA_GAP_MS || '300', 10);
+// Concurrent in-flight translation requests. Lingva mirrors handle a
+// handful in parallel without complaining; serial requests left the
+// run an order of magnitude slower than needed.
+const CONCURRENCY = parseInt(process.env.LINGVA_CONCURRENCY || '6', 10);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function translateOne(text, fromCode, toCode) {
+// Counts consecutive failures per host — drives exponential backoff so
+// a flaky mirror gets a short timeout the first time and progressively
+// longer ones if it keeps failing. Resets on every successful response.
+const hostFailureCount = new Map();
+const BACKOFF_BASE_MS = 5_000;   // 1st fail: 5s, 2nd: 10s, 3rd: 20s, 4th: 40s, cap 60s
+const BACKOFF_CAP_MS = 60_000;
+let nextWorkerIdx = 0;
+function nextWorkerStart() {
+  // Round-robin starting mirror per worker so we don't synchronize on
+  // the first host. With concurrency=4 and 2 hosts, workers 0/2 start
+  // at host 0, workers 1/3 start at host 1.
+  const i = nextWorkerIdx;
+  nextWorkerIdx = (nextWorkerIdx + 1) % Math.max(1, HOSTS.length);
+  return i;
+}
+
+async function translateOne(text, fromCode, toCode, workerStart = 0) {
   if (!text || fromCode === toCode) return text;
   const { frozen, map } = freezePlaceholders(text);
   const encoded = encodeURIComponent(frozen);
   let lastError = null;
-  const now = Date.now();
-  // Two passes — if every host is in cooldown on the first, wait it
-  // out once and retry. Better than burning a whole dictionary's
-  // worth of strings just because one bad host put them all to sleep
-  // back-to-back.
-  for (let pass = 0; pass < 2; pass++) {
-    for (const host of HOSTS) {
+  // Up to three passes through the rotated mirror list. After each pass,
+  // if every mirror is in cooldown, wait for the soonest one with jitter
+  // so workers don't all retry at exactly the same instant.
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < HOSTS.length; i++) {
+      const host = HOSTS[(workerStart + i) % HOSTS.length];
       const blockedUntil = blockedHosts.get(host) ?? 0;
       if (blockedUntil > Date.now()) continue;
       try {
@@ -137,82 +156,124 @@ async function translateOne(text, fromCode, toCode) {
           headers: { Accept: 'application/json' },
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
-        if (!res.ok) { blockedHosts.set(host, Date.now() + 60_000); lastError = new Error(`${host} ${res.status}`); continue; }
+        if (!res.ok) {
+          // HTTP error = mirror is alive but rejecting. Exponential backoff.
+          const fails = (hostFailureCount.get(host) ?? 0) + 1;
+          hostFailureCount.set(host, fails);
+          const backoff = Math.min(BACKOFF_BASE_MS * 2 ** (fails - 1), BACKOFF_CAP_MS);
+          blockedHosts.set(host, Date.now() + backoff);
+          lastError = new Error(`${host} ${res.status}`);
+          continue;
+        }
         const data = await res.json();
         if (typeof data?.translation === 'string' && data.translation.trim()) {
+          hostFailureCount.set(host, 0); // success resets backoff
           await sleep(REQUEST_GAP_MS);
           return thawPlaceholders(data.translation, map);
         }
         lastError = new Error(`${host} no translation`);
       } catch (e) {
-        blockedHosts.set(host, Date.now() + 60_000);
+        // Timeout / network error: short cooldown, don't blacklist for a full minute.
+        // Bumping failure count still escalates if the mirror is genuinely down.
+        const fails = (hostFailureCount.get(host) ?? 0) + 1;
+        hostFailureCount.set(host, fails);
+        const backoff = Math.min(BACKOFF_BASE_MS * 2 ** (fails - 1), BACKOFF_CAP_MS);
+        blockedHosts.set(host, Date.now() + backoff);
         lastError = e;
       }
     }
-    if (pass === 0) {
-      // Find the soonest cooldown end and wait for it.
+    if (pass < 2) {
       const earliest = Math.min(...HOSTS.map((h) => blockedHosts.get(h) ?? Date.now()));
       const wait = Math.max(0, earliest - Date.now());
-      if (wait > 0 && wait < 65_000) {
-        console.log(`  ↻ all mirrors cooling down, waiting ${Math.ceil(wait / 1000)}s…`);
-        await sleep(wait + 250);
+      if (wait > 0 && wait < BACKOFF_CAP_MS + 5_000) {
+        // Jitter ± 30% — keeps concurrent workers from synchronizing
+        // on the same wakeup tick.
+        const jitter = Math.floor(wait * (Math.random() * 0.6 - 0.3));
+        await sleep(Math.max(200, wait + jitter));
       } else {
         break;
       }
     }
   }
-  void now;
   throw lastError instanceof Error ? lastError : new Error('Lingva failed');
 }
 
-// ─── Recursive walk ─────────────────────────────────────────────
-// Map { sourceText -> translatedText } per language, populated as we
-// go. Reuses translations for identical source strings (the dictionary
-// has duplicates like "Save", "Cancel" across namespaces) so a 300-key
-// dictionary may only fire ~250 Lingva calls.
-async function translateTree(node, lang, cache, previous, prevSrc, path = '') {
+// Walk the source tree, classify every leaf string at `path` as either
+// "carry" (use the previous translation) or "translate" (needs Lingva).
+// Returns { carryMap: path→translated, needSet: Set<sourceText> }.
+function classifyTree(node, previous, prevSrc, path = '', acc = { carryMap: {}, needSet: new Set() }) {
   if (typeof node === 'string') {
-    // Reuse the previous translation when the source hasn't changed —
-    // saves Lingva budget on incremental runs.
     if (!force && previous && prevSrc && prevSrc[path] === node) {
       const carried = getNested(previous, path);
-      if (typeof carried === 'string') return carried;
+      if (typeof carried === 'string') { acc.carryMap[path] = carried; return acc; }
     }
-    // No sidecar yet (first auto-generated run on a hand-curated
-    // dictionary) but the key already has a translation — keep it.
-    // Hand-curated values are higher quality than the auto path, and
-    // wiping them on a script run would be a regression. The sidecar
-    // written at the end of this run lets subsequent runs spot
-    // legitimate source changes and retranslate those alone.
+    // First auto-run on a hand-curated dictionary — don't clobber the
+    // human's work, but still mark it as "carried" so we don't fire
+    // a Lingva call to overwrite it.
     if (!force && previous && !prevSrc) {
       const carried = getNested(previous, path);
-      if (typeof carried === 'string' && carried.trim()) return carried;
+      if (typeof carried === 'string' && carried.trim()) { acc.carryMap[path] = carried; return acc; }
     }
-    if (cache.has(node)) return cache.get(node);
-    process.stdout.write(`  • ${path} `);
-    try {
-      const translated = await translateOne(node, 'en', lang);
-      cache.set(node, translated);
-      console.log(`→ ${translated}`);
-      return translated;
-    } catch (e) {
-      console.log(`× ${e.message} (keeping English)`);
-      cache.set(node, node);
-      return node;
-    }
+    acc.needSet.add(node);
+    return acc;
   }
   if (Array.isArray(node)) {
-    const out = [];
-    for (let i = 0; i < node.length; i++) {
-      out.push(await translateTree(node[i], lang, cache, previous, prevSrc, `${path}[${i}]`));
-    }
-    return out;
+    for (let i = 0; i < node.length; i++) classifyTree(node[i], previous, prevSrc, `${path}[${i}]`, acc);
+    return acc;
   }
   if (node && typeof node === 'object') {
-    const out = {};
-    for (const [k, v] of Object.entries(node)) {
-      out[k] = await translateTree(v, lang, cache, previous, prevSrc, path ? `${path}.${k}` : k);
+    for (const [k, v] of Object.entries(node)) classifyTree(v, previous, prevSrc, path ? `${path}.${k}` : k, acc);
+    return acc;
+  }
+  return acc;
+}
+
+// Concurrent batch translation. Fires CONCURRENCY requests at a time,
+// keeps the rest queued. Each completed call frees a slot. Errors are
+// caught and the English source is kept so one bad string doesn't
+// abort the run.
+// Tracks which source strings hit the English fallback in this batch so
+// the sidecar can skip them — next run will then retry these instead of
+// treating the English fallback as a settled translation.
+async function translateBatch(strings, lang, cache, failedSet) {
+  const queue = [...strings];
+  let done = 0;
+  const total = queue.length;
+  async function worker() {
+    const workerStart = nextWorkerStart();
+    while (queue.length) {
+      const src = queue.shift();
+      if (cache.has(src)) { done++; continue; }
+      try {
+        const t = await translateOne(src, 'en', lang, workerStart);
+        cache.set(src, t);
+      } catch (e) {
+        cache.set(src, src);
+        failedSet.add(src);
+        console.log(`  × "${src.slice(0, 60)}" (${e.message}) — kept English`);
+      }
+      done++;
+      if (done % 25 === 0 || done === total) {
+        process.stdout.write(`  · ${done}/${total}\r`);
+      }
     }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+  process.stdout.write('\n');
+}
+
+// After the cache is populated, walk the source again and emit the
+// translated tree. Uses `carryMap` for previous-translation paths and
+// the cache (or the English source as fallback) for everything else.
+function buildTree(node, cache, carryMap, path = '') {
+  if (typeof node === 'string') {
+    if (carryMap[path] !== undefined) return carryMap[path];
+    return cache.get(node) ?? node;
+  }
+  if (Array.isArray(node)) return node.map((v, i) => buildTree(v, cache, carryMap, `${path}[${i}]`));
+  if (node && typeof node === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(node)) out[k] = buildTree(v, cache, carryMap, path ? `${path}.${k}` : k);
     return out;
   }
   return node;
@@ -256,13 +317,26 @@ async function main() {
 
     console.log(`\n=== ${lang} ===`);
     const cache = new Map();
-    const translated = await translateTree(source, lang, cache, previous, prevSrc);
+    const failedSources = new Set();
+    const { carryMap, needSet } = classifyTree(source, previous, prevSrc);
+    console.log(`  carried ${Object.keys(carryMap).length} · translating ${needSet.size} unique strings (concurrency=${CONCURRENCY})`);
+    if (needSet.size > 0) await translateBatch([...needSet], lang, cache, failedSources);
+    const translated = buildTree(source, cache, carryMap);
 
     writeFileSync(outFile, JSON.stringify(translated, null, 2) + '\n');
-    // Sidecar tracks the source value behind each translated key so
-    // the next run can skip unchanged entries.
-    writeFileSync(sidecar, JSON.stringify(sourceFlat, null, 2) + '\n');
-    console.log(`✓ Wrote ${outFile}`);
+    // Sidecar tracks the source value behind each translated key so the
+    // next run can skip unchanged entries. Paths whose translation fell
+    // back to English are deliberately excluded — leaving them out marks
+    // them as "needs translation" for the next run, which prevents the
+    // dictionary from drifting into stale English fallbacks forever.
+    const sidecarOut = {};
+    for (const [path, val] of Object.entries(sourceFlat)) {
+      if (failedSources.has(val)) continue;
+      sidecarOut[path] = val;
+    }
+    writeFileSync(sidecar, JSON.stringify(sidecarOut, null, 2) + '\n');
+    const recovered = Object.keys(sourceFlat).length - Object.keys(sidecarOut).length;
+    console.log(`✓ Wrote ${outFile}${recovered ? ` (${recovered} keys deferred — will retry next run)` : ''}`);
   }
 }
 
