@@ -705,6 +705,47 @@ export default function OrderTrackingPage() {
           )}
         </div>
       </div>
+
+      <TrackPageAdCard outletName={order.outlet?.name} />
+    </div>
+  );
+}
+
+/**
+ * Bottom-pinned advertisement card on the order tracking page.
+ *
+ * Sticky-positioned so it remains visible while the customer scrolls
+ * the page — the nearest scroll container is BottomNav's <main>, so
+ * `sticky bottom-0` pins to the viewport's lower edge.
+ *
+ * Today's content is just the outlet name styled as a banner. The
+ * component is shaped to take an `ad` prop later (image, video, gif,
+ * or rich text) once the campaign-management surface lands; the
+ * current outlet-name banner becomes the fallback when no campaign
+ * is active for the outlet.
+ */
+function TrackPageAdCard({ outletName }: { outletName?: string | null }) {
+  if (!outletName) return null;
+  return (
+    <div className="sticky bottom-0 left-0 right-0 z-30 px-3 pb-3 pt-2 bg-gradient-to-t from-slate-50 via-slate-50/95 to-transparent">
+      <div
+        className="rounded-2xl overflow-hidden shadow-card border border-slate-200 bg-gradient-to-r from-brand-700 to-brand-500 text-white"
+        style={{ minHeight: 64 }}
+      >
+        <div className="px-4 py-3 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-white/15 backdrop-blur-sm border border-white/20 flex items-center justify-center shrink-0">
+            <span className="text-base font-black">
+              {outletName.trim().charAt(0).toUpperCase()}
+            </span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] uppercase tracking-widest text-white/70 font-semibold">
+              Brought to you by
+            </p>
+            <p className="text-sm font-bold truncate">{outletName}</p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
