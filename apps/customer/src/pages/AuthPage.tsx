@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { Phone, ArrowLeft, UtensilsCrossed, User, ShieldCheck } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 
@@ -10,6 +11,7 @@ type Step = 'phone' | 'otp';
 const OTP_LENGTH = 6;
 
 export default function AuthPage() {
+  const { t } = useTranslation();
   const navigate  = useNavigate();
   const location  = useLocation();
   const { login } = useCustomerAuth();
@@ -35,19 +37,19 @@ export default function AuthPage() {
   const handleRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!/^\d{10}$/.test(phone)) {
-      toast.error('Enter a valid 10-digit number');
+      toast.error(t('auth.invalidPhone'));
       return;
     }
     setLoading(true);
     try {
       await api.post('/auth/customer/request-otp', { phone });
-      toast.success('OTP sent to your phone');
+      toast.success(t('auth.otpSentToast'));
       setStep('otp');
       setOtp(Array(OTP_LENGTH).fill(''));
       setResendIn(30);
       setTimeout(() => otpRefs.current[0]?.focus(), 50);
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to send OTP');
+      toast.error(e.response?.data?.message || t('auth.otpFailed'));
     } finally {
       setLoading(false);
     }
@@ -64,7 +66,7 @@ export default function AuthPage() {
       });
       const { user, accessToken } = res.data.data;
       login(user, accessToken);
-      toast.success(`Welcome${user.name ? `, ${user.name.split(' ')[0]}` : ''}!`);
+      toast.success(user.name ? t('auth.welcomeName', { name: user.name.split(' ')[0] }) : t('auth.welcome'));
       // Prefer the pending-scan target if the customer was sent here
       // by a QR scan (ScanResolverPage stashes it before redirecting).
       // Falls back to location.state.from for non-scan auth flows.
@@ -78,7 +80,7 @@ export default function AuthPage() {
       } catch { /* ignore — private mode etc. */ }
       navigate(dest, { replace: true });
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Invalid OTP');
+      toast.error(e.response?.data?.message || t('auth.invalidOtp'));
       setOtp(Array(OTP_LENGTH).fill(''));
       otpRefs.current[0]?.focus();
     } finally {
@@ -118,10 +120,10 @@ export default function AuthPage() {
     if (resendIn > 0) return;
     try {
       await api.post('/auth/customer/request-otp', { phone });
-      toast.success('OTP resent');
+      toast.success(t('auth.otpResent'));
       setResendIn(30);
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to resend OTP');
+      toast.error(e.response?.data?.message || t('auth.otpResendFailed'));
     }
   };
 
@@ -134,14 +136,14 @@ export default function AuthPage() {
           onClick={() => (step === 'otp' ? setStep('phone') : navigate(-1))}
           className="flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors text-sm mb-6"
         >
-          <ArrowLeft size={16} /> Back
+          <ArrowLeft size={16} /> {t('auth.back')}
         </button>
         <div className="flex items-center gap-3">
           <img src="/icon-192.png" alt="VEZEOR" className="w-10 h-10 object-contain" />
           <div>
             <p className="text-white font-black text-lg leading-tight">VEZEOR</p>
             <p className="text-slate-400 text-xs">
-              {step === 'phone' ? 'Sign in with your phone' : 'Enter the OTP we just sent'}
+              {step === 'phone' ? t('auth.signInSubtitle') : t('auth.enterOtpSubtitle')}
             </p>
           </div>
         </div>
@@ -153,20 +155,20 @@ export default function AuthPage() {
           <div className="p-6">
             {step === 'phone' && (
               <form onSubmit={handleRequestOtp} className="space-y-4">
-                <FormField label="Your Name (optional)">
+                <FormField label={t('auth.yourName')}>
                   <div className="relative">
                     <User size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                     <input
                       value={name}
                       onChange={e => setName(e.target.value)}
-                      placeholder="So we know what to call you"
+                      placeholder={t('auth.namePlaceholder')}
                       className="input pl-10"
                       autoComplete="name"
                     />
                   </div>
                 </FormField>
 
-                <FormField label="Phone Number">
+                <FormField label={t('auth.phoneLabel')}>
                   <div className="relative">
                     <Phone size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                     <input
@@ -182,10 +184,10 @@ export default function AuthPage() {
                   </div>
                 </FormField>
 
-                <SubmitBtn loading={loading} label="Send OTP" />
+                <SubmitBtn loading={loading} label={t('auth.sendOtp')} />
 
                 <p className="text-center text-[11px] text-slate-400">
-                  We'll text you a 6-digit code to confirm it's you. New numbers create a new account automatically.
+                  {t('auth.footerHint')}
                 </p>
               </form>
             )}
@@ -195,7 +197,7 @@ export default function AuthPage() {
                 <div className="flex items-center gap-3 bg-brand-50 border border-brand-100 rounded-2xl px-3 py-2.5">
                   <ShieldCheck size={18} className="text-brand-600" />
                   <div className="flex-1">
-                    <p className="text-xs text-slate-500">OTP sent to</p>
+                    <p className="text-xs text-slate-500">{t('auth.otpSentTo')}</p>
                     <p className="text-sm font-semibold text-slate-900">+91 {phone}</p>
                   </div>
                   <button
@@ -203,13 +205,13 @@ export default function AuthPage() {
                     onClick={() => setStep('phone')}
                     className="text-xs font-semibold text-brand-600 hover:underline"
                   >
-                    Change
+                    {t('auth.change')}
                   </button>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">
-                    Enter 6-digit OTP
+                    {t('auth.enterCode')}
                   </label>
                   <div className="flex gap-2 justify-between">
                     {otp.map((d, i) => (
@@ -227,7 +229,7 @@ export default function AuthPage() {
                     ))}
                   </div>
                   <p className="text-[11px] text-slate-400 mt-2">
-                    Testing mode — the default OTP is{' '}
+                    {t('auth.testingMode')}{' '}
                     <span className="font-mono font-bold text-slate-600">123789</span>.
                   </p>
                 </div>
@@ -239,18 +241,18 @@ export default function AuthPage() {
                   className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-4 rounded-2xl shadow-md disabled:opacity-50 transition-all active:scale-[.98] flex items-center justify-center gap-2"
                 >
                   {loading && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-                  Verify & Sign In
+                  {t('auth.verifyAndSignIn')}
                 </button>
 
                 <p className="text-center text-sm text-slate-500">
-                  Didn't get it?{' '}
+                  {t('auth.didntGet')}{' '}
                   <button
                     type="button"
                     onClick={resend}
                     disabled={resendIn > 0}
                     className="text-brand-600 font-semibold hover:underline disabled:text-slate-400 disabled:no-underline"
                   >
-                    {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend OTP'}
+                    {resendIn > 0 ? t('auth.resendIn', { seconds: resendIn }) : t('auth.resend')}
                   </button>
                 </p>
               </div>
@@ -259,7 +261,7 @@ export default function AuthPage() {
         </div>
 
         <p className="text-center text-xs text-slate-400 mt-4 px-4">
-          You can also browse and order as a guest — signing in links your orders to your account.
+          {t('auth.guestHint')}
         </p>
       </div>
     </div>

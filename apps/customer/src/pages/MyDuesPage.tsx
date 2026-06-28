@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, Wallet, ExternalLink } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 
@@ -27,6 +28,7 @@ type DuesRow = {
  *      later if bank reconciliation shows no payment landed.
  */
 export default function MyDuesPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { user } = useCustomerAuth();
 
@@ -41,11 +43,11 @@ export default function MyDuesPage() {
       const { data } = await api.get('/dues/me');
       setRows(data?.data ?? data ?? []);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Could not load dues');
+      toast.error(e?.response?.data?.message || t('dues.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => { fetchRows(); }, [fetchRows]);
 
@@ -59,11 +61,11 @@ export default function MyDuesPage() {
             <ChevronLeft size={20} />
           </button>
           <div className="flex-1 min-w-0">
-            <p className="text-white text-base font-bold leading-tight truncate">My Dues</p>
+            <p className="text-white text-base font-bold leading-tight truncate">{t('dues.title')}</p>
             <p className="text-brand-200 text-[11px]">
               {rows.length === 0
-                ? 'No outstanding balance'
-                : `₹${total.toFixed(2)} across ${rows.length} outlet${rows.length === 1 ? '' : 's'}`}
+                ? t('dues.noBalance')
+                : t('dues.totalSummary', { count: rows.length, amount: total.toFixed(2) })}
             </p>
           </div>
         </div>
@@ -71,12 +73,12 @@ export default function MyDuesPage() {
 
       <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
         {loading ? (
-          <div className="text-center text-sm text-slate-400 py-12">Loading…</div>
+          <div className="text-center text-sm text-slate-400 py-12">{t('common.loading')}</div>
         ) : rows.length === 0 ? (
           <div className="bg-white rounded-2xl border border-slate-100 p-8 text-center">
             <Wallet size={36} className="mx-auto text-slate-300 mb-3" />
-            <p className="text-sm text-slate-600 font-medium">You're all settled.</p>
-            <p className="text-xs text-slate-400 mt-1">Orders paid later show up here until you clear them.</p>
+            <p className="text-sm text-slate-600 font-medium">{t('dues.allSettled')}</p>
+            <p className="text-xs text-slate-400 mt-1">{t('dues.settledHint')}</p>
           </div>
         ) : (
           rows.map((r) => (
@@ -86,7 +88,7 @@ export default function MyDuesPage() {
               className="w-full text-left bg-white rounded-2xl border border-slate-100 p-4 shadow-card flex items-center gap-3"
             >
               <div className="flex-1 min-w-0">
-                <p className="font-bold text-slate-900 truncate">{r.outletName || 'Outlet'}</p>
+                <p className="font-bold text-slate-900 truncate">{r.outletName || t('dues.outletFallback')}</p>
                 <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                   {r.businessName && (
                     <p className="text-xs text-slate-500 truncate">{r.businessName}</p>
@@ -102,7 +104,7 @@ export default function MyDuesPage() {
                 </div>
               </div>
               <div className="text-right shrink-0">
-                <p className="text-xs text-slate-500">Outstanding</p>
+                <p className="text-xs text-slate-500">{t('dues.outstanding')}</p>
                 <p className="text-lg font-black text-rose-700">₹{r.currentBalance.toFixed(2)}</p>
               </div>
             </button>
@@ -135,6 +137,7 @@ function SettleDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const { t } = useTranslation();
   const [amount, setAmount] = useState(row.currentBalance.toFixed(2));
   const [busy, setBusy] = useState<null | 'razorpay' | 'upi'>(null);
   // After the customer reports the UPI deeplink intent, they need to
@@ -149,7 +152,7 @@ function SettleDialog({
   const payRazorpay = async () => {
     if (!validAmount) return;
     if (typeof window === 'undefined' || !(window as any).Razorpay) {
-      toast.error('Payment gateway not loaded — refresh and try again');
+      toast.error(t('dues.gatewayNotLoaded'));
       return;
     }
     setBusy('razorpay');
@@ -194,10 +197,10 @@ function SettleDialog({
         rzp.open();
       });
 
-      toast.success('Dues settled');
+      toast.success(t('dues.settled'));
       onDone();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || e?.message || 'Payment failed');
+      toast.error(e?.response?.data?.message || e?.message || t('dues.paymentFailed'));
     } finally {
       setBusy(null);
     }
@@ -210,7 +213,7 @@ function SettleDialog({
     if (!validAmount) return;
     const vpa = row.outletUpiId;
     if (!vpa) {
-      toast.error('This outlet has no UPI ID configured.');
+      toast.error(t('dues.noUpiConfigured'));
       return;
     }
     const params = new URLSearchParams({
@@ -229,7 +232,7 @@ function SettleDialog({
   const confirmUpi = async () => {
     if (!upiConfirm) return;
     if (!upiTxnId.trim()) {
-      toast.error('Enter the UPI transaction id from your UPI app');
+      toast.error(t('dues.enterUpiTxnId'));
       return;
     }
     setBusy('upi');
@@ -238,10 +241,10 @@ function SettleDialog({
         `/outlets/${row.outletId}/dues/me/settle/upi-reported`,
         { amount: upiConfirm.amount, upiTxnId: upiTxnId.trim() },
       );
-      toast.success('Recorded — admin will reconcile shortly');
+      toast.success(t('dues.recordedHint'));
       onDone();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to record');
+      toast.error(e?.response?.data?.message || t('dues.recordFailed'));
     } finally {
       setBusy(null);
     }
@@ -257,16 +260,16 @@ function SettleDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div>
-          <h3 className="text-lg font-bold text-slate-900">Pay dues — {row.outletName}</h3>
+          <h3 className="text-lg font-bold text-slate-900">{t('dues.payDues', { outletName: row.outletName ?? '' })}</h3>
           <p className="text-sm text-slate-600 mt-1">
-            Outstanding: <span className="font-bold text-rose-700">₹{row.currentBalance.toFixed(2)}</span>
+            {t('dues.outstanding')}: <span className="font-bold text-rose-700">₹{row.currentBalance.toFixed(2)}</span>
           </p>
         </div>
 
         {!upiConfirm && (
           <>
             <label className="block">
-              <span className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">Amount (₹)</span>
+              <span className="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-1">{t('dues.amountLabel')}</span>
               <input
                 type="number"
                 min="0"
@@ -277,7 +280,7 @@ function SettleDialog({
               />
               {!validAmount && (
                 <p className="text-[11px] text-rose-600 mt-1">
-                  Enter an amount between ₹0.01 and ₹{row.currentBalance.toFixed(2)}.
+                  {t('dues.amountHelp', { max: row.currentBalance.toFixed(2) })}
                 </p>
               )}
             </label>
@@ -288,7 +291,7 @@ function SettleDialog({
                 disabled={!validAmount || !!busy}
                 onClick={payRazorpay}
               >
-                {busy === 'razorpay' ? 'Opening…' : 'Pay with Razorpay'}
+                {busy === 'razorpay' ? t('dues.opening') : t('dues.payWithRazorpay')}
               </button>
               {row.outletUpiId ? (
                 <button
@@ -296,17 +299,17 @@ function SettleDialog({
                   disabled={!validAmount || !!busy}
                   onClick={openUpiApp}
                 >
-                  Open my UPI app <ExternalLink size={13} />
+                  {t('dues.openUpiApp')} <ExternalLink size={13} />
                 </button>
               ) : (
-                <p className="text-[11px] text-slate-400 text-center">UPI deeplink unavailable for this outlet.</p>
+                <p className="text-[11px] text-slate-400 text-center">{t('dues.upiUnavailable')}</p>
               )}
               <button
                 className="px-4 py-2.5 text-sm text-slate-500 hover:text-slate-700"
                 onClick={onClose}
                 disabled={!!busy}
               >
-                Cancel
+                {t('dues.cancel')}
               </button>
             </div>
           </>
@@ -315,13 +318,12 @@ function SettleDialog({
         {upiConfirm && (
           <>
             <p className="text-sm text-slate-700">
-              Once you've completed the UPI payment, paste the transaction id below.
-              The admin will reconcile this against the outlet's bank statement.
+              {t('dues.upiConfirmHint')}
             </p>
             <input
               type="text"
               className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"
-              placeholder="UPI transaction id"
+              placeholder={t('dues.upiTxnIdPlaceholder')}
               value={upiTxnId}
               onChange={(e) => setUpiTxnId(e.target.value)}
             />
@@ -331,14 +333,14 @@ function SettleDialog({
                 onClick={() => { setUpiConfirm(null); setUpiTxnId(''); }}
                 disabled={!!busy}
               >
-                Cancel
+                {t('dues.cancel')}
               </button>
               <button
                 className="px-4 py-2.5 rounded-xl bg-gold-500 hover:bg-gold-600 text-charcoal-900 text-sm font-bold disabled:opacity-50"
                 disabled={!!busy || !upiTxnId.trim()}
                 onClick={confirmUpi}
               >
-                {busy === 'upi' ? 'Saving…' : 'Confirm settlement'}
+                {busy === 'upi' ? t('dues.saving') : t('dues.confirmSettlement')}
               </button>
             </div>
           </>

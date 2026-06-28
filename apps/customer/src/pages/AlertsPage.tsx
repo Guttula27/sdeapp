@@ -5,6 +5,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import clsx from 'clsx';
+import { useTranslation } from 'react-i18next';
 import { useCustomerAlerts, CustomerAlert } from '../context/CustomerAlertsContext';
 
 const ICONS: Record<string, any> = {
@@ -15,17 +16,21 @@ const ICONS: Record<string, any> = {
   ORDER_SERVED:     CheckCheck,
 };
 
-function formatTime(iso: string) {
+// Pure helper — keeps the relative-time formatter out of the
+// component render path. Takes the i18n t() so the unit suffix
+// translates ("5m ago" vs "5 मिनट पहले") cleanly.
+function formatTime(iso: string, t: (k: string, opts?: any) => string) {
   const d = new Date(iso);
   const now = new Date();
   const diff = (now.getTime() - d.getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 60) return t('alerts.justNow');
+  if (diff < 3600) return t('alerts.minutesAgo', { minutes: Math.floor(diff / 60) });
+  if (diff < 86400) return t('alerts.hoursAgo', { hours: Math.floor(diff / 3600) });
   return d.toLocaleDateString();
 }
 
 export default function AlertsPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { alerts, unreadCount, markRead, markAllRead, refresh } = useCustomerAlerts();
 
@@ -39,14 +44,14 @@ export default function AlertsPage() {
           <ChevronLeft size={20} />
         </button>
         <div className="flex-1">
-          <p className="text-base font-black text-slate-900">Alerts</p>
+          <p className="text-base font-black text-slate-900">{t('alerts.title')}</p>
           <p className="text-[11px] text-slate-500">
-            {unreadCount > 0 ? `${unreadCount} unread` : 'You\'re all caught up'}
+            {unreadCount > 0 ? t('alerts.unread', { count: unreadCount }) : t('alerts.allCaughtUp')}
           </p>
         </div>
         {unreadCount > 0 && (
           <button onClick={markAllRead} className="text-xs font-bold text-brand-600">
-            Mark all read
+            {t('alerts.markAllRead')}
           </button>
         )}
       </div>
@@ -54,9 +59,9 @@ export default function AlertsPage() {
       {alerts.length === 0 ? (
         <div className="flex flex-col items-center justify-center pt-24 text-center px-6">
           <Bell size={40} className="text-slate-200 mb-3" />
-          <p className="text-sm font-bold text-slate-700">No alerts yet</p>
+          <p className="text-sm font-bold text-slate-700">{t('alerts.empty')}</p>
           <p className="text-xs text-slate-500 mt-1">
-            You'll see order updates, payment confirmations and ready-to-collect notifications here.
+            {t('alerts.emptyHint')}
           </p>
         </div>
       ) : (
@@ -71,6 +76,7 @@ export default function AlertsPage() {
 function Row({ a, onRead, onOpen }: {
   a: CustomerAlert; onRead: (id: string) => void; onOpen: (orderId: string) => void;
 }) {
+  const { t } = useTranslation();
   const Icon = ICONS[a.trigger] || Bell;
   return (
     <li
@@ -96,12 +102,12 @@ function Row({ a, onRead, onOpen }: {
         </div>
         <p className="text-xs text-slate-600 mt-0.5 line-clamp-3">{a.body}</p>
         <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-400">
-          <Clock size={10} /> {formatTime(a.createdAt)}
-          {a.sentVia === 'WHATSAPP' && <span className="text-emerald-600 font-bold">WhatsApp</span>}
-          {a.sentVia === 'BOTH' && <span className="text-emerald-600 font-bold">WhatsApp + In-app</span>}
+          <Clock size={10} /> {formatTime(a.createdAt, t)}
+          {a.sentVia === 'WHATSAPP' && <span className="text-emerald-600 font-bold">{t('alerts.whatsapp')}</span>}
+          {a.sentVia === 'BOTH' && <span className="text-emerald-600 font-bold">{t('alerts.whatsappAndInApp')}</span>}
           {a.sentVia === 'IN_APP' && a.whatsappError && (
             <span className="text-amber-600 font-bold flex items-center gap-1">
-              <AlertCircle size={10} /> WhatsApp failed
+              <AlertCircle size={10} /> {t('alerts.whatsappFailed')}
             </span>
           )}
         </div>
