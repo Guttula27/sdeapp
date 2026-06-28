@@ -8,58 +8,62 @@ import {
   RotateCcw, Star, AlertTriangle, X, ChevronDown, ChevronUp,
   MessageSquare, IndianRupee, ArrowLeft, Heart, Plus,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 import { useCustomerAlerts } from '../context/CustomerAlertsContext';
 
 /* ── constants ───────────────────────────────────────────── */
+// Labels come from the i18n dictionary (track.step* / track.statusTitle* /
+// track.statusSub*). Icons + tailwind classes stay here as visual config —
+// they don't translate.
 const STEPS = [
-  { status: 'CREATED',         label: 'Placed',          icon: CheckCircle2, color: 'bg-blue-500' },
-  { status: 'QUEUED',          label: 'Queued',          icon: Clock,        color: 'bg-yellow-500' },
-  { status: 'PREPARING',       label: 'Preparing',       icon: ChefHat,      color: 'bg-brand-700' },
-  { status: 'READY',           label: 'Ready',           icon: Bell,         color: 'bg-emerald-500' },
-  { status: 'OUT_FOR_SERVICE', label: 'On its way',      icon: Package2,     color: 'bg-teal-500' },
-  { status: 'SERVED',          label: 'Served',          icon: Package2,     color: 'bg-slate-500' },
+  { status: 'CREATED',         icon: CheckCircle2, color: 'bg-blue-500' },
+  { status: 'QUEUED',          icon: Clock,        color: 'bg-yellow-500' },
+  { status: 'PREPARING',       icon: ChefHat,      color: 'bg-brand-700' },
+  { status: 'READY',           icon: Bell,         color: 'bg-emerald-500' },
+  { status: 'OUT_FOR_SERVICE', icon: Package2,     color: 'bg-teal-500' },
+  { status: 'SERVED',          icon: Package2,     color: 'bg-slate-500' },
 ];
 
-const STATUS_MSG: Record<string, { title: string; sub: string; emoji: string; cls: string }> = {
-  CREATED:         { title: 'Order placed!',          sub: 'Waiting for confirmation.',         emoji: '🎉', cls: 'bg-blue-50 border-blue-200 text-blue-800' },
-  QUEUED:          { title: 'Order queued',           sub: 'Sending to kitchen now.',           emoji: '✅', cls: 'bg-yellow-50 border-yellow-200 text-yellow-800' },
-  PREPARING:       { title: 'Chef is cooking…',       sub: 'Sit tight — almost there!',         emoji: '🍳', cls: 'bg-brand-50 border-brand-200 text-brand-800' },
-  READY:           { title: 'Your food is ready!',    sub: 'Please collect your order.',        emoji: '🔔', cls: 'bg-emerald-50 border-emerald-200 text-emerald-800' },
-  OUT_FOR_SERVICE: { title: 'On its way to you',      sub: 'Our staff is bringing it across.',  emoji: '🚶', cls: 'bg-teal-50 border-teal-200 text-teal-800' },
-  SERVED:          { title: 'Enjoy your meal!',       sub: 'Hope you love every bite.',         emoji: '😋', cls: 'bg-slate-50 border-slate-200 text-slate-700' },
-  CANCELLED:       { title: 'Order cancelled',        sub: 'Contact the outlet for help.',      emoji: '❌', cls: 'bg-red-50 border-red-200 text-red-700' },
-  DISPUTED:        { title: 'Dispute raised',         sub: 'The outlet is reviewing your concern.', emoji: '⚠️', cls: 'bg-amber-50 border-amber-200 text-amber-800' },
-  RESOLVED:        { title: 'Dispute resolved',       sub: 'Thanks for your patience.',         emoji: '✅', cls: 'bg-sky-50 border-sky-200 text-sky-800' },
-  FOR_REFUND:      { title: 'Refund pending',         sub: 'Your refund is being processed.',   emoji: '💸', cls: 'bg-pink-50 border-pink-200 text-pink-800' },
-  REFUND_COMPLETE: { title: 'Refund complete',        sub: 'Money returned to your account.',   emoji: '✅', cls: 'bg-purple-50 border-purple-200 text-purple-800' },
-  // Parcel-path counterpart to OUT_FOR_SERVICE — kitchen is done,
-  // parcel station is staging it. Customer sees a "ready for pickup"
-  // line. Missing this map entry was crashing the whole tracking
-  // page when a parcel order hit this state.
-  READY_FOR_PICKUP: { title: 'Ready for pickup',      sub: 'Collect it at the parcel desk.',    emoji: '🛍️', cls: 'bg-emerald-50 border-emerald-200 text-emerald-800' },
+// Visual style per status — emoji + tailwind class. Title/sub strings
+// live under track.statusTitle{status} / track.statusSub{status} in the
+// dictionary. READY_FOR_PICKUP is the parcel-path counterpart to
+// OUT_FOR_SERVICE and was missing a style entry before; the render
+// would crash on `msg.cls` when a parcel order hit that state.
+const STATUS_STYLE: Record<string, { emoji: string; cls: string }> = {
+  CREATED:         { emoji: '🎉', cls: 'bg-blue-50 border-blue-200 text-blue-800' },
+  QUEUED:          { emoji: '✅', cls: 'bg-yellow-50 border-yellow-200 text-yellow-800' },
+  PREPARING:       { emoji: '🍳', cls: 'bg-brand-50 border-brand-200 text-brand-800' },
+  READY:           { emoji: '🔔', cls: 'bg-emerald-50 border-emerald-200 text-emerald-800' },
+  OUT_FOR_SERVICE: { emoji: '🚶', cls: 'bg-teal-50 border-teal-200 text-teal-800' },
+  SERVED:          { emoji: '😋', cls: 'bg-slate-50 border-slate-200 text-slate-700' },
+  CANCELLED:       { emoji: '❌', cls: 'bg-red-50 border-red-200 text-red-700' },
+  DISPUTED:        { emoji: '⚠️', cls: 'bg-amber-50 border-amber-200 text-amber-800' },
+  RESOLVED:        { emoji: '✅', cls: 'bg-sky-50 border-sky-200 text-sky-800' },
+  FOR_REFUND:      { emoji: '💸', cls: 'bg-pink-50 border-pink-200 text-pink-800' },
+  REFUND_COMPLETE: { emoji: '✅', cls: 'bg-purple-50 border-purple-200 text-purple-800' },
+  READY_FOR_PICKUP:{ emoji: '🛍️', cls: 'bg-emerald-50 border-emerald-200 text-emerald-800' },
+};
+const FALLBACK_STATUS_STYLE = { emoji: '⏳', cls: 'bg-slate-50 border-slate-200 text-slate-700' };
+
+// Dispute status visual config. Label lives under track.disputeStatus{status}.
+const DISPUTE_STATUS_STYLE: Record<string, { cls: string }> = {
+  OPEN:      { cls: 'bg-red-100 text-red-700 border-red-200' },
+  REVIEWING: { cls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  RESOLVED:  { cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+  CLOSED:    { cls: 'bg-slate-100 text-slate-600 border-slate-200' },
 };
 
-// Last-line fallback for any future status the server adds before
-// the client catches up. The render would otherwise crash on the
-// next `msg.cls` / `msg.emoji` dereference.
-const FALLBACK_STATUS_MSG = { title: 'Order in progress', sub: 'Hang tight — we\'ll update you shortly.', emoji: '⏳', cls: 'bg-slate-50 border-slate-200 text-slate-700' };
-
-const DISPUTE_STATUS_STYLE: Record<string, { cls: string; label: string }> = {
-  OPEN:      { cls: 'bg-red-100 text-red-700 border-red-200',    label: 'Open' },
-  REVIEWING: { cls: 'bg-amber-100 text-amber-700 border-amber-200', label: 'Under Review' },
-  RESOLVED:  { cls: 'bg-emerald-100 text-emerald-700 border-emerald-200', label: 'Resolved' },
-  CLOSED:    { cls: 'bg-slate-100 text-slate-600 border-slate-200', label: 'Closed' },
-};
-
-function elapsed(t: string) {
-  const m = Math.floor((Date.now() - new Date(t).getTime()) / 60000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m} min`;
+// Returns the elapsed-time chip text via the i18n t() function so the
+// "min" / "h" suffix can translate alongside the rest of the page.
+function elapsed(iso: string, t: (k: string, opts?: any) => string) {
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (m < 1) return t('track.elapsedJustNow');
+  if (m < 60) return t('track.elapsedMin', { count: m });
   const h = Math.floor(m / 60);
   const rest = m % 60;
-  return rest ? `${h}h ${rest}m` : `${h}h`;
+  return rest ? t('track.elapsedHoursMin', { hours: h, minutes: rest }) : t('track.elapsedHours', { hours: h });
 }
 
 // Locale-aware "26 Jun, 7:14 PM" — used on terminal orders where a
@@ -84,7 +88,7 @@ type TrackRow =
   | { kind: 'item'; item: any }
   | { kind: 'bundle'; bundleId: string; name: string; children: any[]; quantity: number; totalPrice: number };
 
-function groupBundles(items: any[]): TrackRow[] {
+function groupBundles(items: any[], comboFallback: string): TrackRow[] {
   const out: TrackRow[] = [];
   const seen = new Map<string, Extract<TrackRow, { kind: 'bundle' }>>();
   for (const it of items) {
@@ -94,7 +98,7 @@ function groupBundles(items: any[]): TrackRow[] {
         bundle = {
           kind: 'bundle',
           bundleId: it.bundleId,
-          name: it.bundleParent?.name || 'Combo',
+          name: it.bundleParent?.name || comboFallback,
           children: [],
           quantity: 0,
           totalPrice: 0,
@@ -119,6 +123,7 @@ function groupBundles(items: any[]): TrackRow[] {
 
 /* ── component ───────────────────────────────────────────── */
 export default function OrderTrackingPage() {
+  const { t } = useTranslation();
   const { orderId } = useParams();
   const navigate    = useNavigate();
   const [searchParams] = useSearchParams();
@@ -193,7 +198,7 @@ export default function OrderTrackingPage() {
 
   /* ── raise dispute ──────────────────────────────────────── */
   const raiseDispute = async () => {
-    if (!description.trim()) { toast.error('Please describe the issue'); return; }
+    if (!description.trim()) { toast.error(t('track.describeIssueRequired')); return; }
     setSubmitting(true);
     try {
       const { data } = await api.post('/disputes', {
@@ -206,9 +211,9 @@ export default function OrderTrackingPage() {
       setShowDisputeForm(false);
       setDescription('');
       setClaimAmount('');
-      toast.success('Dispute raised — the outlet will review it shortly');
+      toast.success(t('track.disputeRaised'));
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to raise dispute');
+      toast.error(e.response?.data?.message || t('track.disputeFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -221,13 +226,13 @@ export default function OrderTrackingPage() {
         <div className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center mx-auto">
           <AlertTriangle size={22} />
         </div>
-        <p className="mt-4 text-base font-bold text-slate-900">Can't load this order</p>
+        <p className="mt-4 text-base font-bold text-slate-900">{t('track.cantLoad')}</p>
         <p className="mt-1 text-sm text-slate-500">{loadError}</p>
         <button
           onClick={() => navigate('/')}
           className="mt-6 w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-3 rounded-2xl text-sm shadow"
         >
-          Start over
+          {t('track.startOver')}
         </button>
       </div>
     </div>
@@ -238,7 +243,7 @@ export default function OrderTrackingPage() {
     <div className="h-dvh flex items-center justify-center bg-gradient-to-br from-brand-500 to-brand-400">
       <div className="text-center">
         <div className="w-14 h-14 border-4 border-white/40 border-t-white rounded-full animate-spin mx-auto" />
-        <p className="text-white/80 text-sm mt-3 font-medium">Loading order…</p>
+        <p className="text-white/80 text-sm mt-3 font-medium">{t('track.loadingOrder')}</p>
       </div>
     </div>
   );
@@ -247,7 +252,19 @@ export default function OrderTrackingPage() {
   const isDone      = ['SERVED', 'CANCELLED', 'DISPUTED', 'RESOLVED', 'REFUND_COMPLETE'].includes(order.status);
   const canDispute  = order.status === 'SERVED' && disputes.every(d => ['RESOLVED', 'CLOSED'].includes(d.status));
   const activeDispute = disputes.find(d => !['RESOLVED', 'CLOSED'].includes(d.status));
-  const msg         = STATUS_MSG[order.status] || FALLBACK_STATUS_MSG;
+  // Compose the status message from the i18n dictionary keyed by
+  // status (track.statusTitle{S} / track.statusSub{S}). The visual
+  // style (emoji + tailwind class) stays in the local STATUS_STYLE
+  // map. A status the client doesn't know about falls through to
+  // statusTitleFallback / statusSubFallback / FALLBACK_STATUS_STYLE.
+  const _msgStyle = STATUS_STYLE[order.status] || FALLBACK_STATUS_STYLE;
+  const _msgTitle = STATUS_STYLE[order.status]
+    ? t(`track.statusTitle${order.status}`)
+    : t('track.statusTitleFallback');
+  const _msgSub = STATUS_STYLE[order.status]
+    ? t(`track.statusSub${order.status}`)
+    : t('track.statusSubFallback');
+  const msg = { ..._msgStyle, title: _msgTitle, sub: _msgSub };
   // Bill status — for postpaid orders we surface a Pending / Paid pill
   // so the diner sees clearly that the tab is still open even after
   // food is served. Feedback prompts are gated on isPaid so the diner
@@ -269,12 +286,12 @@ export default function OrderTrackingPage() {
           <ArrowLeft size={15} />
         </button>
 
-        <p className="text-slate-400 text-xs uppercase tracking-widest font-semibold mb-2">Order</p>
+        <p className="text-slate-400 text-xs uppercase tracking-widest font-semibold mb-2">{t('track.order')}</p>
         <p className="text-3xl font-black text-white">{order.orderNumber}</p>
         <div className="flex items-center justify-center gap-2 mt-2 flex-wrap">
           {order.tokenNumber != null && (
             <span className="inline-flex items-center gap-1 text-amber-300 bg-amber-500/15 border border-amber-500/30 rounded-full px-3 py-1">
-              <span className="text-[10px] uppercase tracking-widest font-bold">Token</span>
+              <span className="text-[10px] uppercase tracking-widest font-bold">{t('track.token')}</span>
               <span className="text-base font-black">#{order.tokenNumber}</span>
             </span>
           )}
@@ -286,8 +303,8 @@ export default function OrderTrackingPage() {
                 it to the actual placement timestamp instead. */}
             <Clock size={11} />
             {isDone
-              ? `Placed ${formatPlacedAt(order.createdAt)}`
-              : `Placed ${elapsed(order.createdAt)} ago`}
+              ? t('track.placedFixed', { when: formatPlacedAt(order.createdAt) })
+              : t('track.placedAgo', { when: elapsed(order.createdAt, t) })}
           </span>
           {order.isPostpaid && (
             <span
@@ -297,13 +314,13 @@ export default function OrderTrackingPage() {
                   ? 'text-emerald-200 bg-emerald-500/15 border-emerald-400/40'
                   : 'text-amber-200 bg-amber-500/15 border-amber-400/40',
               )}
-              title={isPaid ? 'Payment received — order closed' : 'Bill is still open at the table'}
+              title={isPaid ? t('track.billPaidTitle') : t('track.billPendingTitle')}
             >
-              Bill {isPaid ? 'paid' : 'pending'}
+              {isPaid ? t('track.billPaid') : t('track.billPending')}
             </span>
           )}
         </div>
-        {order.table && <p className="text-slate-400 text-sm mt-1">Table {order.table.number}</p>}
+        {order.table && <p className="text-slate-400 text-sm mt-1">{t('track.tableLabel', { number: order.table.number })}</p>}
 
         {/* Postpaid open-tab: let the customer add more items to the same
             order from anywhere — they don't need to re-scan the table QR. */}
@@ -312,7 +329,7 @@ export default function OrderTrackingPage() {
             onClick={() => navigate(`/order?outlet=${order.outletId}&table=${order.tableId}`)}
             className="mt-3 inline-flex items-center gap-1.5 text-xs bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-full font-bold shadow"
           >
-            <Plus size={12} /> Add items to this tab
+            <Plus size={12} /> {t('track.addItemsToTab')}
           </button>
         )}
 
@@ -331,7 +348,7 @@ export default function OrderTrackingPage() {
             })}
             className="mt-3 inline-flex items-center gap-1.5 text-xs bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-full font-bold shadow animate-pulse"
           >
-            <IndianRupee size={12} /> Pay now · ₹{Number(order.totalAmount).toFixed(2)}
+            <IndianRupee size={12} /> {t('track.payNowAmount', { amount: Number(order.totalAmount).toFixed(2) })}
           </button>
         )}
 
@@ -340,7 +357,7 @@ export default function OrderTrackingPage() {
             onClick={() => navigate('/')}
             className="absolute top-4 right-4 flex items-center gap-1.5 text-xs bg-white/15 hover:bg-white/25 text-white px-3 py-1.5 rounded-full transition-colors font-medium"
           >
-            <RotateCcw size={12} /> New Order
+            <RotateCcw size={12} /> {t('track.newOrder')}
           </button>
         )}
       </div>
@@ -370,7 +387,7 @@ export default function OrderTrackingPage() {
                         <step.icon size={14} className={done ? 'text-white' : 'text-slate-300'} />
                       </div>
                       <p className={clsx('text-[9px] font-semibold text-center leading-tight', done ? 'text-slate-700' : 'text-slate-400')}>
-                        {step.label}
+                        {t(`track.step${step.status}`)}
                       </p>
                     </div>
                   );
@@ -398,8 +415,8 @@ export default function OrderTrackingPage() {
         {/* ── Per-item progress ─────────────────────────────────── */}
         <div className="bg-white rounded-3xl shadow-card overflow-hidden">
           <div className="px-5 pt-5 pb-3">
-            <p className="text-sm font-bold text-slate-800">Your Items</p>
-            <p className="text-xs text-slate-400 mt-0.5">Live progress and feedback for each dish</p>
+            <p className="text-sm font-bold text-slate-800">{t('track.yourItems')}</p>
+            <p className="text-xs text-slate-400 mt-0.5">{t('track.yourItemsHint')}</p>
           </div>
           <div className="px-5 pb-5 space-y-3">
             {(() => {
@@ -414,7 +431,7 @@ export default function OrderTrackingPage() {
                 // the customer sees the combo as one block with each
                 // sub-item's progress (cooking / ready / served) shown
                 // beneath. Standalone items render as before.
-                return groupBundles(items).map((row: TrackRow) => {
+                return groupBundles(items, t('track.comboFallback')).map((row: TrackRow) => {
                   if (row.kind === 'bundle') {
                     return (
                       <div
@@ -425,7 +442,7 @@ export default function OrderTrackingPage() {
                           <p className="text-sm font-bold text-brand-900">
                             {row.quantity}× {row.name}
                             <span className="text-[10px] font-semibold text-brand-700 ml-1.5">
-                              · {row.children.length} items
+                              {t('track.bundleItemsCount', { count: row.children.length })}
                             </span>
                           </p>
                         </div>
@@ -474,8 +491,8 @@ export default function OrderTrackingPage() {
                 const courseNum = Number(key);
                 const isAnytime = courseNum === 0;
                 const courseLabel = isAnytime
-                  ? 'Anytime'
-                  : (labels[key] || `Course ${key}`);
+                  ? t('track.courseAnytime')
+                  : (labels[key] || t('track.courseLabel', { number: key }));
                 const isActive = !isAnytime && courseNum === active;
                 const isHeld = !isAnytime && courseNum > active;
                 return (
@@ -484,12 +501,12 @@ export default function OrderTrackingPage() {
                       <p className="text-[11px] font-bold uppercase tracking-wider text-slate-600">{courseLabel}</p>
                       {isActive && (
                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
-                          Now serving
+                          {t('track.nowServing')}
                         </span>
                       )}
                       {isHeld && (
                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">
-                          Up next
+                          {t('track.upNext')}
                         </span>
                       )}
                     </div>
@@ -520,7 +537,7 @@ export default function OrderTrackingPage() {
             className="w-full flex items-center justify-between px-5 py-4"
           >
             <p className="text-sm font-bold text-slate-800">
-              Bill summary
+              {t('track.billSummary')}
               {' '}·{' '}
               <span className="text-brand-600">₹{Number(order.totalAmount).toFixed(2)}</span>
             </p>
@@ -529,7 +546,7 @@ export default function OrderTrackingPage() {
 
           {showItems && (
             <div className="px-5 pb-5 border-t border-slate-100 pt-4 space-y-1">
-              {groupBundles(order.items || []).map((row: any) => {
+              {groupBundles(order.items || [], t('track.comboFallback')).map((row: any) => {
                 if (row.kind === 'bundle') {
                   return (
                     <div key={`b-${row.bundleId}`} className="text-xs text-slate-500">
@@ -542,7 +559,7 @@ export default function OrderTrackingPage() {
                       <ul className="pl-3 mt-0.5 space-y-0.5">
                         {row.children.map((c: any) => (
                           <li key={c.id} className="text-[11px] text-slate-400 truncate">
-                            • {c.item?.name || 'Item'}
+                            • {c.item?.name || t('track.itemFallback')}
                             {c.variant?.name ? ` (${c.variant.name})` : ''} × {c.quantity}
                           </li>
                         ))}
@@ -561,20 +578,20 @@ export default function OrderTrackingPage() {
               })}
               <div className="border-t border-slate-100 mt-2 pt-2 space-y-1">
                 <div className="flex justify-between text-xs text-slate-400">
-                  <span>Subtotal</span><span>₹{Number(order.subtotal).toFixed(2)}</span>
+                  <span>{t('track.subtotal')}</span><span>₹{Number(order.subtotal).toFixed(2)}</span>
                 </div>
                 {/* Discount breakdown — each coupon / reward gets its own
                     line so the customer sees what cut the bill. */}
                 {(() => {
                   const coupons = ((order as any).couponUsages || [])
                     .map((c: any) => ({
-                      label: c.coupon?.code ? `Coupon (${c.coupon.code})` : (c.coupon?.name || 'Coupon'),
+                      label: c.coupon?.code ? t('track.couponLabel', { code: c.coupon.code }) : (c.coupon?.name || t('track.couponFallback')),
                       amount: Number(c.discountAmount),
                     }))
                     .filter((c: any) => c.amount > 0);
                   const rewards = ((order as any).rewardTransactions || [])
                     .map((r: any) => ({
-                      label: `Reward (${Math.abs(r.points)} pts)`,
+                      label: t('track.rewardLabel', { points: Math.abs(r.points) }),
                       amount: Number(r.amountValue || 0),
                     }))
                     .filter((r: any) => r.amount > 0);
@@ -586,7 +603,7 @@ export default function OrderTrackingPage() {
                     ...coupons,
                     ...rewards,
                     ...(leftover > 0
-                      ? [{ label: explicit > 0 ? 'Other discount' : 'Discount', amount: leftover }]
+                      ? [{ label: explicit > 0 ? t('track.otherDiscount') : t('track.discount'), amount: leftover }]
                       : []),
                   ];
                   return lines.map((l, i) => (
@@ -598,28 +615,28 @@ export default function OrderTrackingPage() {
                 })()}
                 {Number((order as any).parcelAmount || 0) > 0 && (
                   <div className="flex justify-between text-xs text-slate-400">
-                    <span>Parcel charge</span>
+                    <span>{t('track.parcelCharge')}</span>
                     <span>₹{Number((order as any).parcelAmount).toFixed(2)}</span>
                   </div>
                 )}
                 {Number(order.taxAmount) > 0 && (
                   <>
                     <div className="flex justify-between text-xs text-slate-400">
-                      <span>SGST</span>
+                      <span>{t('track.sgst')}</span>
                       <span>₹{Number((order as any).sgstAmount ?? Number(order.taxAmount) / 2).toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between text-xs text-slate-400">
-                      <span>CGST</span>
+                      <span>{t('track.cgst')}</span>
                       <span>₹{Number((order as any).cgstAmount ?? Number(order.taxAmount) / 2).toFixed(2)}</span>
                     </div>
                   </>
                 )}
                 <div className="flex justify-between font-black text-slate-900 text-sm pt-1 border-t border-slate-100">
-                  <span>Total</span><span>₹{Number(order.totalAmount).toFixed(2)}</span>
+                  <span>{t('track.total')}</span><span>₹{Number(order.totalAmount).toFixed(2)}</span>
                 </div>
                 {Number(order.discountAmount || 0) > 0 && (
                   <p className="text-center text-[11px] font-bold text-emerald-700 mt-1">
-                    You saved ₹{Number(order.discountAmount).toFixed(2)} on this bill
+                    {t('track.youSaved', { amount: Number(order.discountAmount).toFixed(2) })}
                   </p>
                 )}
               </div>
@@ -640,7 +657,7 @@ export default function OrderTrackingPage() {
                 <div className="w-8 h-8 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
                   <AlertTriangle size={16} />
                 </div>
-                <p className="text-sm font-bold text-slate-800">Describe Your Issue</p>
+                <p className="text-sm font-bold text-slate-800">{t('track.describeIssue')}</p>
               </div>
               <button onClick={() => setShowDisputeForm(false)} className="text-slate-400 hover:text-slate-600">
                 <X size={18} />
@@ -649,13 +666,13 @@ export default function OrderTrackingPage() {
 
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
-                What went wrong? <span className="text-red-500">*</span>
+                {t('track.whatWentWrong')} <span className="text-red-500">*</span>
               </label>
               <textarea
                 value={description}
                 onChange={e => setDescription(e.target.value)}
                 rows={4}
-                placeholder="e.g. Wrong item delivered, food was cold, item missing from order…"
+                placeholder={t('track.issuePlaceholder')}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-400 transition-all resize-none"
                 maxLength={500}
               />
@@ -664,7 +681,7 @@ export default function OrderTrackingPage() {
 
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
-                Claim Amount (₹) <span className="text-slate-400 font-normal normal-case">— optional</span>
+                {t('track.claimAmount')} <span className="text-slate-400 font-normal normal-case">{t('track.claimAmountOptional')}</span>
               </label>
               <div className="relative">
                 <IndianRupee size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
@@ -678,7 +695,7 @@ export default function OrderTrackingPage() {
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-400 transition-all"
                 />
               </div>
-              <p className="text-xs text-slate-400 mt-1">Amount you'd like refunded or compensated</p>
+              <p className="text-xs text-slate-400 mt-1">{t('track.claimAmountHint')}</p>
             </div>
 
             <div className="flex gap-2 pt-1">
@@ -686,7 +703,7 @@ export default function OrderTrackingPage() {
                 onClick={() => setShowDisputeForm(false)}
                 className="flex-1 bg-slate-100 text-slate-700 font-semibold py-3 rounded-2xl text-sm hover:bg-slate-200 transition-colors"
               >
-                Cancel
+                {t('track.cancel')}
               </button>
               <button
                 onClick={raiseDispute}
@@ -694,7 +711,7 @@ export default function OrderTrackingPage() {
                 className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-2xl text-sm disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
               >
                 {submitting && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-                Submit Dispute
+                {t('track.submitDispute')}
               </button>
             </div>
           </div>
@@ -707,7 +724,7 @@ export default function OrderTrackingPage() {
               onClick={() => navigate('/')}
               className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-4 rounded-2xl shadow-lg text-base"
             >
-              <RotateCcw size={17} /> Start New Order
+              <RotateCcw size={17} /> {t('track.startNewOrder')}
             </button>
           )}
 
@@ -717,13 +734,13 @@ export default function OrderTrackingPage() {
               onClick={() => setShowDisputeForm(true)}
               className="w-full flex items-center justify-center gap-2 bg-white border border-amber-300 text-amber-700 font-semibold py-3.5 rounded-2xl text-sm hover:bg-amber-50 transition-colors"
             >
-              <AlertTriangle size={15} /> Raise a Dispute
+              <AlertTriangle size={15} /> {t('track.raiseDispute')}
             </button>
           )}
 
           {isDone && order.status !== 'CANCELLED' && !showDisputeForm && (
             <button className="w-full flex items-center justify-center gap-2 bg-white border border-slate-200 text-slate-700 font-semibold py-3.5 rounded-2xl text-sm hover:bg-slate-50 transition-colors">
-              <Star size={15} className="text-amber-500" /> Rate Your Experience
+              <Star size={15} className="text-amber-500" /> {t('track.rateExperience')}
             </button>
           )}
         </div>
@@ -757,6 +774,7 @@ export default function OrderTrackingPage() {
  * <main>, so `sticky bottom-0` pins to the viewport's lower edge.
  */
 function TrackPageAdCard({ outletName }: { outletName?: string | null }) {
+  const { t } = useTranslation();
   const storageKey = 'pwa.track.adCollapsed';
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try { return sessionStorage.getItem(storageKey) === '1'; } catch { return false; }
@@ -768,8 +786,6 @@ function TrackPageAdCard({ outletName }: { outletName?: string | null }) {
 
   if (!outletName) return null;
 
-  // Collapsed → small pill anchored to the bottom-right. Less visual
-  // load than the full banner but still an obvious re-entry point.
   if (collapsed) {
     return (
       <div className="sticky bottom-0 left-0 right-0 z-30 px-3 pb-3 pt-1 pointer-events-none">
@@ -778,7 +794,7 @@ function TrackPageAdCard({ outletName }: { outletName?: string | null }) {
             onClick={() => setCollapsedPersisted(false)}
             className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 bg-white border border-slate-200 rounded-full px-3 py-1.5 shadow-card hover:bg-slate-50"
           >
-            <ChevronUp size={12} /> Show ad
+            <ChevronUp size={12} /> {t('track.showAd')}
           </button>
         </div>
       </div>
@@ -791,14 +807,9 @@ function TrackPageAdCard({ outletName }: { outletName?: string | null }) {
         className="relative rounded-2xl overflow-hidden shadow-card border border-amber-200 bg-amber-50/60"
         style={{ minHeight: 64 }}
       >
-        {/* Dismiss → collapse to pill. The "Sponsored" badge was
-            deliberately dropped while the slot is still showing the
-            outlet's own name (an outlet promoting itself isn't a
-            paid ad). When real campaign creatives ship, re-introduce
-            the label so the slot reads as commercial. */}
         <button
           onClick={() => setCollapsedPersisted(true)}
-          aria-label="Hide ad"
+          aria-label={t('track.hideAd')}
           className="absolute top-1.5 right-1.5 p-1 text-slate-400 hover:text-slate-700"
         >
           <X size={13} />
@@ -812,7 +823,7 @@ function TrackPageAdCard({ outletName }: { outletName?: string | null }) {
           </div>
           <div className="flex-1 min-w-0 pr-12">
             <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">
-              Brought to you by
+              {t('track.broughtToYouBy')}
             </p>
             <p className="text-sm font-bold text-slate-800 truncate">{outletName}</p>
           </div>
@@ -824,13 +835,17 @@ function TrackPageAdCard({ outletName }: { outletName?: string | null }) {
 
 /* ── Active dispute status card ──────────────────────────── */
 function DisputeStatusCard({ dispute }: { dispute: any }) {
+  const { t } = useTranslation();
   const style = DISPUTE_STATUS_STYLE[dispute.status] || DISPUTE_STATUS_STYLE.OPEN;
+  const label = DISPUTE_STATUS_STYLE[dispute.status]
+    ? t(`track.disputeStatus${dispute.status}`)
+    : t('track.disputeStatusOPEN');
   return (
     <div className={clsx('rounded-3xl border p-5 space-y-3', style.cls)}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <AlertTriangle size={16} />
-          <p className="text-sm font-bold">Dispute {style.label}</p>
+          <p className="text-sm font-bold">{t('track.disputeBadge', { label })}</p>
         </div>
         <span className="text-xs font-semibold opacity-75">
           {new Date(dispute.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
@@ -839,12 +854,12 @@ function DisputeStatusCard({ dispute }: { dispute: any }) {
 
       <div className="bg-white/60 rounded-2xl p-3 space-y-2">
         <div>
-          <p className="text-xs font-semibold opacity-70 mb-0.5">Your concern</p>
+          <p className="text-xs font-semibold opacity-70 mb-0.5">{t('track.yourConcern')}</p>
           <p className="text-sm font-medium leading-relaxed">{dispute.description}</p>
         </div>
         {dispute.claimAmount && (
           <div>
-            <p className="text-xs font-semibold opacity-70 mb-0.5">Claim amount</p>
+            <p className="text-xs font-semibold opacity-70 mb-0.5">{t('track.claimAmountLabel')}</p>
             <p className="text-sm font-bold">₹{Number(dispute.claimAmount).toFixed(0)}</p>
           </div>
         )}
@@ -852,7 +867,7 @@ function DisputeStatusCard({ dispute }: { dispute: any }) {
 
       {dispute.status === 'REVIEWING' && (
         <p className="text-xs opacity-75 flex items-center gap-1.5">
-          <MessageSquare size={12} /> The outlet is reviewing your case — you'll be notified of the outcome.
+          <MessageSquare size={12} /> {t('track.outletReviewing')}
         </p>
       )}
     </div>
@@ -862,26 +877,22 @@ function DisputeStatusCard({ dispute }: { dispute: any }) {
 /* ── Per-item progress row ───────────────────────────────── */
 type ItemStatus = 'PENDING_VERIFICATION' | 'PENDING' | 'PREPARING' | 'READY' | 'SERVED' | 'CANCELLED';
 
-const ITEM_STEPS: { key: ItemStatus; label: string; color: string }[] = [
-  { key: 'PENDING',   label: 'Queued',    color: '#94a3b8' },
-  { key: 'PREPARING', label: 'Cooking',   color: '#0B4245' },
-  { key: 'READY',     label: 'Ready',     color: '#10b981' },
-  { key: 'SERVED',    label: 'Served',    color: '#14b8a6' },
+const ITEM_STEPS: { key: ItemStatus; color: string }[] = [
+  { key: 'PENDING',   color: '#94a3b8' },
+  { key: 'PREPARING', color: '#0B4245' },
+  { key: 'READY',     color: '#10b981' },
+  { key: 'SERVED',    color: '#14b8a6' },
 ];
 
-// Neutral fallback used both as the explicit PENDING_VERIFICATION
-// badge (postpaid adds where the service desk hasn't confirmed yet)
-// AND as a safety net for any future status the server adds before
-// the client catches up — better than crashing the whole page render.
-const FALLBACK_BADGE = { bg: '#fefce8', text: '#854d0e', border: '#fde68a', label: 'Awaiting confirmation', emoji: '🕒' };
+const FALLBACK_BADGE = { bg: '#fefce8', text: '#854d0e', border: '#fde68a', emoji: '🕒' };
 
-const ITEM_BADGE: Record<ItemStatus, { bg: string; text: string; border: string; label: string; emoji: string }> = {
+const ITEM_BADGE: Record<ItemStatus, { bg: string; text: string; border: string; emoji: string }> = {
   PENDING_VERIFICATION: FALLBACK_BADGE,
-  PENDING:   { bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', label: 'Queued',    emoji: '⏳' },
-  PREPARING: { bg: '#e8efef', text: '#04181a', border: '#D2E5DF', label: 'Cooking',   emoji: '🍳' },
-  READY:     { bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', label: 'Ready',     emoji: '🔔' },
-  SERVED:    { bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', label: 'Served',    emoji: '✓'  },
-  CANCELLED: { bg: '#fff1f2', text: '#be123c', border: '#fecdd3', label: 'Cancelled', emoji: '✕'  },
+  PENDING:   { bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', emoji: '⏳' },
+  PREPARING: { bg: '#e8efef', text: '#04181a', border: '#D2E5DF', emoji: '🍳' },
+  READY:     { bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', emoji: '🔔' },
+  SERVED:    { bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', emoji: '✓'  },
+  CANCELLED: { bg: '#fff1f2', text: '#be123c', border: '#fecdd3', emoji: '✕'  },
 };
 
 function ItemProgressRow({ item, onReviewSaved, feedbackUnlocked = true }: {
@@ -893,12 +904,16 @@ function ItemProgressRow({ item, onReviewSaved, feedbackUnlocked = true }: {
   // diner is asked for feedback only after they've closed out.
   feedbackUnlocked?: boolean;
 }) {
+  const { t } = useTranslation();
   const status = (item.status || 'PENDING') as ItemStatus;
   // Always have a valid badge object so a server-added status the
   // client doesn't know yet doesn't blow up the whole page render
   // (which is what made the tracking page go blank on postpaid
   // table orders before service desk confirmation).
   const badge = ITEM_BADGE[status] || FALLBACK_BADGE;
+  const badgeLabel = ITEM_BADGE[status]
+    ? t(`track.itemBadge${status}`)
+    : t('track.itemBadgeFallback');
   const idx = ITEM_STEPS.findIndex(s => s.key === status);
   const isServed = status === 'SERVED';
   const canReview = isServed && feedbackUnlocked;
@@ -928,7 +943,7 @@ function ItemProgressRow({ item, onReviewSaved, feedbackUnlocked = true }: {
         </div>
         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
           style={{ background: badge.bg, color: badge.text, border: `1px solid ${badge.border}` }}>
-          <span className="mr-0.5">{badge.emoji}</span> {badge.label}
+          <span className="mr-0.5">{badge.emoji}</span> {badgeLabel}
         </span>
       </div>
 
@@ -947,14 +962,14 @@ function ItemProgressRow({ item, onReviewSaved, feedbackUnlocked = true }: {
           {ITEM_STEPS.map((step, i) => (
             <span key={step.key} className="text-[9px] font-semibold"
               style={{ color: i <= idx ? step.color : '#94a3b8' }}>
-              {step.label}
+              {t(`track.itemStep${step.key}`)}
             </span>
           ))}
         </div>
       )}
       {isPreConfirmation && (
         <p className="text-[11px] text-amber-700 mt-2 leading-snug">
-          Service desk hasn't confirmed this line yet. It'll move to the kitchen as soon as they do.
+          {t('track.preConfirmationHint')}
         </p>
       )}
 
@@ -966,7 +981,7 @@ function ItemProgressRow({ item, onReviewSaved, feedbackUnlocked = true }: {
       )}
       {isServed && !feedbackUnlocked && (
         <p className="mt-3 pt-3 border-t border-slate-100 text-[11px] text-slate-500">
-          We'll ask for your rating once the bill is settled.
+          {t('track.feedbackLockedHint')}
         </p>
       )}
     </div>
@@ -975,13 +990,16 @@ function ItemProgressRow({ item, onReviewSaved, feedbackUnlocked = true }: {
 
 /* ── Resolved dispute card ───────────────────────────────── */
 function ResolvedDisputeCard({ dispute }: { dispute: any }) {
-  const style = DISPUTE_STATUS_STYLE[dispute.status];
+  const { t } = useTranslation();
+  const label = DISPUTE_STATUS_STYLE[dispute.status]
+    ? t(`track.disputeStatus${dispute.status}`)
+    : '';
   return (
     <div className="bg-white rounded-3xl shadow-card p-5 space-y-3 border border-slate-100">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <CheckCircle2 size={16} className="text-emerald-600" />
-          <p className="text-sm font-bold text-slate-800">Dispute {style?.label}</p>
+          <p className="text-sm font-bold text-slate-800">{t('track.disputeBadge', { label })}</p>
         </div>
         <span className="text-xs text-slate-400">
           {new Date(dispute.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
@@ -989,12 +1007,12 @@ function ResolvedDisputeCard({ dispute }: { dispute: any }) {
       </div>
       <div className="bg-slate-50 rounded-2xl p-3 space-y-2">
         <div>
-          <p className="text-xs text-slate-400 font-semibold mb-0.5">Your concern</p>
+          <p className="text-xs text-slate-400 font-semibold mb-0.5">{t('track.yourConcern')}</p>
           <p className="text-sm text-slate-700">{dispute.description}</p>
         </div>
         {dispute.resolution && (
           <div className="border-t border-slate-100 pt-2">
-            <p className="text-xs text-emerald-600 font-semibold mb-0.5">Outlet resolution</p>
+            <p className="text-xs text-emerald-600 font-semibold mb-0.5">{t('track.outletResolution')}</p>
             <p className="text-sm text-slate-700">{dispute.resolution}</p>
           </div>
         )}
@@ -1004,6 +1022,7 @@ function ResolvedDisputeCard({ dispute }: { dispute: any }) {
 }
 
 function FavoriteHeart({ itemId, initial }: { itemId: string; initial?: boolean }) {
+  const { t } = useTranslation();
   const [fav, setFav] = useState(!!initial);
   const [busy, setBusy] = useState(false);
   return (
@@ -1023,7 +1042,7 @@ function FavoriteHeart({ itemId, initial }: { itemId: string; initial?: boolean 
         'w-6 h-6 rounded-md flex items-center justify-center transition-colors',
         fav ? 'text-red-500' : 'text-slate-300 hover:text-red-400',
       )}
-      title={fav ? 'Remove from favourites' : 'Add to favourites'}
+      title={fav ? t('track.favouriteRemove') : t('track.favouriteAdd')}
     >
       <Heart size={12} fill={fav ? 'currentColor' : 'none'} />
     </button>
@@ -1032,6 +1051,7 @@ function FavoriteHeart({ itemId, initial }: { itemId: string; initial?: boolean 
 
 /* ── Inline rating UI used inside ItemProgressRow once item is SERVED ── */
 function RateItemRow({ orderItem, onSaved }: { orderItem: any; onSaved: (review: any) => void }) {
+  const { t } = useTranslation();
   const existing = orderItem.review;
   const [rating, setRating]   = useState<number>(existing?.rating ?? 0);
   const [comment, setComment] = useState<string>(existing?.comment ?? '');
@@ -1042,7 +1062,7 @@ function RateItemRow({ orderItem, onSaved }: { orderItem: any; onSaved: (review:
     (comment.trim() || '') !== ((existing?.comment ?? '').trim() || '');
 
   const save = async () => {
-    if (!rating) { toast.error('Pick a rating first'); return; }
+    if (!rating) { toast.error(t('track.ratingFailed')); return; }
     setBusy(true);
     try {
       const { data } = await api.post(`/order-items/${orderItem.id}/review`, {
@@ -1050,9 +1070,9 @@ function RateItemRow({ orderItem, onSaved }: { orderItem: any; onSaved: (review:
         comment: comment.trim() || null,
       });
       onSaved(data.data);
-      toast.success(existing ? 'Review updated' : 'Thanks for the rating!');
+      toast.success(existing ? t('track.ratingUpdated') : t('track.ratingThanks'));
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to save review');
+      toast.error(e.response?.data?.message || t('track.ratingSaveFailed'));
     } finally {
       setBusy(false);
     }
@@ -1061,7 +1081,7 @@ function RateItemRow({ orderItem, onSaved }: { orderItem: any; onSaved: (review:
   return (
     <div className="space-y-2">
       <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1">
-        <Star size={11} className="text-amber-500" fill="currentColor" /> Rate this dish
+        <Star size={11} className="text-amber-500" fill="currentColor" /> {t('track.rateThisDish')}
       </p>
       <div className="flex items-center gap-1">
         {[1, 2, 3, 4, 5].map((n) => (
@@ -1072,7 +1092,7 @@ function RateItemRow({ orderItem, onSaved }: { orderItem: any; onSaved: (review:
             onMouseLeave={() => setHover(0)}
             onClick={() => setRating(n)}
             className="p-0.5"
-            aria-label={`${n} stars`}
+            aria-label={t('track.ratingStarsAria', { count: n })}
           >
             <Star
               size={22}
@@ -1081,18 +1101,20 @@ function RateItemRow({ orderItem, onSaved }: { orderItem: any; onSaved: (review:
             />
           </button>
         ))}
-        {rating > 0 && <span className="ml-1 text-xs font-bold text-slate-500">{rating}/5</span>}
+        {rating > 0 && <span className="ml-1 text-xs font-bold text-slate-500">{t('track.starsOfFive', { rating })}</span>}
       </div>
       <textarea
         value={comment}
         onChange={(e) => setComment(e.target.value)}
-        placeholder="Optional comment for the outlet…"
+        placeholder={t('track.ratingPlaceholder')}
         rows={2}
         className="w-full text-xs rounded-xl border border-slate-200 px-3 py-2 focus:outline-none focus:border-brand-400 resize-none"
       />
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] text-slate-400">
-          {existing ? `Last updated ${new Date(existing.updatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}` : 'Not rated yet'}
+          {existing
+            ? t('track.lastUpdated', { date: new Date(existing.updatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) })
+            : t('track.notRatedYet')}
         </span>
         <button
           type="button"
@@ -1100,7 +1122,7 @@ function RateItemRow({ orderItem, onSaved }: { orderItem: any; onSaved: (review:
           onClick={save}
           className="text-xs font-bold bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:bg-slate-300 text-white px-4 py-2 rounded-xl"
         >
-          {busy ? 'Saving…' : existing ? 'Update' : 'Submit'}
+          {busy ? t('track.saving') : existing ? t('track.update') : t('track.submit')}
         </button>
       </div>
 
@@ -1108,7 +1130,7 @@ function RateItemRow({ orderItem, onSaved }: { orderItem: any; onSaved: (review:
       {existing?.replyText && (
         <div className="bg-slate-50 rounded-xl p-3 border-l-4 border-brand-300">
           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-0.5">
-            Reply{existing.replyBy?.name ? ` from ${existing.replyBy.name}` : ''}
+            {existing.replyBy?.name ? t('track.replyFrom', { name: existing.replyBy.name }) : t('track.replyLabel')}
           </p>
           <p className="text-xs text-slate-700 leading-relaxed">{existing.replyText}</p>
         </div>
@@ -1118,7 +1140,7 @@ function RateItemRow({ orderItem, onSaved }: { orderItem: any; onSaved: (review:
       {existing?.paybackPayment && (
         <div className="bg-emerald-50 rounded-xl p-3 flex items-center gap-2">
           <span className="text-[11px] font-bold text-emerald-700">
-            Refund received · ₹{Number(existing.paybackPayment.amount).toFixed(2)} via {existing.paybackPayment.mode}
+            {t('track.refundReceived', { amount: Number(existing.paybackPayment.amount).toFixed(2), mode: existing.paybackPayment.mode })}
           </span>
         </div>
       )}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { ChevronLeft, ShoppingCart, X, Plus, Minus, Network, Store, Trash2, Loader2, ShieldCheck, ChevronRight, Heart, Clock } from 'lucide-react';
 import api from '../services/api';
@@ -49,6 +50,7 @@ function priceFor(item: ClusterItem, variantId: string | null) {
 }
 
 export default function ClusterPage() {
+  const { t } = useTranslation();
   const { publicCode } = useParams<{ publicCode: string }>();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -112,11 +114,11 @@ export default function ClusterPage() {
       // the item detail page and is now coming back.
       if (bundle.cluster?.id) setCart(readClusterCart(bundle.cluster.id));
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Cluster not found');
+      toast.error(e?.response?.data?.message || t('cluster.notFound'));
     } finally {
       setLoading(false);
     }
-  }, [publicCode, preselectOutletId]);
+  }, [publicCode, preselectOutletId, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -211,7 +213,7 @@ export default function ClusterPage() {
   const toggleFavoriteInModal = async () => {
     if (!detailContext) return;
     if (!isLoggedIn) {
-      toast('Sign in to save favourites', { icon: '🔐' });
+      toast(t('cluster.signInForFav'), { icon: '🔐' });
       return;
     }
     const item = detailContext.item;
@@ -222,7 +224,7 @@ export default function ClusterPage() {
       else      await api.delete(`/users/me/favorites/${item.id}`);
     } catch {
       setDetailContext((d) => (d ? { ...d, item: { ...d.item, isFavorite: !next } } : d));
-      toast.error('Failed to update favourite');
+      toast.error(t('cluster.favUpdateFailed'));
     }
   };
 
@@ -230,7 +232,7 @@ export default function ClusterPage() {
   const checkout = async (useBypass: boolean) => {
     if (!cluster || cart.length === 0) return;
     if (!isLoggedIn || !token) {
-      toast.error('Please log in to place an order');
+      toast.error(t('cluster.loginToPlace'));
       navigate('/auth');
       return;
     }
@@ -258,7 +260,7 @@ export default function ClusterPage() {
       if (useBypass) {
         await api.post(`/cluster-orders/${clusterOrderId}/bypass`);
         setCart([]); setCartOpen(false);
-        toast.success('Order placed (test bypass) — your outlets are preparing');
+        toast.success(t('cluster.orderPlacedBypass'));
         navigate(`/dashboard?clusterOrderId=${clusterOrderId}`);
         return;
       }
@@ -272,19 +274,19 @@ export default function ClusterPage() {
           razorpaySignature: 'stub_signature',
         });
         setCart([]); setCartOpen(false);
-        toast.success('Order placed — your outlets are preparing');
+        toast.success(t('cluster.orderPlaced'));
         navigate(`/dashboard?clusterOrderId=${clusterOrderId}`);
         return;
       }
 
       if (typeof window === 'undefined' || !(window as any).Razorpay) {
-        toast.error('Payment gateway not loaded — refresh and try again');
+        toast.error(t('cluster.gatewayNotLoaded'));
         return;
       }
       await new Promise<void>((resolve, reject) => {
         const rzp = new (window as any).Razorpay({
           key: rp.keyId, order_id: rp.orderId, amount: rp.amount, currency: rp.currency,
-          name: cluster.name, description: `Cluster order ${cart.length} items`,
+          name: cluster.name, description: t('cluster.rzpDescription', { count: cart.length }),
           prefill: user ? { name: user.name, contact: user.phone, email: user.email || undefined } : undefined,
           notes: { clusterOrderId },
           theme: { color: '#0B4245' },
@@ -304,10 +306,10 @@ export default function ClusterPage() {
       });
 
       setCart([]); setCartOpen(false);
-      toast.success('Order placed — your outlets are preparing');
+      toast.success(t('cluster.orderPlaced'));
       navigate(`/dashboard?clusterOrderId=${clusterOrderId}`);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || e.message || 'Could not place order');
+      toast.error(e?.response?.data?.message || e.message || t('cluster.couldNotPlace'));
     } finally {
       setPaying(false);
     }
@@ -323,7 +325,7 @@ export default function ClusterPage() {
       </div>
     );
   }
-  if (!cluster) return <div className="p-6 text-center text-slate-500">Cluster not found</div>;
+  if (!cluster) return <div className="p-6 text-center text-slate-500">{t('cluster.notFoundCentered')}</div>;
 
   return (
     // h-full fills the BottomNav <main> (which is now the scroll
@@ -345,7 +347,7 @@ export default function ClusterPage() {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <Network size={11} className="text-gold-300 shrink-0" />
-            <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-gold-300">Cluster</span>
+            <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-gold-300">{t('cluster.label')}</span>
           </div>
           <p className="text-base font-black text-white leading-tight truncate">{cluster.name}</p>
         </div>
@@ -356,18 +358,18 @@ export default function ClusterPage() {
       {bundleFromCache && (
         <div className="bg-amber-50 border-b border-amber-200 px-3 py-1.5 flex items-center gap-2 text-[11px] text-amber-800">
           <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-          <span className="font-bold">Cached menu</span>
+          <span className="font-bold">{t('cluster.cachedMenu')}</span>
           {bundleCachedAt && (
             <span className="opacity-70">
-              · last updated {Math.max(1, Math.round((Date.now() - bundleCachedAt) / 60000))}m ago
+              {t('cluster.cachedLastUpdated', { minutes: Math.max(1, Math.round((Date.now() - bundleCachedAt) / 60000)) })}
             </span>
           )}
           <button
             onClick={() => load()}
             className="ml-auto text-amber-900 font-bold underline underline-offset-2"
-            title="Try to refresh from the network"
+            title={t('cluster.refreshTitle')}
           >
-            Refresh
+            {t('cluster.refresh')}
           </button>
         </div>
       )}
@@ -421,7 +423,7 @@ export default function ClusterPage() {
           have one consistent mental model. ─────────────────────── */}
       {activeOutlet && activeOutlet.menus.length > 1 && (
         <div className="bg-gradient-to-r from-slate-900 to-slate-800 px-3 py-2 border-b border-slate-700/50">
-          <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-1">Menu</p>
+          <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-1">{t('cluster.menu')}</p>
           <div className="flex gap-2 overflow-x-auto scrollbar-hide">
             {activeOutlet.menus.map((m) => {
               const active = activeMenuId === m.id;
@@ -450,7 +452,7 @@ export default function ClusterPage() {
       {visibleCategories.length > 0 && (
         <div className="bg-white border-b border-slate-100">
           {activeOutlet && activeOutlet.menus.length > 1 && (
-            <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-400 px-3 pt-2 -mb-1">Categories</p>
+            <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-400 px-3 pt-2 -mb-1">{t('cluster.categories')}</p>
           )}
           <div className="flex gap-2 px-3 py-2 overflow-x-auto scrollbar-hide">
             {visibleCategories.map((c) => {
@@ -479,9 +481,9 @@ export default function ClusterPage() {
           brand left-edge stripe + brand-50 background + brand text.
           Items use the outlined Add button pattern. */}
       {!activeOutlet ? (
-        <div className="text-center text-slate-500 py-10">No outlet selected</div>
+        <div className="text-center text-slate-500 py-10">{t('cluster.noOutlet')}</div>
       ) : !activeCategory ? (
-        <div className="text-center text-slate-500 py-10">No items in this menu</div>
+        <div className="text-center text-slate-500 py-10">{t('cluster.noItemsInMenu')}</div>
       ) : (
         <div className="flex gap-0 mt-0">
           {/* LEFT rail — Subcategories with thumbnail + label. Skipped
@@ -533,7 +535,7 @@ export default function ClusterPage() {
           {/* RIGHT pane — items in active subcategory */}
           <main className="flex-1 min-w-0 px-3 py-3 space-y-2">
             {itemsInSub.length === 0 ? (
-              <p className="text-sm text-slate-400 italic text-center py-12">Currently there are no items available</p>
+              <p className="text-sm text-slate-400 italic text-center py-12">{t('cluster.noItemsAvailable')}</p>
             ) : (
               itemsInSub.map((item) => {
                 const qty = cart
@@ -559,7 +561,7 @@ export default function ClusterPage() {
                       <p className="text-sm font-bold text-slate-900 line-clamp-2 break-words">{item.name}</p>
                       {item.shortDescription && <p className="text-[11px] text-slate-400 truncate">{item.shortDescription}</p>}
                       <p className="text-sm font-black text-brand-700 mt-0.5">
-                        {item.variants?.length ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}
+                        {item.variants?.length ? t('cluster.fromPrice', { price: lowPrice.toFixed(0) }) : `₹${lowPrice.toFixed(0)}`}
                       </p>
                     </div>
                     {/* Outlined Add — white surface + brand border + brand text */}
@@ -572,7 +574,7 @@ export default function ClusterPage() {
                           : 'bg-white border-brand-500 text-brand-700 hover:bg-brand-50')
                       }
                     >
-                      {qty > 0 ? <>Add · {qty} <ChevronRight size={12} /></> : <>+ Add</>}
+                      {qty > 0 ? <>{t('cluster.addQty', { qty })} <ChevronRight size={12} /></> : <>{t('cluster.addPlus')}</>}
                     </button>
                   </div>
                 );
@@ -600,16 +602,16 @@ export default function ClusterPage() {
                 <ShoppingCart size={14} />
               </span>
               <span className="text-xs font-bold leading-tight">
-                {cartQty} item{cartQty !== 1 ? 's' : ''}
+                {t('cluster.itemsCount', { count: cartQty })}
               </span>
             </span>
             {/* Right section — total + outlets + arrow CTA */}
             <span className="flex-1 px-3 py-2.5 flex items-center gap-2 text-left">
               <span className="flex-1 min-w-0">
                 <span className="block text-[10px] opacity-80 leading-tight">
-                  from {new Set(cart.map((c) => c.outletId)).size} outlet{new Set(cart.map((c) => c.outletId)).size !== 1 ? 's' : ''}
+                  {t('cluster.fromOutlets', { count: new Set(cart.map((c) => c.outletId)).size })}
                 </span>
-                <span className="block text-sm font-black leading-tight">₹{cartTotal.toFixed(0)} <span className="text-[10px] opacity-80 font-semibold">Cart Total</span></span>
+                <span className="block text-sm font-black leading-tight">₹{cartTotal.toFixed(0)} <span className="text-[10px] opacity-80 font-semibold">{t('cluster.cartTotal')}</span></span>
               </span>
               <ChevronRight size={18} className="opacity-90" />
             </span>
@@ -624,7 +626,7 @@ export default function ClusterPage() {
           <div className="bg-white w-full rounded-t-3xl flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
               <div>
-                <p className="text-sm font-bold text-slate-900">Your Cart</p>
+                <p className="text-sm font-bold text-slate-900">{t('cluster.yourCart')}</p>
                 <p className="text-[11px] text-slate-500">{cluster.name}</p>
               </div>
               <button onClick={() => setCartOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center" disabled={paying}>
@@ -655,7 +657,7 @@ export default function ClusterPage() {
                                 {l.toppings.map((t) => t.label).join(' · ')}
                               </p>
                             )}
-                            <p className="text-[11px] text-slate-500">₹{l.unitPrice.toFixed(0)} each</p>
+                            <p className="text-[11px] text-slate-500">{t('cluster.eachPrice', { price: l.unitPrice.toFixed(0) })}</p>
                           </div>
                           <div className="flex items-center gap-1">
                             <button onClick={() => upsertLine(l, -1)} className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center">
@@ -679,13 +681,13 @@ export default function ClusterPage() {
 
             <div className="border-t border-slate-100 px-4 py-3 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-600">Total</span>
+                <span className="text-sm text-slate-600">{t('cluster.total')}</span>
                 <span className="text-base font-black text-slate-900">₹{cartTotal.toFixed(0)}</span>
               </div>
               <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2 flex items-center gap-2">
                 <ShieldCheck size={14} className="text-indigo-600 shrink-0" />
                 <p className="text-[11px] text-indigo-700 leading-tight">
-                  Payment is split per outlet via Razorpay. One payment, multiple receipts.
+                  {t('cluster.splitNote')}
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -694,7 +696,7 @@ export default function ClusterPage() {
                   className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-3 rounded-xl text-sm inline-flex items-center justify-center gap-2 disabled:opacity-50"
                   disabled={paying}
                 >
-                  Test Bypass
+                  {t('cluster.testBypass')}
                 </button>
                 <button
                   onClick={() => checkout(false)}
@@ -702,7 +704,7 @@ export default function ClusterPage() {
                   disabled={paying}
                 >
                   {paying ? <Loader2 size={14} className="animate-spin" /> : null}
-                  Pay ₹{cartTotal.toFixed(0)}
+                  {t('cluster.payAmount', { amount: cartTotal.toFixed(0) })}
                 </button>
               </div>
             </div>
@@ -723,7 +725,7 @@ export default function ClusterPage() {
             const next = upsertCartLine(prev, line, qty);
             writeClusterCart(cluster.id, next);
             setCart(next);
-            toast.success(`Added ${qty} × ${line.itemName}`);
+            toast.success(t('cluster.addedToast', { qty, name: line.itemName }));
             setDetailContext(null);
           }}
         />
@@ -762,6 +764,7 @@ function ClusterItemDetailModal({
   onToggleFavorite?: () => void;
   onAdded: (qty: number, line: ClusterCartLine) => void;
 }) {
+  const { t } = useTranslation();
   void clusterId; // unused locally — parent persists; keep param for clarity
   const [variantId, setVariantId] = useState<string>(item.variants?.[0]?.id || '');
   const [qty, setQty] = useState(1);
@@ -819,8 +822,8 @@ function ClusterItemDetailModal({
           {onToggleFavorite && (
             <button
               onClick={onToggleFavorite}
-              aria-label={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
-              title={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+              aria-label={item.isFavorite ? t('item.favouriteRemove') : t('item.favouriteAdd')}
+              title={item.isFavorite ? t('item.favouriteRemove') : t('item.favouriteAdd')}
               className="absolute top-3 right-14 w-9 h-9 bg-white/90 rounded-full flex items-center justify-center shadow"
             >
               <Heart
@@ -856,7 +859,7 @@ function ClusterItemDetailModal({
 
           {item.variants?.length > 0 && (
             <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Choose size</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">{t('cluster.chooseSize')}</p>
               <div className="space-y-1.5">
                 {item.variants.map((v: any) => {
                   const checked = variantId === v.id;
@@ -879,7 +882,7 @@ function ClusterItemDetailModal({
 
           {item.itemToppings?.length > 0 && (
             <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Toppings</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">{t('cluster.toppings')}</p>
               <div className="space-y-2">
                 {item.itemToppings.map((link: any) => {
                   const sel = topSel[link.toppingId] || { selected: false };
@@ -897,7 +900,7 @@ function ClusterItemDetailModal({
                         />
                         <span className="text-sm font-semibold text-slate-800 flex-1">
                           {link.topping?.name}
-                          {link.isRequired && <span className="ml-1 text-[10px] text-red-500">required</span>}
+                          {link.isRequired && <span className="ml-1 text-[10px] text-red-500">{t('cluster.required')}</span>}
                         </span>
                         {!hasOptions && <span className="text-xs font-bold text-slate-700">+₹{linkAdd.toFixed(0)}</span>}
                       </label>
@@ -927,7 +930,7 @@ function ClusterItemDetailModal({
 
           {/* Quantity */}
           <div className="flex items-center justify-between bg-slate-50 rounded-xl p-3">
-            <p className="text-sm font-semibold text-slate-700">Quantity</p>
+            <p className="text-sm font-semibold text-slate-700">{t('cluster.quantity')}</p>
             <div className="flex items-center gap-3">
               <button onClick={() => setQty((q) => Math.max(1, q - 1))} className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center"><Minus size={14} /></button>
               <span className="w-6 text-center font-bold text-sm">{qty}</span>
@@ -959,7 +962,7 @@ function ClusterItemDetailModal({
             disabled={!item.isAvailable}
             className="flex-1 bg-gold-500 hover:bg-gold-600 text-charcoal-900 py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Add {qty} to cart · ₹{lineTotal.toFixed(0)}
+            {t('cluster.addToCartCta', { qty, amount: lineTotal.toFixed(0) })}
           </button>
         </div>
       </div>
