@@ -19,9 +19,56 @@
   },
   "profile": {
     "title": "Profile",
+    "avatarChange": "Change",
+    "avatarRemove": "Remove photo",
+    "defaultName": "You",
+
+    "identity": "Identity",
+    "name": "Name",
+    "phone": "Phone",
+    "phoneIsLoginHint": "This is your login phone.",
+    "email": "Email",
+    "emailPlaceholder": "optional",
+
+    "myDues": "My Dues",
+    "myDuesSub": "Outstanding pay-later balances & quick settle",
+
+    "alerts": "Alerts",
+    "ringtone": "Ringtone",
+    "preview": "Preview",
+    "volumeLabel": "Volume — {{value}}%",
+    "vibrateOnAlert": "Vibrate on alert",
+    "test": "Test",
+    "testVibrationTitle": "Test vibration now",
+    "vibrateNotSupportedIos": "iOS does not support web vibration",
+    "vibrateNotSupported": "Not supported on this device",
+    "vibrateHint": "If you don't feel the test buzz: check that your phone isn't on silent / Do Not Disturb / power-saving mode, and that vibration is enabled in the system settings.",
+
     "preferredLanguage": "Preferred language",
     "preferredLanguageHint": "Item names, order details, and outlet info will be shown in this language.",
-    "signOut": "Sign out"
+
+    "preferredUpiApp": "Preferred UPI app",
+    "preferredUpiAppHint": "Used as the default at checkout.",
+
+    "yourQR": "Your customer QR",
+    "yourQRSignInHint": "Sign in to see your QR",
+    "yourQRDescription": "Outlets can scan this to identify you and apply tags.",
+
+    "saveChanges": "Save changes",
+    "signOut": "Sign out",
+
+    "saved": "Profile saved",
+    "saveFailed": "Failed to save",
+    "signedOut": "Signed out",
+    "languageUpdated": "Language updated",
+    "languageUpdateFailed": "Failed to update language",
+
+    "imageTypeError": "Only JPG / PNG / WebP",
+    "imageTooLarge": "Image too large (>1 MB)",
+    "imageReadFail": "Could not read image",
+    "vibrateBlocked": "Vibration was blocked — check OS sound/vibration settings",
+    "vibrateSuccess": "Buzz! Did you feel it?",
+    "vibrateFailed": "Vibration failed to fire"
   },
   "menu": {
     "search": "Search the menu",

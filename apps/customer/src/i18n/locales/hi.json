@@ -19,9 +19,56 @@
   },
   "profile": {
     "title": "प्रोफ़ाइल",
+    "avatarChange": "बदलें",
+    "avatarRemove": "फ़ोटो हटाएँ",
+    "defaultName": "आप",
+
+    "identity": "पहचान",
+    "name": "नाम",
+    "phone": "फ़ोन",
+    "phoneIsLoginHint": "यह आपका लॉगिन फ़ोन है।",
+    "email": "ईमेल",
+    "emailPlaceholder": "वैकल्पिक",
+
+    "myDues": "मेरे बकाया",
+    "myDuesSub": "बाद में भुगतान के बकाया और त्वरित निपटान",
+
+    "alerts": "अलर्ट",
+    "ringtone": "रिंगटोन",
+    "preview": "सुनें",
+    "volumeLabel": "वॉल्यूम — {{value}}%",
+    "vibrateOnAlert": "अलर्ट पर वाइब्रेट करें",
+    "test": "परखें",
+    "testVibrationTitle": "अभी वाइब्रेशन परखें",
+    "vibrateNotSupportedIos": "iOS पर वेब वाइब्रेशन समर्थित नहीं है",
+    "vibrateNotSupported": "इस डिवाइस पर समर्थित नहीं",
+    "vibrateHint": "अगर परीक्षण वाइब्रेशन महसूस न हो: देखें कि आपका फ़ोन साइलेंट / Do Not Disturb / पावर-सेविंग मोड पर तो नहीं है, और सिस्टम सेटिंग में वाइब्रेशन चालू है।",
+
     "preferredLanguage": "पसंदीदा भाषा",
     "preferredLanguageHint": "आइटम के नाम, ऑर्डर विवरण और आउटलेट जानकारी इस भाषा में दिखाई जाएगी।",
-    "signOut": "साइन आउट"
+
+    "preferredUpiApp": "पसंदीदा UPI ऐप",
+    "preferredUpiAppHint": "चेकआउट पर डिफ़ॉल्ट के रूप में उपयोग होगा।",
+
+    "yourQR": "आपका कस्टमर QR",
+    "yourQRSignInHint": "अपना QR देखने के लिए साइन इन करें",
+    "yourQRDescription": "आउटलेट इसे स्कैन करके आपकी पहचान कर सकते हैं और टैग लागू कर सकते हैं।",
+
+    "saveChanges": "बदलाव सहेजें",
+    "signOut": "साइन आउट",
+
+    "saved": "प्रोफ़ाइल सहेजी गई",
+    "saveFailed": "सहेजने में विफल",
+    "signedOut": "साइन आउट हो गए",
+    "languageUpdated": "भाषा अपडेट हो गई",
+    "languageUpdateFailed": "भाषा अपडेट करने में विफल",
+
+    "imageTypeError": "केवल JPG / PNG / WebP",
+    "imageTooLarge": "तस्वीर बहुत बड़ी है (>1 MB)",
+    "imageReadFail": "तस्वीर पढ़ने में विफल",
+    "vibrateBlocked": "वाइब्रेशन ब्लॉक हो गया — OS साउंड/वाइब्रेशन सेटिंग देखें",
+    "vibrateSuccess": "बज़! क्या आपको महसूस हुआ?",
+    "vibrateFailed": "वाइब्रेशन फायर नहीं हुआ"
   },
   "menu": {
     "search": "मेन्यू खोजें",
