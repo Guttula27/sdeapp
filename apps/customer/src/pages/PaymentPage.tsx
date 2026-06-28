@@ -6,6 +6,7 @@ import {
   ArrowLeft, CheckCircle2, XCircle, Store, Smartphone, CreditCard,
   Landmark, Wallet, ChevronRight, AlertCircle, Settings, FlaskConical,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 
@@ -67,6 +68,7 @@ type ActiveGateway = {
 } | null;
 
 export default function PaymentPage() {
+  const { t } = useTranslation();
   const { user } = useCustomerAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -152,7 +154,7 @@ export default function PaymentPage() {
   }, [isBillNow, state?.outletId, JSON.stringify(state?.cart), state?.isParcel, user?.id, couponId, rewardPoints]);
 
   if (!state || (!isBillNow && !state.cart?.length)) {
-    return <p className="p-6 text-sm text-slate-500">Nothing to pay for.</p>;
+    return <p className="p-6 text-sm text-slate-500">{t('payment.nothingToPay')}</p>;
   }
 
   // ── Freebie helpers ────────────────────────────────────────────────
@@ -226,7 +228,7 @@ export default function PaymentPage() {
 
   const launchUpi = () => {
     const link = buildUpiLink(defaultUpiApp);
-    if (!link) { toast.error('Outlet does not have a UPI ID configured'); return; }
+    if (!link) { toast.error(t('payment.outletNoUpi')); return; }
     setLaunched(true);
     window.location.href = link;
   };
@@ -285,7 +287,7 @@ export default function PaymentPage() {
       try { sessionStorage.removeItem(`cart-${state.outletId}`); } catch {}
       navigate(`/receipt/${data.data.id}`, { replace: true });
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to create order');
+      toast.error(e.response?.data?.message || t('payment.createOrderFailed'));
     } finally {
       setCreating(false);
     }
@@ -303,7 +305,7 @@ export default function PaymentPage() {
   // PENDING until Razorpay's handler returns a verified signature.
   const finishGateway = async () => {
     if (typeof window === 'undefined' || !(window as any).Razorpay) {
-      toast.error('Payment gateway not loaded — refresh and try again');
+      toast.error(t('payment.gatewayNotLoaded'));
       return;
     }
     const modeInfo = GATEWAY_MODES.find(m => m.key === gatewayMode)!;
@@ -378,7 +380,7 @@ export default function PaymentPage() {
 
       navigate(`/receipt/${orderId}`, { replace: true });
     } catch (e: any) {
-      toast.error(e.response?.data?.message || e.message || `Paid via ${gateway?.providerName ?? 'Gateway'} failed`);
+      toast.error(e.response?.data?.message || e.message || (gateway?.providerName ? t('payment.paidViaFailed', { provider: gateway.providerName }) : t('payment.paidViaFailedDefault')));
     } finally {
       setCreating(false);
     }
@@ -407,10 +409,10 @@ export default function PaymentPage() {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-bold text-slate-800 truncate">{outletName}</p>
-        <p className="text-[11px] text-slate-400 truncate">{upiId || 'UPI ID not set'}</p>
+        <p className="text-[11px] text-slate-400 truncate">{upiId || t('payment.upiIdNotSet')}</p>
       </div>
       <div className="text-right">
-        <p className="text-[11px] text-slate-400">Amount</p>
+        <p className="text-[11px] text-slate-400">{t('payment.amount')}</p>
         <p className="text-base font-black text-slate-900">₹{amount.toFixed(2)}</p>
       </div>
     </div>
@@ -422,8 +424,8 @@ export default function PaymentPage() {
   const TipPicker = () => (
     <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-bold text-slate-800">Add a tip</p>
-        <p className="text-xs text-slate-400">Optional</p>
+        <p className="text-sm font-bold text-slate-800">{t('payment.addTip')}</p>
+        <p className="text-xs text-slate-400">{t('payment.tipOptional')}</p>
       </div>
       <div className="grid grid-cols-4 gap-2">
         {[null, 5, 10, 15].map((pct) => (
@@ -437,29 +439,29 @@ export default function PaymentPage() {
                 : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300',
             )}
           >
-            {pct == null ? 'None' : `${pct}%`}
+            {pct == null ? t('payment.tipNone') : `${pct}%`}
           </button>
         ))}
       </div>
       <div>
-        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Custom amount (₹)</label>
+        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">{t('payment.tipCustomLabel')}</label>
         <input
           type="number"
           min="0"
           step="1"
           value={tipCustom}
           onChange={(e) => { setTipCustom(e.target.value); setTipPct(null); }}
-          placeholder="e.g. 50"
+          placeholder={t('payment.tipCustomPlaceholder')}
           className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-brand-400"
         />
       </div>
       <div className="border-t border-slate-100 pt-2.5 space-y-1 text-xs">
-        <div className="flex justify-between text-slate-500"><span>Bill</span><span>₹{subTotal.toFixed(2)}</span></div>
+        <div className="flex justify-between text-slate-500"><span>{t('payment.bill')}</span><span>₹{subTotal.toFixed(2)}</span></div>
         {tipAmount > 0 && (
-          <div className="flex justify-between text-slate-500"><span>Tip</span><span>₹{tipAmount.toFixed(2)}</span></div>
+          <div className="flex justify-between text-slate-500"><span>{t('payment.tip')}</span><span>₹{tipAmount.toFixed(2)}</span></div>
         )}
         <div className="flex justify-between font-black text-slate-900 text-sm pt-1 border-t border-slate-100">
-          <span>You pay</span><span>₹{baseTotal.toFixed(2)}</span>
+          <span>{t('payment.youPay')}</span><span>₹{baseTotal.toFixed(2)}</span>
         </div>
       </div>
     </div>
@@ -468,7 +470,7 @@ export default function PaymentPage() {
   if (stage === 'PICK_METHOD') {
     return (
       <div className="min-h-dvh bg-slate-50 flex flex-col">
-        <Header title="Choose payment method" subtitle="Pick how you want to pay" onBack={() => navigate(-1)} />
+        <Header title={t('payment.pickMethodTitle')} subtitle={t('payment.pickMethodSubtitle')} onBack={() => navigate(-1)} />
         <div className="flex-1 px-4 py-4 space-y-4">
           <PayeeCard amount={baseTotal} />
           {isBillNow && <TipPicker />}
@@ -484,10 +486,10 @@ export default function PaymentPage() {
             const done = picked >= need;
             const summary = (() => {
               const s = f.pool?.scope;
-              if (s === 'ALL') return 'any item on the menu';
-              if (s === 'CATEGORY') return `from ${f.pool?.categoryName || 'category'}`;
-              if (s === 'ITEMS') return `from ${f.pool?.items?.length ?? 0} options`;
-              return 'free item';
+              if (s === 'ALL') return t('payment.freebieAnyItem');
+              if (s === 'CATEGORY') return t('payment.freebieFromCategory', { category: f.pool?.categoryName || t('offers.categoryFallback') });
+              if (s === 'ITEMS') return t('payment.freebieFromOptions', { count: f.pool?.items?.length ?? 0 });
+              return t('payment.freebieFallback');
             })();
             return (
               <div
@@ -502,7 +504,7 @@ export default function PaymentPage() {
                       🎁 {f.offerName}
                     </p>
                     <p className="text-xs text-slate-600 mt-0.5">
-                      Pick {need} {summary}{done && ' — ready'}
+                      {t('payment.freebiePickSummary', { need, summary })}{done && t('payment.freebieReady')}
                     </p>
                   </div>
                   <span className={`text-xs font-bold px-2 py-1 rounded-full ${
@@ -519,7 +521,7 @@ export default function PaymentPage() {
                       : 'bg-amber-600 hover:bg-amber-700 text-white'
                   }`}
                 >
-                  {done ? 'Change picks' : `Pick your gift${need > 1 ? 's' : ''}`}
+                  {done ? t('payment.freebieChangePicks') : t('payment.freebiePickYourGift', { count: need })}
                 </button>
               </div>
             );
@@ -528,21 +530,23 @@ export default function PaymentPage() {
           {/* Promotions — coupon + reward redemption. Hidden on Bill Now. */}
           {!isBillNow && (availableCoupons.length > 0 || rewardBalance > 0 || liveQuote) && (
             <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Apply promotions</p>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">{t('payment.applyPromotions')}</p>
 
               {availableCoupons.length > 0 && (
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Coupon</label>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">{t('payment.coupon')}</label>
                   <select
                     value={couponId}
                     onChange={(e) => setCouponId(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white"
                   >
-                    <option value="">No coupon</option>
+                    <option value="">{t('payment.noCoupon')}</option>
                     {availableCoupons.map((c: any) => {
-                      const value = c.discountType === 'PERCENT' ? `${c.discountValue}% off` : `₹${c.discountValue} off`;
+                      const value = c.discountType === 'PERCENT'
+                        ? t('payment.couponPercent', { value: c.discountValue })
+                        : t('payment.couponFixed', { value: c.discountValue });
                       const suffix = c.kind === 'ALLOWANCE'
-                        ? ` (allowance · ${c.perPeriodQuota}/${(c.resetPeriod || '').toLowerCase()})`
+                        ? t('payment.allowanceSuffix', { quota: c.perPeriodQuota, period: (c.resetPeriod || '').toLowerCase() })
                         : '';
                       return (
                         <option key={c.id} value={c.id}>
@@ -557,7 +561,7 @@ export default function PaymentPage() {
               {rewardBalance > 0 && (
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                    Redeem points (balance: {rewardBalance})
+                    {t('payment.redeemPoints', { balance: rewardBalance })}
                   </label>
                   <input
                     type="number"
@@ -575,13 +579,13 @@ export default function PaymentPage() {
                 <div className="border-t border-slate-100 pt-2.5 space-y-1 text-xs">
                   {liveQuote.totalAutoDiscount > 0 && (
                     <div className="flex justify-between text-emerald-700">
-                      <span>Auto discounts</span><span>− ₹{liveQuote.totalAutoDiscount.toFixed(2)}</span>
+                      <span>{t('payment.autoDiscounts')}</span><span>− ₹{liveQuote.totalAutoDiscount.toFixed(2)}</span>
                     </div>
                   )}
                   {liveQuote.coupon && (
                     <>
                       <div className="flex justify-between text-emerald-700">
-                        <span>Coupon {liveQuote.coupon.code}</span><span>− ₹{liveQuote.coupon.amount.toFixed(2)}</span>
+                        <span>{t('payment.couponLine', { code: liveQuote.coupon.code })}</span><span>− ₹{liveQuote.coupon.amount.toFixed(2)}</span>
                       </div>
                       {/* ALLOWANCE coupons carry itemUnits — surface how many
                           quota units this redemption consumed so the
@@ -589,25 +593,25 @@ export default function PaymentPage() {
                           a separate ledger view. */}
                       {liveQuote.coupon.itemUnits != null && liveQuote.coupon.itemUnits > 0 && (
                         <div className="flex justify-end text-[10px] text-slate-500">
-                          uses {liveQuote.coupon.itemUnits} item{liveQuote.coupon.itemUnits === 1 ? '' : 's'} from your allowance
+                          {t('payment.usesAllowance', { count: liveQuote.coupon.itemUnits })}
                         </div>
                       )}
                     </>
                   )}
                   {liveQuote.reward && (
                     <div className="flex justify-between text-emerald-700">
-                      <span>Points redeemed ({liveQuote.reward.points})</span>
+                      <span>{t('payment.pointsRedeemed', { points: liveQuote.reward.points })}</span>
                       <span>− ₹{liveQuote.reward.amount.toFixed(2)}</span>
                     </div>
                   )}
                   {(liveQuote.offerFreebies || []).length > 0 && (
                     <div className="text-brand-900">
-                      <span className="font-semibold">🎁 Complimentary: </span>
+                      <span className="font-semibold">{t('payment.complimentary')}</span>
                       {liveQuote.offerFreebies.map((f: any) => `${f.quantity}× ${f.getItemName}`).join(', ')}
                     </div>
                   )}
                   <div className="flex justify-between font-black text-slate-900 text-sm pt-1 border-t border-slate-100">
-                    <span>You pay</span><span>₹{liveQuote.totalAmount.toFixed(2)}</span>
+                    <span>{t('payment.youPay')}</span><span>₹{liveQuote.totalAmount.toFixed(2)}</span>
                   </div>
                 </div>
               )}
@@ -624,10 +628,10 @@ export default function PaymentPage() {
                 <Smartphone size={20} />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-bold text-slate-900">Pay with {defaultUpiApp.name}</p>
-                <p className="text-xs text-slate-500 mt-0.5">Your default UPI app · direct UPI</p>
+                <p className="font-bold text-slate-900">{t('payment.payWith', { app: defaultUpiApp.name })}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{t('payment.defaultUpiHint')}</p>
                 <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded-full">
-                  No extra charge
+                  {t('payment.noExtraCharge')}
                 </span>
               </div>
               <ChevronRight size={16} className="text-slate-400 shrink-0" />
@@ -638,7 +642,7 @@ export default function PaymentPage() {
               onClick={() => navigate('/profile')}
               className="w-full flex items-center justify-center gap-1.5 text-[11px] font-semibold text-brand-600 hover:text-brand-700 py-1.5"
             >
-              <Settings size={11} /> Use a different UPI app
+              <Settings size={11} /> {t('payment.useDifferentUpi')}
             </button>
           </div>
 
@@ -656,13 +660,13 @@ export default function PaymentPage() {
               <CreditCard size={20} />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-bold text-slate-900">Pay via Payment Gateway</p>
+              <p className="font-bold text-slate-900">{t('payment.payViaGateway')}</p>
               <p className="text-xs text-slate-500 mt-0.5">
-                {gateway ? `${gateway.providerName} · Cards, Net banking, Wallets, UPI` : 'No gateway configured'}
+                {gateway ? t('payment.gatewayHint', { provider: gateway.providerName }) : t('payment.noGatewayConfigured')}
               </p>
               {gateway && (
                 <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
-                  <AlertCircle size={10} /> Payment gateway charges will be extra
+                  <AlertCircle size={10} /> {t('payment.gatewayExtraCharge')}
                 </span>
               )}
             </div>
@@ -683,9 +687,9 @@ export default function PaymentPage() {
                 <FlaskConical size={20} />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-bold text-amber-900">Testing Bypass</p>
+                <p className="font-bold text-amber-900">{t('payment.testingBypass')}</p>
                 <p className="text-xs text-amber-800/80 mt-0.5">
-                  Mark order as paid without launching UPI. Dev only — removed before launch.
+                  {t('payment.testingBypassHint')}
                 </p>
               </div>
               {creating
@@ -703,8 +707,8 @@ export default function PaymentPage() {
     return (
       <div className="min-h-dvh bg-slate-50 flex flex-col">
         <Header
-          title={`Pay with ${defaultUpiApp.name}`}
-          subtitle="Direct UPI payment"
+          title={t('payment.payWith', { app: defaultUpiApp.name })}
+          subtitle={t('payment.directUpiSubtitle')}
           onBack={() => { setStage('PICK_METHOD'); setLaunched(false); }}
         />
         <div className="flex-1 px-4 py-4 space-y-4">
@@ -715,34 +719,34 @@ export default function PaymentPage() {
               already renders the bill + tip + total). */}
           {!isBillNow && (
             <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-1">
-              <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>₹{(state.subtotal ?? 0).toFixed(2)}</span></div>
+              <div className="flex justify-between text-sm text-slate-500"><span>{t('payment.subtotal')}</span><span>₹{(state.subtotal ?? 0).toFixed(2)}</span></div>
               {(state.taxAmount ?? 0) > 0 && (
                 <>
-                  <div className="flex justify-between text-sm text-slate-500"><span>SGST</span><span>₹{((state.taxAmount ?? 0) / 2).toFixed(2)}</span></div>
-                  <div className="flex justify-between text-sm text-slate-500"><span>CGST</span><span>₹{((state.taxAmount ?? 0) / 2).toFixed(2)}</span></div>
+                  <div className="flex justify-between text-sm text-slate-500"><span>{t('payment.sgst')}</span><span>₹{((state.taxAmount ?? 0) / 2).toFixed(2)}</span></div>
+                  <div className="flex justify-between text-sm text-slate-500"><span>{t('payment.cgst')}</span><span>₹{((state.taxAmount ?? 0) / 2).toFixed(2)}</span></div>
                 </>
               )}
               {state.isParcel && (
-                <div className="flex justify-between text-sm text-slate-500"><span>Parcel</span><span>₹{(state.parcelPreview ?? 0).toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm text-slate-500"><span>{t('payment.parcel')}</span><span>₹{(state.parcelPreview ?? 0).toFixed(2)}</span></div>
               )}
-              <div className="flex justify-between text-sm font-bold text-slate-900 pt-1 border-t border-slate-100"><span>Total</span><span>₹{baseTotal.toFixed(2)}</span></div>
+              <div className="flex justify-between text-sm font-bold text-slate-900 pt-1 border-t border-slate-100"><span>{t('payment.total')}</span><span>₹{baseTotal.toFixed(2)}</span></div>
             </div>
           )}
           {isBillNow && <TipPicker />}
 
           {/* Default UPI app card + change link */}
           <div className="bg-white rounded-2xl border border-slate-100 p-4">
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Your UPI app</p>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">{t('payment.yourUpiApp')}</p>
             <div className="flex items-center gap-3 px-3 py-3 rounded-xl border border-brand-300 ring-1 ring-brand-200 bg-brand-50/40">
               <Smartphone size={16} className="text-brand-500" />
               <span className="text-sm font-semibold text-slate-800 flex-1">{defaultUpiApp.name}</span>
-              <span className="text-[10px] font-bold text-brand-600 bg-brand-50 border border-brand-200 px-1.5 py-0.5 rounded-full">Default</span>
+              <span className="text-[10px] font-bold text-brand-600 bg-brand-50 border border-brand-200 px-1.5 py-0.5 rounded-full">{t('payment.default')}</span>
             </div>
             <button
               onClick={() => navigate('/profile')}
               className="w-full flex items-center justify-center gap-1.5 text-[11px] font-semibold text-brand-600 hover:text-brand-700 pt-2"
             >
-              <Settings size={11} /> Change in Settings
+              <Settings size={11} /> {t('payment.changeInSettings')}
             </button>
           </div>
 
@@ -750,8 +754,7 @@ export default function PaymentPage() {
               the UPI app shows ₹1 instead of the bill total. */}
           {TEST_UPI_AMOUNT_RUPEES != null && (
             <p className="text-[11px] text-amber-700 text-center bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
-              Test mode — UPI app will be invoked for ₹{TEST_UPI_AMOUNT_RUPEES.toFixed(2)} only.
-              The bill total is the actual ₹{baseTotal.toFixed(2)}.
+              {t('payment.testModeNotice', { testAmount: TEST_UPI_AMOUNT_RUPEES.toFixed(2), realAmount: baseTotal.toFixed(2) })}
             </p>
           )}
 
@@ -761,20 +764,20 @@ export default function PaymentPage() {
               disabled={creating || offersAwaitingPicks.length > 0}
               className="w-full bg-gold-500 hover:bg-gold-600 text-charcoal-900 py-4 rounded-2xl font-bold shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              Pay ₹{(TEST_UPI_AMOUNT_RUPEES ?? baseTotal).toFixed(2)} via {defaultUpiApp.name}
+              {t('payment.payVia', { amount: (TEST_UPI_AMOUNT_RUPEES ?? baseTotal).toFixed(2), app: defaultUpiApp.name })}
             </button>
           ) : (
             <div className="space-y-3">
               <p className="text-xs text-slate-500 text-center bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2">
-                We've launched {defaultUpiApp.name}. Complete the payment and tap one of the buttons below.
+                {t('payment.weLaunched', { app: defaultUpiApp.name })}
               </p>
               <div className="flex gap-3">
                 <button
-                  onClick={() => { toast.error('Payment cancelled — try again'); setLaunched(false); }}
+                  onClick={() => { toast.error(t('payment.paymentCancelledToast')); setLaunched(false); }}
                   disabled={creating || offersAwaitingPicks.length > 0}
                   className="flex-1 bg-white border border-red-200 text-red-600 py-3.5 rounded-2xl font-bold flex items-center justify-center gap-2"
                 >
-                  <XCircle size={16} /> Payment failed
+                  <XCircle size={16} /> {t('payment.paymentFailed')}
                 </button>
                 <button
                   onClick={finishUpi}
@@ -783,11 +786,11 @@ export default function PaymentPage() {
                 >
                   {creating
                     ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                    : <CheckCircle2 size={16} />} I've paid
+                    : <CheckCircle2 size={16} />} {t('payment.ivePaid')}
                 </button>
               </div>
               <button onClick={launchUpi} className="w-full text-xs text-brand-600 hover:underline">
-                Re-launch {defaultUpiApp.name}
+                {t('payment.relaunch', { app: defaultUpiApp.name })}
               </button>
             </div>
           )}
@@ -800,8 +803,8 @@ export default function PaymentPage() {
   return (
     <div className="min-h-dvh bg-slate-50 flex flex-col">
       <Header
-        title={gateway ? `Pay via ${gateway.providerName}` : 'Payment Gateway'}
-        subtitle="Cards, Net banking, Wallets, UPI"
+        title={gateway ? t('payment.gatewayProviderTitle', { provider: gateway.providerName }) : t('payment.gatewayDefaultTitle')}
+        subtitle={t('payment.gatewaySubtitle')}
         onBack={() => setStage('PICK_METHOD')}
       />
       <div className="flex-1 px-4 py-4 space-y-4">
@@ -809,7 +812,7 @@ export default function PaymentPage() {
 
         {/* Mode picker */}
         <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-2">
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Choose payment mode</p>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">{t('payment.choosePaymentMode')}</p>
           {GATEWAY_MODES.map(m => {
             const checked = gatewayMode === m.key;
             const pct = gateway?.charges?.[m.key] ?? 0;
@@ -825,7 +828,7 @@ export default function PaymentPage() {
                   <span className="text-sm font-semibold text-slate-800">{m.label}</span>
                 </span>
                 <span className="text-[11px] font-bold text-amber-700">
-                  {pct > 0 ? `+${pct}% fee` : 'no fee'}
+                  {pct > 0 ? t('payment.feePercent', { pct }) : t('payment.noFee')}
                 </span>
               </label>
             );
@@ -837,31 +840,31 @@ export default function PaymentPage() {
         <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-1">
           {isBillNow ? (
             <>
-              <div className="flex justify-between text-sm text-slate-500"><span>Bill</span><span>₹{subTotal.toFixed(2)}</span></div>
+              <div className="flex justify-between text-sm text-slate-500"><span>{t('payment.bill')}</span><span>₹{subTotal.toFixed(2)}</span></div>
               {tipAmount > 0 && (
-                <div className="flex justify-between text-sm text-slate-500"><span>Tip</span><span>₹{tipAmount.toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm text-slate-500"><span>{t('payment.tip')}</span><span>₹{tipAmount.toFixed(2)}</span></div>
               )}
             </>
           ) : (
             <>
-              <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>₹{(state.subtotal ?? 0).toFixed(2)}</span></div>
+              <div className="flex justify-between text-sm text-slate-500"><span>{t('payment.subtotal')}</span><span>₹{(state.subtotal ?? 0).toFixed(2)}</span></div>
               {(state.taxAmount ?? 0) > 0 && (
                 <>
-                  <div className="flex justify-between text-sm text-slate-500"><span>SGST</span><span>₹{((state.taxAmount ?? 0) / 2).toFixed(2)}</span></div>
-                  <div className="flex justify-between text-sm text-slate-500"><span>CGST</span><span>₹{((state.taxAmount ?? 0) / 2).toFixed(2)}</span></div>
+                  <div className="flex justify-between text-sm text-slate-500"><span>{t('payment.sgst')}</span><span>₹{((state.taxAmount ?? 0) / 2).toFixed(2)}</span></div>
+                  <div className="flex justify-between text-sm text-slate-500"><span>{t('payment.cgst')}</span><span>₹{((state.taxAmount ?? 0) / 2).toFixed(2)}</span></div>
                 </>
               )}
               {state.isParcel && (
-                <div className="flex justify-between text-sm text-slate-500"><span>Parcel</span><span>₹{(state.parcelPreview ?? 0).toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm text-slate-500"><span>{t('payment.parcel')}</span><span>₹{(state.parcelPreview ?? 0).toFixed(2)}</span></div>
               )}
             </>
           )}
-          <div className="flex justify-between text-sm text-slate-700"><span>Order total</span><span>₹{baseTotal.toFixed(2)}</span></div>
+          <div className="flex justify-between text-sm text-slate-700"><span>{t('payment.orderTotal')}</span><span>₹{baseTotal.toFixed(2)}</span></div>
           <div className="flex justify-between text-sm text-amber-700">
-            <span>Gateway charge ({gatewayChargePct}%)</span>
+            <span>{t('payment.gatewayChargeLabel', { pct: gatewayChargePct })}</span>
             <span>+ ₹{gatewayCharge.toFixed(2)}</span>
           </div>
-          <div className="flex justify-between text-sm font-bold text-slate-900 pt-1 border-t border-slate-100"><span>You pay</span><span>₹{gatewayFinal.toFixed(2)}</span></div>
+          <div className="flex justify-between text-sm font-bold text-slate-900 pt-1 border-t border-slate-100"><span>{t('payment.youPay')}</span><span>₹{gatewayFinal.toFixed(2)}</span></div>
         </div>
 
         <button
@@ -870,10 +873,10 @@ export default function PaymentPage() {
           className="w-full bg-gradient-to-r from-indigo-500 to-indigo-600 text-white py-4 rounded-2xl font-bold shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
         >
           {creating && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-          Pay ₹{gatewayFinal.toFixed(2)} via {GATEWAY_MODES.find(m => m.key === gatewayMode)?.label}
+          {t('payment.payVia', { amount: gatewayFinal.toFixed(2), app: GATEWAY_MODES.find(m => m.key === gatewayMode)?.label ?? '' })}
         </button>
         <p className="text-[11px] text-slate-400 text-center">
-          Secure payment processed by {gateway?.providerName ?? 'gateway'}.
+          {gateway?.providerName ? t('payment.secureProcessed', { provider: gateway.providerName }) : t('payment.secureProcessedDefault')}
         </p>
       </div>
 
@@ -905,6 +908,7 @@ function FreebiePickerModal({
   onClose: () => void;
   onSave: (picks: Array<{ itemId: string; quantity: number }>) => void;
 }) {
+  const { t } = useTranslation();
   const cap = offer.pickQuantity ?? 1;
   const items: Array<{ id: string; name: string; basePrice: number }> = offer.pool?.items ?? [];
   // Build a quantity map for editing — keep entries the customer
@@ -945,8 +949,7 @@ function FreebiePickerModal({
           <div>
             <p className="font-bold text-slate-900">{offer.offerName}</p>
             <p className="text-xs text-slate-500 mt-0.5">
-              Pick {cap} free item{cap === 1 ? '' : 's'}
-              {' '}— {total}/{cap} selected
+              {t('payment.freebiePickerSummary', { cap, total, count: cap })}
             </p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 px-2">×</button>
@@ -955,7 +958,7 @@ function FreebiePickerModal({
         <div className="flex-1 overflow-y-auto px-5 py-3 space-y-2">
           {items.length === 0 ? (
             <p className="text-sm text-slate-400 italic text-center py-8">
-              No eligible items right now.
+              {t('payment.freebieNoEligible')}
             </p>
           ) : items.map((it) => {
             const q = qty[it.id] ?? 0;
@@ -965,7 +968,7 @@ function FreebiePickerModal({
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-slate-800 truncate">{it.name}</p>
                   <p className="text-[11px] text-slate-400">
-                    Normally ₹{Number(it.basePrice).toFixed(0)} · free in this offer
+                    {t('payment.freebieNormallyFree', { price: Number(it.basePrice).toFixed(0) })}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -997,8 +1000,8 @@ function FreebiePickerModal({
             className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-3.5 rounded-2xl text-sm shadow-lg disabled:opacity-50"
           >
             {total === cap
-              ? `Confirm ${cap} free item${cap === 1 ? '' : 's'}`
-              : `Pick ${cap - total} more`}
+              ? t('payment.freebieConfirm', { cap, count: cap })
+              : t('payment.freebiePickMore', { count: cap - total })}
           </button>
         </div>
       </div>
