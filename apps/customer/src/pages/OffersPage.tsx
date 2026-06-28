@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 import clsx from 'clsx';
 import { Percent, Gift, Award, Store, Ticket, History, ChevronRight, ChevronDown } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 
@@ -37,15 +38,27 @@ interface OutletPromos {
   offers: PromoOffer[];
 }
 
-const DOW_LABELS = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+// Pure helpers — translated text comes via t() at the call site. The
+// schedule summary uses day-name keys under `days.*` so the same
+// strings power the menu schedule rendering on OrderPage too.
+const DOW_KEYS = ['', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const toHHMM = (m?: number | null) => {
   if (m == null) return '';
   return `${Math.floor(m / 60).toString().padStart(2, '0')}:${(m % 60).toString().padStart(2, '0')}`;
 };
-const scheduleSummary = (row: { daysOfWeek?: string | null; startMinute?: number | null; endMinute?: number | null }) => {
+const scheduleSummary = (
+  row: { daysOfWeek?: string | null; startMinute?: number | null; endMinute?: number | null },
+  t: (k: string) => string,
+) => {
   const parts: string[] = [];
   if (row.daysOfWeek) {
-    parts.push(row.daysOfWeek.split(',').map((d) => DOW_LABELS[Number(d.trim())]).filter(Boolean).join(' '));
+    parts.push(
+      row.daysOfWeek
+        .split(',')
+        .map((d) => t(`days.${DOW_KEYS[Number(d.trim())]}`))
+        .filter(Boolean)
+        .join(' '),
+    );
   }
   if (row.startMinute != null && row.endMinute != null) {
     parts.push(`${toHHMM(row.startMinute)}–${toHHMM(row.endMinute)}`);
@@ -53,18 +66,24 @@ const scheduleSummary = (row: { daysOfWeek?: string | null; startMinute?: number
   return parts.join(' · ');
 };
 
-const targetLabel = (d: PromoDiscount) => {
-  if (d.targetType === 'BILL') return 'Whole bill';
-  if (d.targetType === 'CATEGORY') return d.category?.name ?? 'Category';
-  if (d.targetType === 'SUBCATEGORY') return d.subcategory?.name ?? 'Subcategory';
-  if (d.targetType === 'ITEM') return d.item?.name ?? 'Item';
+const targetLabel = (d: PromoDiscount, t: (k: string) => string) => {
+  if (d.targetType === 'BILL') return t('offers.wholeBill');
+  if (d.targetType === 'CATEGORY') return d.category?.name ?? t('offers.categoryFallback');
+  if (d.targetType === 'SUBCATEGORY') return d.subcategory?.name ?? t('offers.subcategoryFallback');
+  if (d.targetType === 'ITEM') return d.item?.name ?? t('offers.itemFallback');
   return d.targetType;
 };
 
-const discountAmount = (row: { discountType: string; discountValue: string | number }) =>
-  row.discountType === 'PERCENT' ? `${row.discountValue}% off` : `₹${row.discountValue} off`;
+const discountAmount = (
+  row: { discountType: string; discountValue: string | number },
+  t: (k: string, opts?: any) => string,
+) =>
+  row.discountType === 'PERCENT'
+    ? t('offers.discountPercent', { value: row.discountValue })
+    : t('offers.discountFixed', { value: row.discountValue });
 
 export default function OffersPage() {
+  const { t } = useTranslation();
   const { user } = useCustomerAuth();
   const [tab, setTab] = useState<Tab>('DISCOUNTS');
   const [data, setData] = useState<{ outlets: OutletPromos[] } | null>(null);
@@ -110,27 +129,27 @@ export default function OffersPage() {
     <div className="max-w-md mx-auto pb-4">
       {/* Header */}
       <div className="px-5 pt-6 pb-3">
-        <h1 className="text-2xl font-black text-slate-900">Offers & rewards</h1>
-        <p className="text-xs text-slate-500 mt-0.5">Promotions waiting for you at outlets you visit</p>
+        <h1 className="text-2xl font-black text-slate-900">{t('offers.title')}</h1>
+        <p className="text-xs text-slate-500 mt-0.5">{t('offers.subtitle')}</p>
       </div>
 
       {/* Tabs */}
       <div className="px-4">
         <div className="bg-white rounded-2xl border border-slate-100 p-1 grid grid-cols-3 gap-1">
-          {(['DISCOUNTS', 'OFFERS', 'REWARDS'] as Tab[]).map(t => {
-            const active = tab === t;
-            const Icon = t === 'DISCOUNTS' ? Percent : t === 'OFFERS' ? Gift : Award;
+          {(['DISCOUNTS', 'OFFERS', 'REWARDS'] as Tab[]).map(tk => {
+            const active = tab === tk;
+            const Icon = tk === 'DISCOUNTS' ? Percent : tk === 'OFFERS' ? Gift : Award;
             return (
               <button
-                key={t}
-                onClick={() => setTab(t)}
+                key={tk}
+                onClick={() => setTab(tk)}
                 className={clsx(
                   'flex items-center justify-center gap-1.5 text-xs font-bold py-2 rounded-xl transition-colors',
                   active ? 'bg-brand-500 text-white' : 'text-slate-600 hover:bg-slate-50',
                 )}
               >
                 <Icon size={13} />
-                <span>{t === 'DISCOUNTS' ? 'Discounts' : t === 'OFFERS' ? 'Offers' : 'Rewards'}</span>
+                <span>{tk === 'DISCOUNTS' ? t('offers.tabDiscounts') : tk === 'OFFERS' ? t('offers.tabOffers') : t('offers.tabRewards')}</span>
               </button>
             );
           })}
@@ -168,6 +187,7 @@ export default function OffersPage() {
 function OutletCard({
   group, tab, expanded, onToggle,
 }: { group: OutletPromos; tab: Tab; expanded: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
   const showDiscounts = tab === 'DISCOUNTS' && group.discounts.length > 0;
   const showOffers = tab === 'OFFERS' && (group.offers.length > 0 || group.coupons.length > 0);
   if (!showDiscounts && !showOffers) return null;
@@ -175,9 +195,9 @@ function OutletCard({
   // Count badges drive the collapsed-header summary so the customer can
   // decide which outlet to drill into without expanding everything.
   const counts: { label: string; n: number; tone: string }[] = [];
-  if (tab === 'OFFERS' && group.coupons.length) counts.push({ label: 'coupons', n: group.coupons.length, tone: 'bg-brand-50 text-brand-900 border-brand-100' });
-  if (tab === 'OFFERS' && group.offers.length) counts.push({ label: 'offers',   n: group.offers.length,   tone: 'bg-amber-50 text-amber-700 border-amber-100' });
-  if (tab === 'DISCOUNTS' && group.discounts.length) counts.push({ label: 'discounts', n: group.discounts.length, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100' });
+  if (tab === 'OFFERS' && group.coupons.length) counts.push({ label: t('offers.countCoupons'), n: group.coupons.length, tone: 'bg-brand-50 text-brand-900 border-brand-100' });
+  if (tab === 'OFFERS' && group.offers.length) counts.push({ label: t('offers.countOffers'),   n: group.offers.length,   tone: 'bg-amber-50 text-amber-700 border-amber-100' });
+  if (tab === 'DISCOUNTS' && group.discounts.length) counts.push({ label: t('offers.countDiscounts'), n: group.discounts.length, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100' });
 
   return (
     <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
@@ -215,7 +235,7 @@ function OutletCard({
       <div className="p-3 space-y-2">
         {showOffers && group.coupons.length > 0 && (
           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
-            Coupons ({group.coupons.length})
+            {t('offers.couponsHeader', { count: group.coupons.length })}
           </p>
         )}
         {showOffers && group.coupons.map(c => (
@@ -228,10 +248,10 @@ function OutletCard({
                 {c.name} <span className="font-mono text-[10px] text-slate-500 ml-1">{c.code}</span>
               </p>
               <p className="text-[11px] text-slate-500">
-                {discountAmount(c)}
-                {c.minBillAmount ? ` · min bill ₹${c.minBillAmount}` : ''}
-                {c.maxDiscountAmount ? ` · up to ₹${c.maxDiscountAmount}` : ''}
-                {' · valid till '}{dayjs(c.validUntil).format('DD MMM')}
+                {discountAmount(c, t)}
+                {c.minBillAmount ? ` · ${t('offers.minBill', { amount: c.minBillAmount })}` : ''}
+                {c.maxDiscountAmount ? ` · ${t('offers.upTo', { amount: c.maxDiscountAmount })}` : ''}
+                {' · '}{t('offers.validTill', { date: dayjs(c.validUntil).format('DD MMM') })}
               </p>
             </div>
           </div>
@@ -239,7 +259,7 @@ function OutletCard({
 
         {showOffers && group.offers.length > 0 && (
           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide pt-1">
-            Offers ({group.offers.length})
+            {t('offers.offersHeader', { count: group.offers.length })}
           </p>
         )}
 
@@ -251,8 +271,8 @@ function OutletCard({
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-slate-900">{d.name}</p>
               <p className="text-[11px] text-slate-500">
-                {discountAmount(d)} on {targetLabel(d)}
-                {(() => { const s = scheduleSummary(d); return s ? ` · ${s}` : ''; })()}
+                {t('offers.discountOn', { discount: discountAmount(d, t), target: targetLabel(d, t) })}
+                {(() => { const s = scheduleSummary(d, t); return s ? ` · ${s}` : ''; })()}
               </p>
             </div>
           </div>
@@ -267,9 +287,9 @@ function OutletCard({
               <p className="text-sm font-semibold text-slate-900">{o.name}</p>
               <p className="text-[11px] text-slate-500">
                 {o.triggerType === 'MIN_BILL'
-                  ? `Spend ₹${o.minBillAmount} → get ${o.getQuantity ?? 1}× ${o.getItem?.name ?? 'free item'}`
-                  : `Buy ${o.buyQuantity ?? 0}× ${o.buyItem?.name ?? 'item'} → ${o.getQuantity ?? 0}× ${o.getItem?.name ?? 'free item'}`}
-                {(() => { const s = scheduleSummary(o); return s ? ` · ${s}` : ''; })()}
+                  ? t('offers.offerSpend', { amount: o.minBillAmount, qty: o.getQuantity ?? 1, item: o.getItem?.name ?? t('offers.freeItemFallback') })
+                  : t('offers.offerBuyGet', { buyQty: o.buyQuantity ?? 0, buyItem: o.buyItem?.name ?? t('offers.itemFallback'), getQty: o.getQuantity ?? 0, getItem: o.getItem?.name ?? t('offers.freeItemFallback') })}
+                {(() => { const s = scheduleSummary(o, t); return s ? ` · ${s}` : ''; })()}
               </p>
             </div>
           </div>
@@ -281,12 +301,13 @@ function OutletCard({
 }
 
 function RewardsView({ reward }: { reward: any | null }) {
+  const { t } = useTranslation();
   if (!reward) {
     return (
       <div className="bg-white rounded-2xl border border-slate-100 py-10 px-4 text-center">
         <Award className="text-slate-300 mx-auto mb-2" size={32} />
-        <p className="text-sm text-slate-500 font-semibold">No reward account yet</p>
-        <p className="text-[11px] text-slate-400 mt-1">Place your first order to start earning.</p>
+        <p className="text-sm text-slate-500 font-semibold">{t('offers.noRewardAccount')}</p>
+        <p className="text-[11px] text-slate-400 mt-1">{t('offers.firstOrderHint')}</p>
       </div>
     );
   }
@@ -297,20 +318,20 @@ function RewardsView({ reward }: { reward: any | null }) {
       {/* Balance card */}
       <div className="bg-gradient-to-br from-brand-700 to-brand-400 rounded-2xl p-5 text-white shadow-md">
         <div className="flex items-center justify-between mb-1">
-          <span className="text-[11px] uppercase tracking-wide font-bold opacity-90">Available balance</span>
+          <span className="text-[11px] uppercase tracking-wide font-bold opacity-90">{t('offers.availableBalance')}</span>
           <Award size={18} className="opacity-80" />
         </div>
         <p className="text-4xl font-black">{reward.balance}</p>
-        <p className="text-[11px] mt-1 opacity-90">points · use at checkout</p>
+        <p className="text-[11px] mt-1 opacity-90">{t('offers.pointsUseAtCheckout')}</p>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-white rounded-2xl border border-slate-100 p-3 text-center">
-          <p className="text-[10px] text-slate-500 font-semibold uppercase">Lifetime earned</p>
+          <p className="text-[10px] text-slate-500 font-semibold uppercase">{t('offers.lifetimeEarned')}</p>
           <p className="text-xl font-black text-emerald-600 mt-0.5">{reward.lifetimeEarned}</p>
         </div>
         <div className="bg-white rounded-2xl border border-slate-100 p-3 text-center">
-          <p className="text-[10px] text-slate-500 font-semibold uppercase">Lifetime redeemed</p>
+          <p className="text-[10px] text-slate-500 font-semibold uppercase">{t('offers.lifetimeRedeemed')}</p>
           <p className="text-xl font-black text-rose-600 mt-0.5">{reward.lifetimeRedeemed}</p>
         </div>
       </div>
@@ -319,31 +340,31 @@ function RewardsView({ reward }: { reward: any | null }) {
       <div className="bg-white rounded-2xl border border-slate-100">
         <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-1.5">
           <History size={12} className="text-slate-400" />
-          <p className="text-[11px] uppercase font-bold text-slate-500 tracking-wide">Recent activity</p>
+          <p className="text-[11px] uppercase font-bold text-slate-500 tracking-wide">{t('offers.recentActivity')}</p>
         </div>
         {txs.length === 0 ? (
-          <p className="text-xs text-slate-400 italic text-center py-6">No transactions yet</p>
+          <p className="text-xs text-slate-400 italic text-center py-6">{t('offers.noTransactions')}</p>
         ) : (
           <div className="divide-y divide-slate-100">
-            {txs.slice(0, 10).map((t: any) => (
-              <div key={t.id} className="px-3 py-2 flex items-center gap-2.5">
+            {txs.slice(0, 10).map((tx: any) => (
+              <div key={tx.id} className="px-3 py-2 flex items-center gap-2.5">
                 <div className={clsx(
                   'w-7 h-7 rounded-lg flex items-center justify-center shrink-0',
-                  t.points >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600',
+                  tx.points >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600',
                 )}>
-                  <ChevronRight size={12} className={clsx(t.points < 0 && 'rotate-180')} />
+                  <ChevronRight size={12} className={clsx(tx.points < 0 && 'rotate-180')} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-semibold text-slate-800">
-                    {t.type === 'EARN' ? 'Earned' : t.type === 'REDEEM' ? 'Redeemed' : t.type === 'EXPIRE' ? 'Expired' : 'Adjusted'}
+                    {tx.type === 'EARN' ? t('offers.txEarned') : tx.type === 'REDEEM' ? t('offers.txRedeemed') : tx.type === 'EXPIRE' ? t('offers.txExpired') : t('offers.txAdjusted')}
                   </p>
-                  <p className="text-[10px] text-slate-400">{dayjs(t.createdAt).format('DD MMM, hh:mm A')}</p>
+                  <p className="text-[10px] text-slate-400">{dayjs(tx.createdAt).format('DD MMM, hh:mm A')}</p>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className={clsx('text-sm font-black', t.points >= 0 ? 'text-emerald-600' : 'text-rose-600')}>
-                    {t.points > 0 ? '+' : ''}{t.points}
+                  <p className={clsx('text-sm font-black', tx.points >= 0 ? 'text-emerald-600' : 'text-rose-600')}>
+                    {tx.points > 0 ? '+' : ''}{tx.points}
                   </p>
-                  <p className="text-[10px] text-slate-400">bal {t.balanceAfter}</p>
+                  <p className="text-[10px] text-slate-400">{t('offers.balAfter', { after: tx.balanceAfter })}</p>
                 </div>
               </div>
             ))}
@@ -355,17 +376,16 @@ function RewardsView({ reward }: { reward: any | null }) {
 }
 
 function EmptyState({ tab, hasVisited }: { tab: Tab; hasVisited: boolean }) {
+  const { t } = useTranslation();
   const Icon = tab === 'DISCOUNTS' ? Percent : Gift;
   return (
     <div className="bg-white rounded-2xl border border-slate-100 py-10 px-4 text-center">
       <Icon className="text-slate-300 mx-auto mb-2" size={32} />
       <p className="text-sm text-slate-500 font-semibold">
-        {tab === 'DISCOUNTS' ? 'No discounts available' : 'No offers available'}
+        {tab === 'DISCOUNTS' ? t('offers.emptyDiscounts') : t('offers.emptyOffers')}
       </p>
       <p className="text-[11px] text-slate-400 mt-1">
-        {hasVisited
-          ? "We'll show promotions here as outlets you visit add them."
-          : "Place your first order at an outlet to see their promotions."}
+        {hasVisited ? t('offers.emptyHintVisited') : t('offers.emptyHintNew')}
       </p>
     </div>
   );

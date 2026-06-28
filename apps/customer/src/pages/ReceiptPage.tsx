@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, Clock, Download, ChevronRight, Phone, MapPin } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 import dayjs from 'dayjs';
 import ThermalReceipt from '../components/ThermalReceipt';
 import { downloadReceiptPdf } from '../components/downloadReceiptPdf';
 
 export default function ReceiptPage() {
+  const { t } = useTranslation();
   const { orderId } = useParams();
   const navigate = useNavigate();
   const [order, setOrder] = useState<any>(null);
@@ -30,7 +32,7 @@ export default function ReceiptPage() {
       <div className="w-10 h-10 border-[3px] border-brand-500 border-t-transparent rounded-full animate-spin" />
     </div>;
   }
-  if (!order) return <p className="p-6 text-sm text-slate-500">Order not found.</p>;
+  if (!order) return <p className="p-6 text-sm text-slate-500">{t('receipt.orderNotFound')}</p>;
 
   const payment = order.payments?.[0];
   const paid = payment?.status === 'SUCCESS';
@@ -41,9 +43,9 @@ export default function ReceiptPage() {
         {/* Header banner */}
         <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 text-white px-5 pt-8 pb-6 text-center rounded-b-3xl shadow-lg">
           <CheckCircle2 size={42} className="mx-auto mb-2" />
-          <p className="font-bold text-xl">Order placed</p>
+          <p className="font-bold text-xl">{t('receipt.orderPlaced')}</p>
           <p className="text-sm text-emerald-50 mt-0.5">
-            Token <span className="font-black text-white">#{order.tokenNumber ?? '—'}</span>
+            {t('receipt.token')} <span className="font-black text-white">#{order.tokenNumber ?? t('receipt.tokenDash')}</span>
           </p>
         </div>
 
@@ -61,7 +63,7 @@ export default function ReceiptPage() {
               </p>
             )}
             {order.outlet?.gstNumber && (
-              <p className="text-[10px] text-slate-400 mt-0.5">GSTIN: {order.outlet.gstNumber}</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">{t('receipt.gstin', { number: order.outlet.gstNumber })}</p>
             )}
             {order.outlet?.phone && (
               <p className="text-[10px] text-slate-400 mt-0.5 flex items-center justify-center gap-1">
@@ -73,20 +75,20 @@ export default function ReceiptPage() {
           {/* Order meta */}
           <div className="bg-slate-50 rounded-xl p-3 space-y-1 text-xs">
             <div className="flex justify-between">
-              <span className="text-slate-500">Order ID</span>
+              <span className="text-slate-500">{t('receipt.orderId')}</span>
               <span className="font-mono font-semibold text-slate-700">{order.orderNumber}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500">Token</span>
-              <span className="font-bold text-slate-700">#{order.tokenNumber ?? '—'}</span>
+              <span className="text-slate-500">{t('receipt.token')}</span>
+              <span className="font-bold text-slate-700">#{order.tokenNumber ?? t('receipt.tokenDash')}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500">Placed at</span>
+              <span className="text-slate-500">{t('receipt.placedAt')}</span>
               <span className="font-semibold text-slate-700">{dayjs(order.createdAt).format('DD MMM, hh:mm A')}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500">Type</span>
-              <span className="font-semibold text-slate-700">{order.isParcel ? 'Parcel' : (order.table ? `Table ${order.table.number}` : 'Counter')}</span>
+              <span className="text-slate-500">{t('receipt.type')}</span>
+              <span className="font-semibold text-slate-700">{order.isParcel ? t('receipt.typeParcel') : (order.table ? t('receipt.typeTable', { number: order.table.number }) : t('receipt.typeCounter'))}</span>
             </div>
           </div>
 
@@ -97,7 +99,7 @@ export default function ReceiptPage() {
               the post-expansion flat list (which puts the whole bundle
               price on the first child and ₹0 on the rest). */}
           <div>
-            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Items</p>
+            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">{t('receipt.items')}</p>
             {(() => {
               const items = (order.items as any[]) || [];
               const groups = new Map<string, { name: string; items: any[] }>();
@@ -121,7 +123,7 @@ export default function ReceiptPage() {
                       bundle = {
                         kind: 'bundle',
                         bundleId: it.bundleId,
-                        name: it.bundleParent?.name || 'Combo',
+                        name: it.bundleParent?.name || t('receipt.comboFallback'),
                         children: [],
                         quantity: 0,
                         totalPrice: 0,
@@ -161,7 +163,7 @@ export default function ReceiptPage() {
                                   <span className="text-brand-800 font-bold mr-1">{row.quantity}×</span>
                                   {row.name}
                                   <span className="text-[10px] font-semibold text-brand-700 ml-1.5">
-                                    · {row.children.length} item{row.children.length === 1 ? '' : 's'}
+                                    {t('receipt.bundleSummary', { count: row.children.length })}
                                   </span>
                                 </p>
                                 <ul className="mt-1 ml-5 space-y-0.5 list-disc text-[11px] text-slate-500">
@@ -208,19 +210,19 @@ export default function ReceiptPage() {
 
           {/* Totals */}
           <div className="border-t border-dashed border-slate-200 pt-3 space-y-1 text-sm">
-            <div className="flex justify-between text-slate-500"><span>Subtotal</span><span>₹{Number(order.subtotal).toFixed(2)}</span></div>
+            <div className="flex justify-between text-slate-500"><span>{t('receipt.subtotal')}</span><span>₹{Number(order.subtotal).toFixed(2)}</span></div>
             {/* Itemised discounts — each coupon / reward gets its own
                 line so the customer can see what cut the bill. */}
             {(() => {
               const coupons = (order.couponUsages || [])
                 .map((c: any) => ({
-                  label: c.coupon?.code ? `Coupon (${c.coupon.code})` : (c.coupon?.name || 'Coupon'),
+                  label: c.coupon?.code ? t('receipt.couponLabel', { code: c.coupon.code }) : (c.coupon?.name || t('receipt.couponFallback')),
                   amount: Number(c.discountAmount),
                 }))
                 .filter((c: any) => c.amount > 0);
               const rewards = (order.rewardTransactions || [])
                 .map((r: any) => ({
-                  label: `Reward (${Math.abs(r.points)} pts)`,
+                  label: t('receipt.rewardLabel', { points: Math.abs(r.points) }),
                   amount: Number(r.amountValue || 0),
                 }))
                 .filter((r: any) => r.amount > 0);
@@ -232,7 +234,7 @@ export default function ReceiptPage() {
                 ...coupons,
                 ...rewards,
                 ...(leftover > 0
-                  ? [{ label: explicit > 0 ? 'Other discount' : 'Discount', amount: leftover }]
+                  ? [{ label: explicit > 0 ? t('receipt.otherDiscount') : t('receipt.discount'), amount: leftover }]
                   : []),
               ];
               return lines.map((l, i) => (
@@ -243,26 +245,26 @@ export default function ReceiptPage() {
               ));
             })()}
             {Number(order.parcelAmount) > 0 && (
-              <div className="flex justify-between text-slate-500"><span>Parcel charge</span><span>₹{Number(order.parcelAmount).toFixed(2)}</span></div>
+              <div className="flex justify-between text-slate-500"><span>{t('receipt.parcelCharge')}</span><span>₹{Number(order.parcelAmount).toFixed(2)}</span></div>
             )}
             {Number(order.taxAmount) > 0 && (
               <>
                 <div className="flex justify-between text-slate-500">
-                  <span>SGST</span>
+                  <span>{t('receipt.sgst')}</span>
                   <span>₹{Number(order.sgstAmount ?? Number(order.taxAmount) / 2).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-slate-500">
-                  <span>CGST</span>
+                  <span>{t('receipt.cgst')}</span>
                   <span>₹{Number(order.cgstAmount ?? Number(order.taxAmount) / 2).toFixed(2)}</span>
                 </div>
               </>
             )}
             <div className="flex justify-between font-black text-slate-900 text-base pt-1 border-t border-slate-200">
-              <span>Total</span><span>₹{Number(order.totalAmount).toFixed(2)}</span>
+              <span>{t('receipt.total')}</span><span>₹{Number(order.totalAmount).toFixed(2)}</span>
             </div>
             {Number(order.discountAmount) > 0 && (
               <p className="text-center text-[11px] font-bold text-emerald-700 mt-1">
-                You saved ₹{Number(order.discountAmount).toFixed(2)} on this bill
+                {t('receipt.youSaved', { amount: Number(order.discountAmount).toFixed(2) })}
               </p>
             )}
           </div>
@@ -271,7 +273,7 @@ export default function ReceiptPage() {
           <div className={`rounded-xl px-4 py-3 text-sm font-semibold flex items-center justify-between ${paid ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
             <span className="flex items-center gap-2">
               {paid ? <CheckCircle2 size={16} /> : <Clock size={16} />}
-              {paid ? 'Payment received' : 'Payment pending'}
+              {paid ? t('receipt.paymentReceived') : t('receipt.paymentPending')}
             </span>
             <span className="text-xs">{payment?.mode || '—'}</span>
           </div>
@@ -283,13 +285,14 @@ export default function ReceiptPage() {
               .filter((p: any) => p.status === 'SUCCESS')
               .forEach((p: any) => { split[p.mode] = (split[p.mode] || 0) + Number(p.amount); });
             const labels: Record<string, string> = {
-              CASH: 'Cash', UPI: 'UPI', CARD: 'Card', WALLET: 'Wallet', NET_BANKING: 'Net Banking',
+              CASH: t('receipt.modeCash'), UPI: t('receipt.modeUpi'), CARD: t('receipt.modeCard'),
+              WALLET: t('receipt.modeWallet'), NET_BANKING: t('receipt.modeNetBanking'),
             };
             const rows = Object.entries(split);
             if (rows.length === 0) return null;
             return (
               <div className="border border-slate-100 rounded-xl px-3 py-2 space-y-1">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Paid via</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">{t('receipt.paidVia')}</p>
                 {rows.map(([mode, amount]) => (
                   <div key={mode} className="flex justify-between text-xs">
                     <span className="text-slate-600">{labels[mode] || mode}</span>
@@ -306,13 +309,13 @@ export default function ReceiptPage() {
               onClick={() => navigate(`/track/${order.id}?outlet=${order.outletId}`)}
               className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-3.5 rounded-2xl flex items-center justify-center gap-2"
             >
-              Track order <ChevronRight size={16} />
+              {t('receipt.trackOrder')} <ChevronRight size={16} />
             </button>
             <button
               onClick={handleDownload}
               className="w-full bg-slate-100 text-slate-700 font-semibold py-3 rounded-2xl flex items-center justify-center gap-2"
             >
-              <Download size={14} /> Download Receipt
+              <Download size={14} /> {t('receipt.downloadReceipt')}
             </button>
           </div>
         </div>
