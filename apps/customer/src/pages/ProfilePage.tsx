@@ -293,22 +293,6 @@ export default function ProfilePage() {
       </div>
 
       <div className="px-4 -mt-7 relative z-10 space-y-4">
-        {/* Customer QR */}
-        <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <QrCode size={14} className="text-slate-400" />
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Your customer QR</p>
-          </div>
-          <div className="flex justify-center bg-slate-50 rounded-xl p-4">
-            {user?.id ? (
-              <CustomerQR userId={user.id} name={name} profileImageUrl={profileImageUrl} />
-            ) : (
-              <p className="text-xs text-slate-400">Sign in to see your QR</p>
-            )}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-2 text-center">Outlets can scan this to identify you and apply tags.</p>
-        </div>
-
         {/* Identity */}
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-4 space-y-3">
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Identity</p>
@@ -454,6 +438,24 @@ export default function ProfilePage() {
               );
             })}
           </div>
+        </div>
+
+        {/* Customer QR — moved to the bottom of the page (was at top
+            above Identity). Outlets can scan this to identify the
+            customer and apply tags. */}
+        <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <QrCode size={14} className="text-slate-400" />
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Your customer QR</p>
+          </div>
+          <div className="flex justify-center bg-slate-50 rounded-xl p-4">
+            {user?.id ? (
+              <CustomerQR userId={user.id} name={name} profileImageUrl={profileImageUrl} />
+            ) : (
+              <p className="text-xs text-slate-400">Sign in to see your QR</p>
+            )}
+          </div>
+          <p className="text-[11px] text-slate-400 mt-2 text-center">Outlets can scan this to identify you and apply tags.</p>
         </div>
 
         {/* Save + Sign out */}
