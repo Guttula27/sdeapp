@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { QrCode, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 
@@ -49,6 +50,7 @@ type ResolveResult = {
 };
 
 export default function ScanResolverPage() {
+  const { t } = useTranslation();
   const params = useParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -62,7 +64,7 @@ export default function ScanResolverPage() {
       try {
         const target = await resolve(params, location.pathname);
         if (!target) {
-          navigate('/scan', { state: { error: 'This QR code is not recognised.' }, replace: true });
+          navigate('/scan', { state: { error: t('scan.qrNotRecognised') }, replace: true });
           return;
         }
         if (!isLoggedIn) {
@@ -76,7 +78,7 @@ export default function ScanResolverPage() {
         }
       } catch (e: any) {
         navigate('/scan', {
-          state: { error: e?.message || 'Could not resolve this QR code.' },
+          state: { error: e?.message || t('scan.qrNotRecognised') },
           replace: true,
         });
       }
@@ -93,9 +95,9 @@ export default function ScanResolverPage() {
         <div className="mx-auto mb-4 w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-400 flex items-center justify-center shadow-lg">
           <QrCode size={28} className="text-white" />
         </div>
-        <p className="text-sm font-bold text-slate-800">Opening menu…</p>
+        <p className="text-sm font-bold text-slate-800">{t('scan.openingMenu')}</p>
         <p className="text-xs text-slate-500 mt-1 inline-flex items-center gap-1">
-          <Loader2 size={11} className="animate-spin" /> hang tight
+          <Loader2 size={11} className="animate-spin" /> {t('scan.hangTight')}
         </p>
       </div>
     </div>

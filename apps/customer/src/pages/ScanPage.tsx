@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { Html5Qrcode } from 'html5-qrcode';
 import { Camera, CameraOff, QrCode as QrCodeIcon, Store, ChevronRight } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 
 const SCANNER_ID = 'qr-scanner-region';
@@ -30,6 +31,7 @@ type PublicOutlet = {
 };
 
 export default function ScanPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const [active, setActive] = useState(false);
@@ -67,7 +69,7 @@ export default function ScanPage() {
         async (decoded) => {
           const target = resolveTarget(decoded);
           if (!target) {
-            toast.error('QR code not recognised');
+            toast.error(t('scan.qrNotRecognised'));
             return;
           }
           await stop();
@@ -77,7 +79,7 @@ export default function ScanPage() {
       );
       setActive(true);
     } catch (e: any) {
-      setError(e?.message || 'Could not access camera');
+      setError(e?.message || t('scan.noCamera'));
       setActive(false);
     }
   };
@@ -96,8 +98,8 @@ export default function ScanPage() {
           <QrCodeIcon size={20} className="text-white" />
         </div>
         <div>
-          <p className="text-base font-bold text-white">Scan a Menu QR</p>
-          <p className="text-xs text-slate-400">Point your camera at the QR on your table</p>
+          <p className="text-base font-bold text-white">{t('scan.title')}</p>
+          <p className="text-xs text-slate-400">{t('scan.subtitle')}</p>
         </div>
       </div>
 
@@ -107,11 +109,11 @@ export default function ScanPage() {
         {!active && (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6 bg-slate-900/85">
             <CameraOff size={32} className="text-slate-400 mb-3" />
-            <p className="text-sm font-semibold text-white mb-1">Camera unavailable</p>
-            <p className="text-xs text-slate-400 mb-4">{error || 'Tap below to retry.'}</p>
+            <p className="text-sm font-semibold text-white mb-1">{t('scan.cameraUnavailable')}</p>
+            <p className="text-xs text-slate-400 mb-4">{error || t('scan.tapToRetry')}</p>
             <button onClick={start}
               className="flex items-center gap-2 bg-white text-slate-900 px-4 py-2 rounded-xl text-sm font-bold">
-              <Camera size={14} /> Retry
+              <Camera size={14} /> {t('scan.retry')}
             </button>
           </div>
         )}
@@ -129,7 +131,7 @@ export default function ScanPage() {
 
       {/* Outlet picker — kept alongside the live QR scanner for desktop/testing where a camera isn't available. */}
       <div className="px-4 pt-5 pb-6 flex-1 overflow-y-auto">
-        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Or pick an outlet</p>
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">{t('scan.orPickOutlet')}</p>
         {outletsLoading ? (
           <div className="space-y-2">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -137,7 +139,7 @@ export default function ScanPage() {
             ))}
           </div>
         ) : outlets.length === 0 ? (
-          <p className="text-xs text-slate-400 italic text-center py-8">No outlets available.</p>
+          <p className="text-xs text-slate-400 italic text-center py-8">{t('scan.noOutlets')}</p>
         ) : (
           <div className="space-y-2">
             {outlets.map((o) => (
