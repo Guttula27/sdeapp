@@ -62,6 +62,21 @@ function elapsed(t: string) {
   return rest ? `${h}h ${rest}m` : `${h}h`;
 }
 
+// Locale-aware "26 Jun, 7:14 PM" — used on terminal orders where a
+// live duration would just tick uselessly. Falls back to the raw ISO
+// if Intl.DateTimeFormat blows up (older browser / weird timezone).
+function formatPlacedAt(t: string): string {
+  try {
+    const d = new Date(t);
+    return new Intl.DateTimeFormat(undefined, {
+      day: '2-digit', month: 'short',
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    }).format(d);
+  } catch {
+    return t;
+  }
+}
+
 // Group expanded combo (bundle) children back under their parent so the
 // customer sees one combo entry on the bill + tracking views, with the
 // sub-items listed beneath. Standalone OrderItems pass through.
@@ -264,7 +279,15 @@ export default function OrderTrackingPage() {
             </span>
           )}
           <span className="inline-flex items-center gap-1 text-slate-300 bg-white/10 border border-white/20 rounded-full px-3 py-1 text-xs font-semibold">
-            <Clock size={11} /> Placed {elapsed(order.createdAt)} ago
+            {/* While the order is in flight the elapsed-time chip is the
+                useful signal ("Placed 12 min ago"). Once it's terminal
+                (SERVED / CANCELLED / DISPUTED / RESOLVED / REFUND_COMPLETE)
+                the duration becomes noise that just keeps ticking — pin
+                it to the actual placement timestamp instead. */}
+            <Clock size={11} />
+            {isDone
+              ? `Placed ${formatPlacedAt(order.createdAt)}`
+              : `Placed ${elapsed(order.createdAt)} ago`}
           </span>
           {order.isPostpaid && (
             <span
