@@ -56,6 +56,12 @@ const args = process.argv.slice(2);
 const langsArg = args.find((a) => a.startsWith('--langs='))
   || (args.includes('--langs') ? args[args.indexOf('--langs') + 1] : null);
 const force = args.includes('--force');
+// "Existing only" mode — only refresh locales that already have a
+// committed JSON file. Skips greenfield generation entirely. The
+// prebuild hook runs in this mode so a deploy never hammers Lingva
+// from inside a build container (which always loses against per-IP
+// throttles); new languages are translated locally and committed.
+const existingOnly = args.includes('--existing-only') || process.env.LOCALE_EXISTING_ONLY === '1';
 
 async function resolveTargetLangs() {
   if (langsArg) {
@@ -311,6 +317,11 @@ async function main() {
     if (lang === 'en') continue;
     const outFile = join(LOCALES_DIR, `${lang}.json`);
     const sidecar = join(LOCALES_DIR, `${lang}.sources.json`);
+
+    if (existingOnly && !existsSync(outFile)) {
+      console.log(`\n=== ${lang} === skipped (existing-only mode, run \`--langs ${lang}\` locally to seed)`);
+      continue;
+    }
 
     const previous = existsSync(outFile) ? JSON.parse(readFileSync(outFile, 'utf8')) : null;
     const prevSrc  = !force && existsSync(sidecar) ? JSON.parse(readFileSync(sidecar, 'utf8')) : null;
