@@ -791,20 +791,15 @@ function TrackPageAdCard({ outletName }: { outletName?: string | null }) {
         className="relative rounded-2xl overflow-hidden shadow-card border border-amber-200 bg-amber-50/60"
         style={{ minHeight: 64 }}
       >
-        {/* "Sponsored" badge — top-right, deliberately uses an
-            advertising-conventional amber palette so customers and
-            outlet admins immediately read this as a paid slot, not as
-            app chrome. */}
-        <span className="absolute top-2 right-2 text-[9px] font-black uppercase tracking-widest text-amber-700 bg-amber-100 border border-amber-200 rounded px-1.5 py-0.5">
-          Sponsored
-        </span>
-
-        {/* Dismiss → collapse to pill. Sits to the left of the badge
-            so the X never overlaps the label. */}
+        {/* Dismiss → collapse to pill. The "Sponsored" badge was
+            deliberately dropped while the slot is still showing the
+            outlet's own name (an outlet promoting itself isn't a
+            paid ad). When real campaign creatives ship, re-introduce
+            the label so the slot reads as commercial. */}
         <button
           onClick={() => setCollapsedPersisted(true)}
           aria-label="Hide ad"
-          className="absolute top-1.5 right-[68px] p-1 text-slate-400 hover:text-slate-700"
+          className="absolute top-1.5 right-1.5 p-1 text-slate-400 hover:text-slate-700"
         >
           <X size={13} />
         </button>

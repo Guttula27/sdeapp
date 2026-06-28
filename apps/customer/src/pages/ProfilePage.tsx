@@ -131,7 +131,16 @@ export default function ProfilePage() {
   const canVibrate = vibrationSupported();
   const onIOS = isIOS();
   const [pref, setPref] = useState<string>(user?.preferredUpiApp || 'GPAY');
-  const [language, setLanguage] = useState<string>((user as any)?.preferredLanguage || 'en');
+  // Initial seed prefers the auth context's profile value; falls
+  // back to the live i18n language (which the customer may have just
+  // switched via /languages dropdown), then 'en'. Without the i18n
+  // fallback, a freshly-arrived profile page on a Hindi-speaking
+  // user would default the picker to English purely because the
+  // user object hadn't carried preferredLanguage when this state
+  // initialised.
+  const [language, setLanguage] = useState<string>(
+    (user as any)?.preferredLanguage || i18n.language || 'en',
+  );
   const [languages, setLanguages] = useState<{ code: string; name: string; nativeName: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const picRef = useRef<HTMLInputElement>(null);
@@ -167,6 +176,11 @@ export default function ProfilePage() {
       setRingtone(u.alertRingtone || 'chime');
       setVolume(u.alertVolume ?? 70);
       setPref(u.preferredUpiApp || 'GPAY');
+      // Sync the picker to whatever the server says the user's
+      // preferred language is — this was previously missing, so the
+      // dropdown stayed stuck on the initial 'en' fallback even when
+      // the rest of the page was rendering in another language.
+      setLanguage(u.preferredLanguage || i18n.language || 'en');
       if (token) login(u, token);
     }).catch(() => {});
     // eslint-disable-next-line
