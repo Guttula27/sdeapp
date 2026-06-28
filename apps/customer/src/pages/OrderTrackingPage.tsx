@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import {
   CheckCircle2, Clock, ChefHat, Bell, Package2,
-  RotateCcw, Star, AlertTriangle, X, ChevronDown,
+  RotateCcw, Star, AlertTriangle, X, ChevronDown, ChevronUp,
   MessageSquare, IndianRupee, ArrowLeft, Heart, Plus,
 } from 'lucide-react';
 import api from '../services/api';
@@ -735,37 +735,91 @@ export default function OrderTrackingPage() {
 }
 
 /**
- * Bottom-pinned advertisement card on the order tracking page.
+ * Bottom-pinned advertisement banner on the order tracking page.
  *
- * Sticky-positioned so it remains visible while the customer scrolls
- * the page — the nearest scroll container is BottomNav's <main>, so
- * `sticky bottom-0` pins to the viewport's lower edge.
+ * Styling intent: the banner must read as an AD SLOT, not as a
+ * brand element of the app. So:
+ *   - Off-white card (slate-50 / amber-tinged), NOT brand-teal.
+ *   - Prominent "SPONSORED" badge top-right.
+ *   - Distinct typography (slate text) — no white-on-teal that would
+ *     visually merge into the page's brand chrome.
+ * Once real campaigns ship, this same shell renders image / video /
+ * gif creative with the badge unchanged; the outlet-name banner is
+ * the fallback when no campaign is active for the outlet.
  *
- * Today's content is just the outlet name styled as a banner. The
- * component is shaped to take an `ad` prop later (image, video, gif,
- * or rich text) once the campaign-management surface lands; the
- * current outlet-name banner becomes the fallback when no campaign
- * is active for the outlet.
+ * Behaviour: collapsible. The X collapses to a tiny pill ("Show ad")
+ * so the customer can reclaim screen space; sessionStorage persists
+ * the dismissed state per-tab so it doesn't pop back on every re-
+ * render but doesn't survive across sessions (we still want the next
+ * visit to show the slot).
+ *
+ * Sticky-positioned: the nearest scroll container is BottomNav's
+ * <main>, so `sticky bottom-0` pins to the viewport's lower edge.
  */
 function TrackPageAdCard({ outletName }: { outletName?: string | null }) {
+  const storageKey = 'pwa.track.adCollapsed';
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try { return sessionStorage.getItem(storageKey) === '1'; } catch { return false; }
+  });
+  const setCollapsedPersisted = (v: boolean) => {
+    setCollapsed(v);
+    try { sessionStorage.setItem(storageKey, v ? '1' : '0'); } catch { /* private mode */ }
+  };
+
   if (!outletName) return null;
+
+  // Collapsed → small pill anchored to the bottom-right. Less visual
+  // load than the full banner but still an obvious re-entry point.
+  if (collapsed) {
+    return (
+      <div className="sticky bottom-0 left-0 right-0 z-30 px-3 pb-3 pt-1 pointer-events-none">
+        <div className="flex justify-end pointer-events-auto">
+          <button
+            onClick={() => setCollapsedPersisted(false)}
+            className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 bg-white border border-slate-200 rounded-full px-3 py-1.5 shadow-card hover:bg-slate-50"
+          >
+            <ChevronUp size={12} /> Show ad
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="sticky bottom-0 left-0 right-0 z-30 px-3 pb-3 pt-2 bg-gradient-to-t from-slate-50 via-slate-50/95 to-transparent">
       <div
-        className="rounded-2xl overflow-hidden shadow-card border border-slate-200 bg-gradient-to-r from-brand-700 to-brand-500 text-white"
+        className="relative rounded-2xl overflow-hidden shadow-card border border-amber-200 bg-amber-50/60"
         style={{ minHeight: 64 }}
       >
-        <div className="px-4 py-3 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-white/15 backdrop-blur-sm border border-white/20 flex items-center justify-center shrink-0">
-            <span className="text-base font-black">
+        {/* "Sponsored" badge — top-right, deliberately uses an
+            advertising-conventional amber palette so customers and
+            outlet admins immediately read this as a paid slot, not as
+            app chrome. */}
+        <span className="absolute top-2 right-2 text-[9px] font-black uppercase tracking-widest text-amber-700 bg-amber-100 border border-amber-200 rounded px-1.5 py-0.5">
+          Sponsored
+        </span>
+
+        {/* Dismiss → collapse to pill. Sits to the left of the badge
+            so the X never overlaps the label. */}
+        <button
+          onClick={() => setCollapsedPersisted(true)}
+          aria-label="Hide ad"
+          className="absolute top-1.5 right-[68px] p-1 text-slate-400 hover:text-slate-700"
+        >
+          <X size={13} />
+        </button>
+
+        <div className="px-4 pt-4 pb-3 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-white border border-amber-200 flex items-center justify-center shrink-0">
+            <span className="text-base font-black text-amber-700">
               {outletName.trim().charAt(0).toUpperCase()}
             </span>
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] uppercase tracking-widest text-white/70 font-semibold">
+          <div className="flex-1 min-w-0 pr-12">
+            <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">
               Brought to you by
             </p>
-            <p className="text-sm font-bold truncate">{outletName}</p>
+            <p className="text-sm font-bold text-slate-800 truncate">{outletName}</p>
           </div>
         </div>
       </div>
