@@ -50,20 +50,64 @@ async function registerForFcm(): Promise<void> {
       return;
     }
 
-    // We deliberately do NOT call LocalNotifications.createChannel
-    // here. An earlier attempt created a custom 'paynpik-alerts'
-    // channel which Android then routed every FCM message into — but
-    // the channel ended up silent on some devices (the JS createChannel
-    // sound argument doesn't reliably resolve to the system default).
-    // Letting FCM use the default high-priority channel that
-    // Capacitor's PushNotifications plugin auto-registers gives us
-    // sound + tray entry reliably. The cost is no per-channel user
-    // customisation in OS settings, which we can revisit later via
-    // a native-side channel registration in MainActivity.
+    // Register a dedicated 'order_updates' channel — surfaces in the
+    // OS notification settings as its own row, so customers can tune
+    // it (or, more importantly, can't accidentally mute every Paynpik
+    // notification by toggling a single catch-all toggle). Importance
+    // HIGH (4) is the right tier for transactional alerts: heads-up
+    // banner, default ringtone, vibration, lockscreen visible. Lower
+    // tiers (default / low) suppress the heads-up; MAX adds full-
+    // screen intent which is too aggressive for "your food is ready".
+    //
+    // sound omitted on purpose — Capacitor's createChannel expects a
+    // res/raw/ resource name and silently mutes the channel if it
+    // can't resolve one. Leaving sound undefined hands the channel
+    // the system default ringtone, which is what every other apps'
+    // critical channels do.
+    //
+    // Channel settings are immutable after the first install on a
+    // given device — only id, name, description, and group can be
+    // changed later by code. Importance/sound/vibration can only be
+    // raised, never lowered, and only by the user via OS settings.
+    // Use a fresh id ('order_updates') rather than reviving the old
+    // 'paynpik-alerts' id, which on some devices is permanently
+    // stuck in the silent state from the earlier bad rollout.
+    try {
+      await PushNotifications.createChannel({
+        id: 'order_updates',
+        name: 'Order updates',
+        description: 'Order ready, served, payments and refunds',
+        importance: 4, // HIGH — heads-up + sound + vibration
+        visibility: 1, // VISIBILITY_PUBLIC — show on lockscreen
+        vibration: true,
+        lights: true,
+      });
+    } catch (e) {
+      // Channel may already exist (idempotent on Android) — log but
+      // don't block registration. If the create truly failed, the
+      // device falls back to the default high-priority channel.
+      // eslint-disable-next-line no-console
+      console.warn('[push] createChannel failed', e);
+    }
+
     // LocalNotifications still needs a one-time permission grant on
-    // Android 13+ so the schedule() mirror below works.
+    // Android 13+ so the foreground schedule() mirror below works.
     try { await LocalNotifications.requestPermissions(); }
     catch { /* ignore */ }
+    // Mirror the channel for LocalNotifications too — the foreground
+    // mirror below uses the same id, and LocalNotifications has a
+    // separate channel registry from PushNotifications.
+    try {
+      await LocalNotifications.createChannel({
+        id: 'order_updates',
+        name: 'Order updates',
+        description: 'Order ready, served, payments and refunds',
+        importance: 4,
+        visibility: 1,
+        vibration: true,
+        lights: true,
+      });
+    } catch { /* ignore */ }
 
     // Set up listeners *before* register() so we don't miss the first
     // token / notification events on cold boot.
@@ -108,11 +152,11 @@ async function registerForFcm(): Promise<void> {
             id: trayId || Math.floor(Math.random() * 1_000_000),
             title: notification.title || 'Order update',
             body: notification.body || '',
-            // No channelId / smallIcon — defaults to the same
-            // high-priority channel FCM uses (auto-registered by
-            // Capacitor PushNotifications) so the foreground mirror
-            // rings and shows in the tray just like a backgrounded
-            // delivery would.
+            // Route through the dedicated 'order_updates' channel so
+            // the foreground mirror rings and vibrates exactly like
+            // the backgrounded delivery, and stays grouped with the
+            // FCM-side notifications in the OS settings.
+            channelId: 'order_updates',
             extra: data,
           }],
         });

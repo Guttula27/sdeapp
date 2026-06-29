@@ -125,16 +125,19 @@ export class PushService implements OnModuleDestroy {
         data,
         android: {
           // Priority high → heads-up display, full-screen ringtone,
-          // wake from doze. Omitting channelId on purpose so the
-          // message lands on Capacitor PushNotifications' auto-
-          // registered default channel (always at IMPORTANCE_HIGH
-          // with system sound + vibration). An earlier attempt to
-          // pin to a custom 'paynpik-alerts' channel silenced the
-          // delivery on some Android builds because the channel was
-          // created with an undefined sound resource. The OS-default
-          // channel sidesteps that whole class of bug.
+          // wake from doze. channelId pins to the dedicated
+          // 'order_updates' channel registered client-side at FCM
+          // setup time. That channel is set up at IMPORTANCE_HIGH
+          // with system default sound + vibration, so customers see
+          // it as a distinct row in Android's notification settings
+          // and can't silence every Paynpik alert by toggling the
+          // catch-all default channel. Devices that pre-date the
+          // channel registration fall back to the plugin's default
+          // channel — same audible behaviour, just no per-channel
+          // OS toggle.
           priority: 'high',
           notification: {
+            channelId: 'order_updates',
             sound: 'default',
             defaultVibrateTimings: true,
             visibility: 'public',
