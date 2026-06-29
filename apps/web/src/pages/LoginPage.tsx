@@ -117,6 +117,27 @@ export default function LoginPage() {
             backgroundImage: 'linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px)',
             backgroundSize: '40px 40px'
           }} />
+          {/* Brand pyramid watermark — sits behind the marketing copy
+              with a slow drift animation so it reads as a living
+              visual rather than a stamped graphic. Low opacity keeps
+              the headline + features readable. */}
+          <img
+            src="/vezeor-hero.png"
+            alt=""
+            aria-hidden="true"
+            className="absolute opacity-[0.18] mix-blend-screen select-none"
+            style={{
+              right: -90, bottom: -60, width: 720, maxWidth: 'none',
+              animation: 'vezeor-login-drift 12s ease-in-out infinite',
+              filter: 'drop-shadow(0 30px 60px rgba(0,0,0,0.4))',
+            }}
+          />
+          <style>{`
+            @keyframes vezeor-login-drift {
+              0%, 100% { transform: translateY(0) scale(1); }
+              50%      { transform: translateY(-10px) scale(1.015); }
+            }
+          `}</style>
         </div>
 
         {/* Content */}
