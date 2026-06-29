@@ -1565,65 +1565,72 @@ export default function PlaceOrderPage() {
               />
             </div>
 
-            <div className="flex flex-col gap-2">
-              {isPostpaidTableFlow ? (
-                billingState === 'billing' && openOrder ? (
-                  <>
-                    <button
-                      onClick={() => payBill('CASH')}
-                      disabled={placing}
-                      className="w-full bg-gradient-to-r from-emerald-500 to-emerald-600 text-white py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {placing && <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-                      <Banknote size={14} /> Cash · ₹{Number(openOrder.totalAmount).toFixed(2)}
-                    </button>
-                    <button
-                      onClick={() => payBill('UPI')}
-                      disabled={placing}
-                      className="w-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      <Smartphone size={14} /> UPI · ₹{Number(openOrder.totalAmount).toFixed(2)}
-                    </button>
-                  </>
+            {/* Visual separator + breathing room between the phone
+                input and the payment buttons. Prevents fat-thumb taps
+                on Cash/UPI when the cashier is meaning to edit the
+                phone field — the border + extra pt gives both a
+                visible boundary and a generous miss-margin. */}
+            <div className="mt-3 pt-3 border-t border-slate-200">
+              <div className="grid grid-cols-2 gap-2.5">
+                {isPostpaidTableFlow ? (
+                  billingState === 'billing' && openOrder ? (
+                    <>
+                      <button
+                        onClick={() => payBill('CASH')}
+                        disabled={placing}
+                        className="w-full bg-gradient-to-r from-emerald-500 to-emerald-600 text-white py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-[52px]"
+                      >
+                        {placing && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                        <Banknote size={18} /> Cash · ₹{Number(openOrder.totalAmount).toFixed(2)}
+                      </button>
+                      <button
+                        onClick={() => payBill('UPI')}
+                        disabled={placing}
+                        className="w-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-[52px]"
+                      >
+                        <Smartphone size={18} /> UPI · ₹{Number(openOrder.totalAmount).toFixed(2)}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={placePostpaid}
+                        disabled={!cart.length || placing || outletClosed || !tableId}
+                        className="w-full bg-gradient-to-r from-brand-500 to-brand-700 text-white py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-[52px]"
+                      >
+                        {placing && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                        <Plus size={18} /> {openOrder ? 'Add to Order' : 'Place Order'}
+                      </button>
+                      <button
+                        onClick={pressBillNow}
+                        disabled={!openOrder || placing}
+                        title={!openOrder ? 'Place items first before billing' : undefined}
+                        className="w-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-[52px]"
+                      >
+                        <Banknote size={18} /> Bill Now{openOrder ? ` · ₹${Number(openOrder.totalAmount).toFixed(2)}` : ''}
+                      </button>
+                    </>
+                  )
                 ) : (
                   <>
                     <button
-                      onClick={placePostpaid}
-                      disabled={!cart.length || placing || outletClosed || !tableId}
-                      className="w-full bg-gradient-to-r from-brand-500 to-brand-700 text-white py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+                      onClick={() => submit('CASH')}
+                      disabled={!cart.length || placing || outletClosed || (bookingMode === 'table' && !tableId)}
+                      className="w-full bg-gradient-to-r from-emerald-500 to-emerald-600 text-white py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-[52px]"
                     >
-                      {placing && <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-                      <Plus size={14} /> {openOrder ? 'Add to Order' : 'Place Order'}
+                      {placing && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                      <Banknote size={18} /> Cash · ₹{totalAmount.toFixed(2)}
                     </button>
                     <button
-                      onClick={pressBillNow}
-                      disabled={!openOrder || placing}
-                      title={!openOrder ? 'Place items first before billing' : undefined}
-                      className="w-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+                      onClick={() => submit('UPI')}
+                      disabled={!cart.length || placing || outletClosed || (bookingMode === 'table' && !tableId)}
+                      className="w-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-[52px]"
                     >
-                      <Banknote size={14} /> Bill Now{openOrder ? ` · ₹${Number(openOrder.totalAmount).toFixed(2)}` : ''}
+                      <Smartphone size={18} /> UPI · ₹{totalAmount.toFixed(2)}
                     </button>
                   </>
-                )
-              ) : (
-                <>
-                  <button
-                    onClick={() => submit('CASH')}
-                    disabled={!cart.length || placing || outletClosed || (bookingMode === 'table' && !tableId)}
-                    className="w-full bg-gradient-to-r from-emerald-500 to-emerald-600 text-white py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    {placing && <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-                    <Banknote size={14} /> Cash · ₹{totalAmount.toFixed(2)}
-                  </button>
-                  <button
-                    onClick={() => submit('UPI')}
-                    disabled={!cart.length || placing || outletClosed || (bookingMode === 'table' && !tableId)}
-                    className="w-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    <Smartphone size={14} /> UPI · ₹{totalAmount.toFixed(2)}
-                  </button>
-                </>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </aside>
