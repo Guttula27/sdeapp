@@ -7,8 +7,48 @@
     <meta name="description" content="VEZEOR — Run your restaurant on one screen. QR ordering, live kitchen display, payments, inventory and analytics for single outlets and multi-location brands." />
     <meta name="theme-color" content="#0B4245" />
     <title>VEZEOR — Very Easy To Order</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #08363a; }
+      #vezeor-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(ellipse at center, #0B4245 0%, #07292c 100%);
+        opacity: 1;
+        transition: opacity 320ms ease-out;
+      }
+      #vezeor-splash.vezeor-splash-fade { opacity: 0; pointer-events: none; }
+      #vezeor-splash img {
+        max-width: min(70vw, 560px);
+        max-height: 70vh;
+        height: auto;
+        width: auto;
+        opacity: 0;
+        animation:
+          vezeor-fade-in 540ms 60ms ease-out forwards,
+          vezeor-pulse 3.6s 600ms ease-in-out infinite;
+        filter: drop-shadow(0 12px 36px rgba(0, 0, 0, 0.45));
+      }
+      @keyframes vezeor-fade-in {
+        from { opacity: 0; transform: scale(0.96); }
+        to   { opacity: 1; transform: scale(1); }
+      }
+      @keyframes vezeor-pulse {
+        0%, 100% { transform: scale(1); }
+        50%      { transform: scale(1.025); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #vezeor-splash img { animation: vezeor-fade-in 200ms ease-out forwards; }
+      }
+    </style>
   </head>
   <body>
+    <div id="vezeor-splash">
+      <img src="/vezeor-hero.png" alt="VEZEOR — Very Easy to Order" />
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

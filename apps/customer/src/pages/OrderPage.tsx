@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import { ShoppingCart, Plus, Minus, X, LogOut, Star, Clock, ChevronRight, User, Heart, Lock } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 import { cachedGet } from '../utils/cachedGet';
 import { useRefreshOnFocus } from '../hooks/useRefreshOnFocus';
@@ -37,26 +38,32 @@ interface CartItem {
 // into a short label like "9:00 AM" (today), "Tomorrow 9:00 AM", or
 // "Mon 9:00 AM" (further out). Used to populate the "Available from …"
 // badge on items / categories / subs whose schedule has them blocked.
-const DAY_LABELS = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+//
+// Takes the i18n t() function so the day name + AM/PM + "Tomorrow"
+// translate alongside the rest of the page. Caller supplies it once
+// at the page component level; the module-scope helper stays pure.
+const DAY_KEYS = ['', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 function formatNextOpen(
   next: { dayOfWeek: number; minute: number } | null | undefined,
-  fallback = 'soon',
+  t: (key: string) => string,
+  fallback?: string,
 ): string {
-  if (!next) return fallback;
+  if (!next) return fallback ?? t('days.soon');
   const h = Math.floor(next.minute / 60);
   const m = next.minute % 60;
-  const period = h >= 12 ? 'PM' : 'AM';
+  const period = h >= 12 ? t('days.pm') : t('days.am');
   const hour12 = h % 12 === 0 ? 12 : h % 12;
   const time = `${hour12}:${m.toString().padStart(2, '0')} ${period}`;
   const now = new Date();
   const todayDow = now.getDay() === 0 ? 7 : now.getDay(); // ISO Mon=1..Sun=7
   if (next.dayOfWeek === todayDow) return time;
   const tomorrow = (todayDow % 7) + 1;
-  if (next.dayOfWeek === tomorrow) return `Tomorrow ${time}`;
-  return `${DAY_LABELS[next.dayOfWeek]} ${time}`;
+  if (next.dayOfWeek === tomorrow) return `${t('days.tomorrow')} ${time}`;
+  return `${t(`days.${DAY_KEYS[next.dayOfWeek]}`)} ${time}`;
 }
 
 export default function OrderPage() {
+  const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
   const navigate  = useNavigate();
   const location  = useLocation();
@@ -213,7 +220,7 @@ export default function OrderPage() {
           items: s.items?.map((it: any) => it.id === item.id ? { ...it, isFavorite: !next } : it),
         })),
       })));
-      toast.error('Failed to update favourite');
+      toast.error(t('order.favouriteFailed'));
     }
   };
 
@@ -554,17 +561,20 @@ export default function OrderPage() {
   const cartTotal = subtotal + taxAmount + parcelPreview;
   const cartCount = cart.reduce((s, c) => s + c.quantity, 0);
 
-  const goToPay = () => {
-    if (!cart.length) return;
-    if (openStatus && !openStatus.isOpen) {
-      toast.error(`Outlet is currently closed${openStatus.reason ? ` · ${openStatus.reason}` : ''}`);
-      return;
-    }
-    if (!isLoggedIn) {
-      toast('Sign in to continue', { icon: '🔐' });
-      navigate('/auth', { state: { from: `/order${window.location.search}` } });
-      return;
-    }
+  // Pay-later prompt state. When the customer carries a CustomerTag
+  // with allowPayLater=true at this outlet, the cart's Place Order
+  // button first shows a confirm: pay now (→ /pay) or pay later
+  // (→ order placed immediately with payLater=true; settled offline).
+  const [payLaterPrompt, setPayLaterPrompt] = useState<null | {
+    tagName: string | null;
+    currentBalance: number;
+    ceiling: number | null;
+  }>(null);
+  const [submittingPayLater, setSubmittingPayLater] = useState(false);
+
+  // Lift the actual /pay navigation out so both the "Pay now" button on
+  // the dialog and the no-pay-later-tag fast path can call it.
+  const navigateToPayment = () => {
     navigate('/pay', {
       state: {
         outletId,
@@ -579,12 +589,75 @@ export default function OrderPage() {
     });
   };
 
+  const goToPay = async () => {
+    if (!cart.length) return;
+    if (openStatus && !openStatus.isOpen) {
+      toast.error(`${t('order.outletClosedToast')}${openStatus.reason ? ` · ${openStatus.reason}` : ''}`);
+      return;
+    }
+    if (!isLoggedIn) {
+      toast('Sign in to continue', { icon: '🔐' });
+      navigate('/auth', { state: { from: `/order${window.location.search}` } });
+      return;
+    }
+    // Lookup is cheap (one row); not gated by a feature flag because
+    // a missing tag short-circuits to "no, just pay now". Network failure
+    // falls through to the normal payment screen — never blocks the
+    // customer.
+    try {
+      const { data } = await api.get(`/outlets/${outletId}/dues/me/${user!.id}`);
+      const info = data?.data ?? data;
+      if (info?.allowPayLater) {
+        setPayLaterPrompt({
+          tagName: info.tagName ?? null,
+          currentBalance: Number(info.currentBalance ?? 0),
+          ceiling: info.ceiling != null ? Number(info.ceiling) : null,
+        });
+        return;
+      }
+    } catch {
+      // ignore — defaults to normal payment flow
+    }
+    navigateToPayment();
+  };
+
+  // Place the order as pay-later (DEBIT on the customer's dues ledger).
+  // Skips the payment screen entirely — there's nothing to charge.
+  const placePayLater = async () => {
+    if (!cart.length) return;
+    setSubmittingPayLater(true);
+    try {
+      const { data } = await api.post(`/outlets/${outletId}/orders`, {
+        tableId: tableId || undefined,
+        isParcel,
+        payLater: true,
+        items: cart.map((c) => ({
+          itemId: c.itemId,
+          variantId: c.variantId,
+          quantity: c.quantity,
+          toppings: c.toppings?.map((t) => ({ toppingId: t.toppingId, optionId: t.optionId })) || undefined,
+          bundleSelections: c.bundleSelections,
+        })),
+      });
+      try { sessionStorage.removeItem(`cart-${outletId}`); } catch {}
+      setCart([]);
+      setShowCart(false);
+      setPayLaterPrompt(null);
+      toast.success(t('order.dueSettlement'));
+      navigate(`/receipt/${data.data.id}`, { replace: true });
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || t('order.placeFailed'));
+    } finally {
+      setSubmittingPayLater(false);
+    }
+  };
+
   // Postpaid: place items without payment; open tab keeps accepting more
   // items until the customer hits Bill Now (which routes to /pay).
   const placePostpaid = async () => {
     if (!cart.length) return;
     if (openStatus && !openStatus.isOpen) {
-      toast.error(`Outlet is currently closed${openStatus.reason ? ` · ${openStatus.reason}` : ''}`);
+      toast.error(`${t('order.outletClosedToast')}${openStatus.reason ? ` · ${openStatus.reason}` : ''}`);
       return;
     }
     if (!isLoggedIn) {
@@ -603,21 +676,21 @@ export default function OrderPage() {
       }));
       if (openOrder) {
         await api.post(`/outlets/${outletId}/orders/${openOrder.id}/items`, { items: itemsPayload });
-        toast.success('Items added to your tab');
+        toast.success(t('order.itemsAddedToTab'));
       } else {
         await api.post(`/outlets/${outletId}/orders`, {
           tableId,
           isPostpaid: true,
           items: itemsPayload,
         });
-        toast.success('Tab opened — keep ordering');
+        toast.success(t('order.tabOpened'));
       }
       setCart([]);
       setShowCart(false);
       try { sessionStorage.removeItem(`cart-${outletId}`); } catch {}
       await refreshOpenOrder();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to place order');
+      toast.error(e.response?.data?.message || t('order.placeFailed'));
     } finally {
       setPlacing(false);
     }
@@ -640,7 +713,7 @@ export default function OrderPage() {
     <div className="flex items-center justify-center h-dvh bg-white">
       <div className="text-center space-y-3">
         <div className="w-12 h-12 border-[3px] border-brand-500 border-t-transparent rounded-full animate-spin mx-auto" />
-        <p className="text-sm text-slate-500 font-medium">Loading menu…</p>
+        <p className="text-sm text-slate-500 font-medium">{t('menu.loading')}</p>
       </div>
     </div>
   );
@@ -660,17 +733,17 @@ export default function OrderPage() {
       {menuFromCache && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-1.5 flex items-center gap-2 text-[11px] text-amber-800">
           <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-          <span className="font-bold">Cached menu</span>
+          <span className="font-bold">{t('menu.cached')}</span>
           {menuCachedAt && (
             <span className="opacity-70">
-              · last updated {Math.max(1, Math.round((Date.now() - menuCachedAt) / 60000))}m ago
+              · {t('menu.cachedAt', { minutes: Math.max(1, Math.round((Date.now() - menuCachedAt) / 60000)) })}
             </span>
           )}
           <button
             onClick={() => window.location.reload()}
             className="ml-auto text-amber-900 font-bold underline underline-offset-2"
           >
-            Refresh
+            {t('menu.refresh')}
           </button>
         </div>
       )}
@@ -679,16 +752,16 @@ export default function OrderPage() {
       {isPostpaidTable && openOrder && (
         <div className="bg-emerald-50 border-b border-emerald-100 px-4 py-2.5 flex items-center gap-3 sticky top-0 z-30">
           <div className="flex-1 min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">Your tab</p>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">{t('order.tab')}</p>
             <p className="text-xs text-emerald-900 truncate">
-              {openOrder.items?.length || 0} item{(openOrder.items?.length || 0) === 1 ? '' : 's'} · ₹{Number(openOrder.totalAmount).toFixed(2)}
+              {t('order.itemsCount', { count: openOrder.items?.length || 0 })} · ₹{Number(openOrder.totalAmount).toFixed(2)}
             </p>
           </div>
           <button
             onClick={goBillNow}
             className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow"
           >
-            Bill Now →
+            {t('order.billNow')}
           </button>
         </div>
       )}
@@ -705,7 +778,7 @@ export default function OrderPage() {
           <div className="flex items-center gap-2 min-w-0">
             <button
               onClick={() => {
-                if (cart.length > 0 && !window.confirm('Leave and clear cart?')) return;
+                if (cart.length > 0 && !window.confirm(t('order.leaveAndClearCart'))) return;
                 navigate('/');
               }}
               className="w-8 h-8 flex items-center justify-center text-brand-200 hover:text-white rounded-lg hover:bg-brand-600 shrink-0 transition-colors"
@@ -730,12 +803,12 @@ export default function OrderPage() {
             ) : null}
             <div className="min-w-0">
               <p className="font-bold text-white text-sm leading-tight truncate">
-                {outletMeta?.outletName || 'Menu'}
+                {outletMeta?.outletName || t('menu.title')}
               </p>
               <p className="text-[11px] text-brand-200 truncate">
                 {outletMeta?.businessName && <span>{outletMeta.businessName}</span>}
                 {outletMeta?.businessName && tableId && <span> · </span>}
-                {tableId && <span>Table {tableId.replace('table-', 'T')}</span>}
+                {tableId && <span>{t('order.tableLabel', { label: tableId.replace('table-', 'T') })}</span>}
               </p>
             </div>
           </div>
@@ -746,7 +819,7 @@ export default function OrderPage() {
               <button
                 onClick={() => navigate('/profile')}
                 className="w-8 h-8 bg-brand-500 hover:bg-brand-400 rounded-full flex items-center justify-center text-white font-black text-sm ring-1 ring-white/20 transition-colors"
-                title={`Signed in as ${user?.name}`}
+                title={t('order.signedInAs', { name: user?.name ?? '' })}
               >
                 {user?.name?.[0]}
               </button>
@@ -755,7 +828,7 @@ export default function OrderPage() {
                 onClick={() => navigate('/auth', { state: { from: `/order${window.location.search}` } })}
                 className="flex items-center gap-1 text-xs text-white bg-brand-600 hover:bg-brand-500 px-2.5 py-1.5 rounded-lg transition-colors"
               >
-                <User size={12} /> Sign in
+                <User size={12} /> {t('order.signIn')}
               </button>
             )}
             <button
@@ -767,7 +840,7 @@ export default function OrderPage() {
               className="relative flex items-center gap-2 bg-gold-500 hover:bg-gold-600 text-charcoal-900 px-4 py-2 rounded-full text-sm font-semibold shadow-sm transition-colors"
             >
               <ShoppingCart size={16} />
-              Cart
+              {t('order.cart')}
               {cartCount > 0 && (
                 <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 rounded-full text-[10px] font-bold flex items-center justify-center ring-2 ring-white">
                   {cartCount}
@@ -783,7 +856,7 @@ export default function OrderPage() {
             Desserts vs Drinks), with category tabs nested beneath. */}
         {enabledMenus.length > 1 && (
           <div className="bg-gradient-to-r from-slate-900 to-slate-800 px-4 py-2.5 border-b border-slate-700/50">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Menu</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">{t('menu.title')}</p>
             <div className="flex gap-2 overflow-x-auto scrollbar-hide">
               {enabledMenus.map((m) => (
                 <button
@@ -806,7 +879,7 @@ export default function OrderPage() {
         {/* Category tabs — nested beneath the active menu when multi-menu. */}
         {enabledMenus.length > 1 && (
           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-4 pt-2 -mb-1">
-            Categories
+            {t('menu.categories')}
           </p>
         )}
         <div className="flex gap-2 px-4 pb-3 pt-2 overflow-x-auto scrollbar-hide">
@@ -819,7 +892,7 @@ export default function OrderPage() {
                 : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200',
             )}
           >
-            ⭐ Special
+            ⭐ {t('menu.specials')}
           </button>
           {menu
             .filter((cat) => !activeMenuId || cat.menuId === activeMenuId)
@@ -845,7 +918,7 @@ export default function OrderPage() {
         <div className="bg-amber-50 border-y border-amber-200 px-4 py-2.5 flex items-center gap-2 text-amber-800">
           <Lock size={14} className="shrink-0" />
           <p className="text-xs font-semibold">
-            Outlet is currently closed{openStatus.reason ? ` · ${openStatus.reason}` : ''}. You can browse the menu but ordering is disabled.
+            {t('menu.outletClosedBanner', { reason: openStatus.reason ? ` · ${openStatus.reason}` : '' })}
           </p>
         </div>
       )}
@@ -856,8 +929,8 @@ export default function OrderPage() {
           {activeOffers.map((o: any) => (
             <div key={o.id} className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold text-brand-800 bg-white/80 rounded-full px-2.5 py-1">
               🎁 {o.triggerType === 'MIN_BILL'
-                ? `Spend ₹${o.minBillAmount} → get ${o.getItem?.name || 'free item'}`
-                : `Buy ${o.buyQuantity}× ${o.buyItem?.name || 'item'} → ${o.getQuantity}× ${o.getItem?.name || 'item'} free`}
+                ? t('menu.offerSpend', { amount: o.minBillAmount, item: o.getItem?.name || t('menu.freeItemFallback') })
+                : t('menu.offerBuyGet', { buyQty: o.buyQuantity, buyItem: o.buyItem?.name || t('menu.itemFallback'), getQty: o.getQuantity, getItem: o.getItem?.name || t('menu.itemFallback') })}
             </div>
           ))}
         </div>
@@ -874,18 +947,18 @@ export default function OrderPage() {
                 .flatMap((c: any) => c.subcategories?.flatMap((s: any) => s.items || []) || [])
                 .filter((i: any) => i.isDisplayed && i.isSpecial);
               if (specialItems.length === 0) {
-                return <p className="text-sm text-slate-400 italic text-center py-12">No specials right now</p>;
+                return <p className="text-sm text-slate-400 italic text-center py-12">{t('menu.noSpecials')}</p>;
               }
               const outletClosed = openStatus && !openStatus.isOpen;
               return specialItems.map((item: any) => {
                 const outOfSchedule = item.inSchedule === false;
                 const rowDisabled = outletClosed || !item.isAvailable || outOfSchedule;
                 const rowReason = outletClosed
-                  ? 'Outlet closed'
+                  ? t('item.outletClosedStatus')
                   : !item.isAvailable
-                    ? 'Currently not available'
+                    ? t('item.notAvailableNow')
                     : outOfSchedule
-                      ? `Available ${formatNextOpen(item.nextOpen, 'later')}`
+                      ? t('item.availableAt', { when: formatNextOpen(item.nextOpen, t, t('days.later')) })
                       : null;
                 return (
                 <MenuItemRow
@@ -911,7 +984,7 @@ export default function OrderPage() {
                       void openDetail(item);
                     } else {
                       addToCart(item);
-                      toast.success(`Added ${item.name}`);
+                      toast.success(t('order.addedToCart', { name: item.name }));
                     }
                   }}
                   onToggleFavorite={(e) => { e.stopPropagation(); toggleFavorite(item); }}
@@ -967,7 +1040,7 @@ export default function OrderPage() {
           })}
           {!activeCat?.subcategories?.length && (
             <p className="px-3 py-3 text-[11px] text-slate-400 italic">
-              Currently there are no items available
+              {t('menu.noItems')}
             </p>
           )}
         </aside>
@@ -980,7 +1053,7 @@ export default function OrderPage() {
             if (items.length === 0) {
               return (
                 <p className="text-sm text-slate-400 italic text-center py-12">
-                  Currently there are no items available
+                  {t('menu.noItems')}
                 </p>
               );
             }
@@ -989,11 +1062,11 @@ export default function OrderPage() {
               const outOfSchedule = item.inSchedule === false;
               const rowDisabled = outletClosed || !item.isAvailable || outOfSchedule;
               const rowReason = outletClosed
-                ? 'Outlet closed'
+                ? t('item.outletClosedStatus')
                 : !item.isAvailable
-                  ? 'Currently not available'
+                  ? t('item.notAvailableNow')
                   : outOfSchedule
-                    ? `Available ${formatNextOpen(item.nextOpen, 'later')}`
+                    ? t('item.availableAt', { when: formatNextOpen(item.nextOpen, t, t('days.later')) })
                     : null;
               return (
               <MenuItemRow
@@ -1011,7 +1084,7 @@ export default function OrderPage() {
                     void openDetail(item);
                   } else {
                     addToCart(item);
-                    toast.success(`Added ${item.name}`);
+                    toast.success(t('order.addedToCart', { name: item.name }));
                   }
                 }}
                 onToggleFavorite={(e) => { e.stopPropagation(); toggleFavorite(item); }}
@@ -1034,7 +1107,7 @@ export default function OrderPage() {
             <span className="bg-white/20 rounded-xl w-7 h-7 flex items-center justify-center text-sm font-black mr-3">
               {cartCount}
             </span>
-            <span className="flex-1 text-left">View Cart</span>
+            <span className="flex-1 text-left">{t('order.viewCart')}</span>
             <span className="font-black text-lg">₹{cartTotal.toFixed(2)}</span>
             <ChevronRight size={18} className="ml-1" />
           </button>
@@ -1051,8 +1124,8 @@ export default function OrderPage() {
             {/* Sheet header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
               <div>
-                <p className="font-bold text-slate-900">Your Order</p>
-                <p className="text-xs text-slate-400 mt-0.5">{cartCount} item{cartCount !== 1 ? 's' : ''}</p>
+                <p className="font-bold text-slate-900">{t('order.yourOrder')}</p>
+                <p className="text-xs text-slate-400 mt-0.5">{t('order.itemsCount', { count: cartCount })}</p>
               </div>
               <button onClick={() => setShowCart(false)} className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-600 bg-slate-100 rounded-xl">
                 <X size={16} />
@@ -1065,7 +1138,7 @@ export default function OrderPage() {
                 <div className="bg-slate-50 rounded-2xl p-3 space-y-2">
                   <div className="flex items-center gap-1.5">
                     <Lock size={11} className="text-slate-400" />
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Already on tab</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{t('order.alreadyOnTab')}</p>
                   </div>
                   {openOrder.items.map((oi: any) => (
                     <div key={oi.id} className="flex items-center justify-between">
@@ -1077,7 +1150,7 @@ export default function OrderPage() {
                     </div>
                   ))}
                   {cart.length > 0 && (
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 pt-2 border-t border-slate-200">New items</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 pt-2 border-t border-slate-200">{t('order.newItems')}</p>
                   )}
                 </div>
               )}
@@ -1091,7 +1164,7 @@ export default function OrderPage() {
                     )}
                     {item.bundleSelectionLabels?.length && (
                       <p className="text-[11px] text-brand-800 mt-0.5">
-                        {item.bundleSelections?.length ? 'Picks' : 'Includes'}: {item.bundleSelectionLabels.join(', ')}
+                        {item.bundleSelections?.length ? t('order.picks') : t('order.includes')}: {item.bundleSelectionLabels.join(', ')}
                       </p>
                     )}
                     <p className="text-sm font-bold text-brand-600 mt-0.5">₹{(item.price * item.quantity).toFixed(2)}</p>
@@ -1113,32 +1186,32 @@ export default function OrderPage() {
             <div className="px-5 pt-4 pb-6 border-t border-slate-100 space-y-3 safe-bottom">
               <label className="flex items-center gap-2 bg-slate-50 rounded-xl px-3 py-2 cursor-pointer">
                 <input type="checkbox" checked={isParcel} onChange={e => setIsParcel(e.target.checked)} className="w-4 h-4 accent-brand-500" />
-                <span className="text-sm font-medium text-slate-700">Order for parcel / takeaway</span>
+                <span className="text-sm font-medium text-slate-700">{t('order.parcelTakeaway')}</span>
               </label>
               <div className="space-y-1.5">
                 <div className="flex justify-between text-sm text-slate-500">
-                  <span>Subtotal</span><span>₹{subtotal.toFixed(2)}</span>
+                  <span>{t('order.subtotal')}</span><span>₹{subtotal.toFixed(2)}</span>
                 </div>
                 {taxAmount > 0 && (
                   <>
                     <div className="flex justify-between text-sm text-slate-500">
-                      <span>SGST <span className="text-[10px] text-slate-400">est.</span></span>
+                      <span>{t('order.sgst')} <span className="text-[10px] text-slate-400">{t('order.est')}</span></span>
                       <span>₹{(taxAmount / 2).toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between text-sm text-slate-500">
-                      <span>CGST <span className="text-[10px] text-slate-400">est.</span></span>
+                      <span>{t('order.cgst')} <span className="text-[10px] text-slate-400">{t('order.est')}</span></span>
                       <span>₹{(taxAmount / 2).toFixed(2)}</span>
                     </div>
                   </>
                 )}
                 {isParcel && (
                   <div className="flex justify-between text-sm text-slate-500">
-                    <span>Parcel charges<span className="text-[10px] text-slate-400 ml-1">est.</span></span>
+                    <span>{t('order.parcelCharges')}<span className="text-[10px] text-slate-400 ml-1">{t('order.est')}</span></span>
                     <span>₹{parcelPreview.toFixed(2)}</span>
                   </div>
                 )}
                 <div className="flex justify-between font-black text-slate-900 text-lg pt-1 border-t border-slate-100">
-                  <span>Total</span><span>₹{cartTotal.toFixed(2)}</span>
+                  <span>{t('order.total')}</span><span>₹{cartTotal.toFixed(2)}</span>
                 </div>
               </div>
               <button
@@ -1149,10 +1222,10 @@ export default function OrderPage() {
                 className="w-full bg-gradient-to-r from-gold-500 to-gold-400 text-charcoal-900 font-bold py-4 rounded-2xl text-base shadow-lg disabled:opacity-60 disabled:cursor-not-allowed transition-all active:scale-[.98]"
               >
                 {openStatus && !openStatus.isOpen
-                  ? 'Outlet closed'
+                  ? t('order.outletClosedShort')
                   : isPostpaidTable
-                    ? (openOrder ? 'Add to my tab →' : 'Place order →')
-                    : 'Pay & place order →'}
+                    ? (openOrder ? t('order.addToTab') : t('order.placeOrder'))
+                    : t('order.payAndPlace')}
               </button>
             </div>
           </div>
@@ -1184,6 +1257,67 @@ export default function OrderPage() {
           }}
         />
       )}
+
+      {/* Pay-later prompt — appears when the customer has a tag with
+          allowPayLater=true. Two paths: pay now (regular /pay screen)
+          or pay later (POSTs the order with payLater=true and lands
+          on the receipt; the amount becomes a DEBIT on their dues
+          ledger). Shown as a full-screen modal so it can't be missed
+          and there's no accidental dismiss-and-pay-now. */}
+      {payLaterPrompt && (
+        <div
+          className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 p-3"
+          onClick={() => { if (!submittingPayLater) setPayLaterPrompt(null); }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">{t('payLater.title')}</h3>
+              <p className="text-sm text-slate-600 mt-1">
+                {payLaterPrompt.tagName
+                  ? t('payLater.memberHint', { tagName: payLaterPrompt.tagName })
+                  : t('payLater.anyoneHint')}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 space-y-1">
+              <div className="flex items-center justify-between">
+                <span>{t('payLater.thisOrder')}</span>
+                <span className="font-bold">₹{cartTotal.toFixed(2)}</span>
+              </div>
+              {payLaterPrompt.currentBalance > 0 && (
+                <div className="flex items-center justify-between text-slate-500">
+                  <span>{t('payLater.currentBalance')}</span>
+                  <span>₹{payLaterPrompt.currentBalance.toFixed(2)}</span>
+                </div>
+              )}
+              {payLaterPrompt.ceiling != null && (
+                <div className="flex items-center justify-between text-slate-500">
+                  <span>{t('payLater.allowedUpTo')}</span>
+                  <span>₹{payLaterPrompt.ceiling.toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                disabled={submittingPayLater}
+                onClick={() => { setPayLaterPrompt(null); navigateToPayment(); }}
+              >
+                {t('payLater.payNow')}
+              </button>
+              <button
+                className="px-4 py-2.5 rounded-xl bg-gold-500 hover:bg-gold-600 text-charcoal-900 text-sm font-bold disabled:opacity-50"
+                disabled={submittingPayLater}
+                onClick={placePayLater}
+              >
+                {submittingPayLater ? t('payLater.placing') : t('payLater.yesPayLater')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1211,6 +1345,7 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
   disabled?: boolean;
   disabledReason?: string | null;
 }) {
+  const { t } = useTranslation();
   const hasVariants = !!item.variants?.length;
   // Resolve the lowest sticker price (`from ₹X`) the customer sees on
   // the row. For discount-aware display we also track the lowest
@@ -1290,33 +1425,33 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
                     'inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors',
                     item.isFavorite ? 'bg-red-50 text-red-500' : 'text-slate-300 hover:text-red-400 hover:bg-red-50',
                   )}
-                  title={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
-                  aria-label={item.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+                  title={item.isFavorite ? t('item.favouriteRemove') : t('item.favouriteAdd')}
+                  aria-label={item.isFavorite ? t('item.favouriteRemove') : t('item.favouriteAdd')}
                 >
                   <Heart size={18} fill={item.isFavorite ? 'currentColor' : 'none'} />
                 </button>
               )}
               {item.isPopular && (
                 <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-full">
-                  <Star size={8} fill="currentColor" /> Popular
+                  <Star size={8} fill="currentColor" /> {t('item.popular')}
                 </span>
               )}
               {item.isSpecial && (
                 <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-rose-50 text-rose-600 px-1.5 py-0.5 rounded-full">
-                  ⭐ Special
+                  ⭐ {t('item.special')}
                 </span>
               )}
               {/* Variant count — single chip "Nx options" so the
                   customer knows tapping opens a chooser. */}
               {hasVariants && (
                 <span className="inline-flex items-center text-[9px] font-bold bg-brand-50 text-brand-700 px-1.5 py-0.5 rounded-full border border-brand-100">
-                  {item.variants.length} options
+                  {t('item.optionsCount', { count: item.variants.length })}
                 </span>
               )}
               {/* Toppings indicator. */}
               {(item.itemToppingsCount ?? item.itemToppings?.length ?? 0) > 0 && (
                 <span className="inline-flex items-center text-[9px] font-bold bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full border border-indigo-100">
-                  + toppings
+                  {t('item.plusToppings')}
                 </span>
               )}
               {/* Limited-stock chip — exact count when ≤5 (mild
@@ -1331,11 +1466,11 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
                       ? 'bg-amber-100 text-amber-800 border border-amber-200'
                       : 'bg-amber-50 text-amber-700 border border-amber-100',
                   )}
-                  title={`Only ${item.availableQuantity} left in stock`}
+                  title={t('item.onlyNLeftInStock', { count: item.availableQuantity })}
                 >
                   {item.availableQuantity <= 5
-                    ? `Only ${item.availableQuantity} left`
-                    : 'Limited Quantity Available'}
+                    ? t('item.onlyNLeft', { count: item.availableQuantity })
+                    : t('item.limitedQuantity')}
                 </span>
               )}
               {disabled && disabledReason && (
@@ -1358,17 +1493,17 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
               {hasDiscount ? (
                 <>
                   <span className="text-sm font-black text-emerald-700">
-                    {hasVariants ? `from ₹${lowDiscounted.toFixed(0)}` : `₹${lowDiscounted.toFixed(0)}`}
+                    {hasVariants ? t('item.from', { price: lowDiscounted.toFixed(0) }) : `₹${lowDiscounted.toFixed(0)}`}
                   </span>
                   <span className="text-xs text-slate-400 line-through">
                     ₹{lowPrice.toFixed(0)}
                   </span>
                   <span className="inline-flex items-center text-[10px] font-bold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-full">
-                    Save ₹{saveAmount.toFixed(0)}
+                    {t('item.save', { amount: saveAmount.toFixed(0) })}
                   </span>
                 </>
               ) : (
-                <span className="text-sm font-black text-slate-900">{hasVariants ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}</span>
+                <span className="text-sm font-black text-slate-900">{hasVariants ? t('item.from', { price: lowPrice.toFixed(0) }) : `₹${lowPrice.toFixed(0)}`}</span>
               )}
               {item.ratingCount > 0 && (
                 <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700">
@@ -1389,7 +1524,7 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
                   : 'bg-gold-500 hover:bg-gold-600 text-charcoal-900',
               )}
             >
-              <Plus size={12} /> Add{qty > 0 && ` · ${qty}`}
+              <Plus size={12} /> {t('item.add')}{qty > 0 && ` · ${qty}`}
             </button>
           </div>
         </div>
@@ -1414,6 +1549,7 @@ function ItemDetailModal({
     bundlePicks?: { selections: string[]; labels: string[] },
   ) => void;
 }) {
+  const { t } = useTranslation();
   // Customer-choice bundle picker state — must run BEFORE variant state
   // because `usePerVariantQty` (below) is gated on it.
   const maxBundlePicks = item.isBundle && item.maxBundleSelections
@@ -1552,7 +1688,7 @@ function ItemDetailModal({
             <div className="flex items-center gap-1.5 flex-wrap">
               <FoodGradeDot grade={item.foodGrade} />
               <h3 className="text-base font-bold text-slate-900">{item.name}</h3>
-              {item.isPopular && <span className="text-[10px] font-bold bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-full">Popular</span>}
+              {item.isPopular && <span className="text-[10px] font-bold bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded-full">{t('item.popular')}</span>}
             </div>
             {(item.longDescription || item.shortDescription || item.description) && (
               <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
@@ -1560,13 +1696,13 @@ function ItemDetailModal({
               </p>
             )}
             <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-400 flex-wrap">
-              {item.preparationTime && <span className="flex items-center gap-1"><Clock size={10} /> {item.preparationTime} min</span>}
-              {item.parcelAvailable ? <span>Parcel available</span> : <span className="text-red-500">Not available for parcel</span>}
+              {item.preparationTime && <span className="flex items-center gap-1"><Clock size={10} /> {t('item.min', { minutes: item.preparationTime })}</span>}
+              {item.parcelAvailable ? <span>{t('item.parcelAvailable')}</span> : <span className="text-red-500">{t('item.notParcelAvailable')}</span>}
               {item.hasLimitedStock && item.availableQuantity > 0 && (
                 <span className="inline-flex items-center text-amber-700 font-semibold">
                   {item.availableQuantity <= 5
-                    ? `Only ${item.availableQuantity} left`
-                    : 'Limited Quantity Available'}
+                    ? t('item.onlyNLeft', { count: item.availableQuantity })
+                    : t('item.limitedQuantity')}
                 </span>
               )}
             </div>
@@ -1577,7 +1713,7 @@ function ItemDetailModal({
               the single-variant + single-qty radio path below. */}
           {hasVariants && usePerVariantQty && (
             <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Variants</p>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">{t('item.variants')}</p>
               <div className="space-y-1.5">
                 {item.variants.map((v: any) => {
                   const sticker = stickerFor(v);
@@ -1605,7 +1741,7 @@ function ItemDetailModal({
                               <span className="font-bold text-emerald-700">₹{unit.toFixed(0)}</span>
                               <span className="ml-1.5 text-slate-400 line-through">₹{sticker.toFixed(0)}</span>
                               <span className="ml-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full">
-                                Save ₹{(sticker - unit).toFixed(0)}
+                                {t('item.save', { amount: (sticker - unit).toFixed(0) })}
                               </span>
                             </>
                           ) : (
@@ -1619,7 +1755,7 @@ function ItemDetailModal({
                           onClick={dec}
                           disabled={q === 0}
                           className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center disabled:opacity-40"
-                          aria-label={`Remove one ${v.name}`}
+                          aria-label={t('item.removeOne', { name: v.name })}
                         >
                           <Minus size={13} />
                         </button>
@@ -1628,7 +1764,7 @@ function ItemDetailModal({
                           type="button"
                           onClick={inc}
                           className="w-8 h-8 rounded-lg bg-brand-500 hover:bg-brand-600 text-white flex items-center justify-center"
-                          aria-label={`Add one ${v.name}`}
+                          aria-label={t('item.addOne', { name: v.name })}
                         >
                           <Plus size={13} />
                         </button>
@@ -1643,7 +1779,7 @@ function ItemDetailModal({
               still drives the bundle price. */}
           {hasVariants && !usePerVariantQty && (
             <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Choose size</p>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">{t('item.chooseSize')}</p>
               <div className="space-y-1.5">
                 {item.variants.map((v: any) => {
                   const price = Number(v.effectivePrice ?? v.price);
@@ -1671,7 +1807,7 @@ function ItemDetailModal({
           {/* Toppings */}
           {item.itemToppings?.length > 0 && (
             <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Toppings</p>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">{t('item.toppings')}</p>
               <div className="space-y-2">
                 {item.itemToppings.map((link: any) => {
                   const sel = topSel[link.toppingId] || { selected: false };
@@ -1733,11 +1869,11 @@ function ItemDetailModal({
           {item.isBundle && maxBundlePicks === 0 && Array.isArray(item.bundleChildren) && item.bundleChildren.length > 0 && (
             <div>
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
-                What's inside ({item.bundleChildren.length})
+                {t('item.whatsInside', { count: item.bundleChildren.length })}
               </p>
               <ul className="space-y-1.5">
                 {item.bundleChildren.map((child: any) => {
-                  const childName = child.childItem?.name || 'Item';
+                  const childName = child.childItem?.name || t('item.fallbackName');
                   const variantName = child.variant?.name ? ` · ${child.variant.name}` : '';
                   const qtyLabel = (Number(child.quantity) || 1) > 1 ? ` × ${child.quantity}` : '';
                   return (
@@ -1761,7 +1897,7 @@ function ItemDetailModal({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">
-                  Pick {maxBundlePicks} of {item.bundleChildren.length}
+                  {t('item.pickXOfY', { x: maxBundlePicks, y: item.bundleChildren.length })}
                 </p>
                 <span className={clsx(
                   'text-[11px] font-bold px-2 py-0.5 rounded-full',
@@ -1769,14 +1905,14 @@ function ItemDetailModal({
                     ? 'bg-emerald-50 text-emerald-700'
                     : 'bg-amber-50 text-amber-700',
                 )}>
-                  {bundleSel.size}/{maxBundlePicks} selected
+                  {t('item.pickedXOfY', { x: bundleSel.size, y: maxBundlePicks })}
                 </span>
               </div>
               <div className="space-y-1.5">
                 {item.bundleChildren.map((child: any) => {
                   const checked = bundleSel.has(child.id);
                   const atCap = !checked && bundleSel.size >= maxBundlePicks;
-                  const childName = child.childItem?.name || 'Item';
+                  const childName = child.childItem?.name || t('item.fallbackName');
                   const variantName = child.variant?.name ? ` · ${child.variant.name}` : '';
                   const qtyLabel = (Number(child.quantity) || 1) > 1 ? ` × ${child.quantity}` : '';
                   return (
@@ -1812,7 +1948,7 @@ function ItemDetailModal({
               or when bundle path is active. */}
           {!usePerVariantQty && (
             <div className="flex items-center justify-between bg-slate-50 rounded-xl p-3">
-              <p className="text-sm font-semibold text-slate-700">Quantity</p>
+              <p className="text-sm font-semibold text-slate-700">{t('item.quantity')}</p>
               <div className="flex items-center gap-3">
                 <button onClick={() => setQty(q => Math.max(1, q - 1))} className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center"><Minus size={14} /></button>
                 <span className="w-6 text-center font-bold text-sm">{qty}</span>
@@ -1847,7 +1983,7 @@ function ItemDetailModal({
                   const child = item.bundleChildren?.find((c: any) => c.id === id);
                   if (!child) return '';
                   const v = child.variant?.name ? ` · ${child.variant.name}` : '';
-                  return `${child.childItem?.name || 'Item'}${v}`;
+                  return `${child.childItem?.name || t('item.fallbackName')}${v}`;
                 });
                 onAdd(picks, toppings, { selections: ids, labels });
               } else if (item.isBundle && Array.isArray(item.bundleChildren) && item.bundleChildren.length > 0) {
@@ -1859,7 +1995,7 @@ function ItemDetailModal({
                 const labels = item.bundleChildren.map((child: any) => {
                   const v = child.variant?.name ? ` · ${child.variant.name}` : '';
                   const q = (Number(child.quantity) || 1) > 1 ? ` × ${child.quantity}` : '';
-                  return `${child.childItem?.name || 'Item'}${v}${q}`;
+                  return `${child.childItem?.name || t('item.fallbackName')}${v}${q}`;
                 });
                 onAdd(picks, toppings, { selections: [], labels });
               } else {
@@ -1873,10 +2009,10 @@ function ItemDetailModal({
             className="flex-1 bg-gold-500 hover:bg-gold-600 text-charcoal-900 py-3 rounded-2xl text-sm font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {maxBundlePicks > 0 && bundleSel.size !== maxBundlePicks
-              ? `Pick ${maxBundlePicks - bundleSel.size} more`
+              ? t('item.pickNMore', { count: maxBundlePicks - bundleSel.size })
               : pickedItemCount === 0
-                ? 'Pick at least 1 variant'
-                : `Add ${pickedItemCount} to cart · ₹${lineTotal.toFixed(0)}`}
+                ? t('item.pickAtLeastOne')
+                : t('item.addNToCart', { count: pickedItemCount, total: lineTotal.toFixed(0) })}
           </button>
         </div>
       </div>

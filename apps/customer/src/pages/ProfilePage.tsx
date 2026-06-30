@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import {
   LogOut, User, Phone, Mail, Camera, X as XIcon,
   Volume2, Bell, QrCode, CreditCard, Save, Languages, Vibrate,
+  Wallet, ChevronRight,
 } from 'lucide-react';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 import api from '../services/api';
@@ -130,7 +131,16 @@ export default function ProfilePage() {
   const canVibrate = vibrationSupported();
   const onIOS = isIOS();
   const [pref, setPref] = useState<string>(user?.preferredUpiApp || 'GPAY');
-  const [language, setLanguage] = useState<string>((user as any)?.preferredLanguage || 'en');
+  // Initial seed prefers the auth context's profile value; falls
+  // back to the live i18n language (which the customer may have just
+  // switched via /languages dropdown), then 'en'. Without the i18n
+  // fallback, a freshly-arrived profile page on a Hindi-speaking
+  // user would default the picker to English purely because the
+  // user object hadn't carried preferredLanguage when this state
+  // initialised.
+  const [language, setLanguage] = useState<string>(
+    (user as any)?.preferredLanguage || i18n.language || 'en',
+  );
   const [languages, setLanguages] = useState<{ code: string; name: string; nativeName: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const picRef = useRef<HTMLInputElement>(null);
@@ -149,9 +159,9 @@ export default function ProfilePage() {
       // so the next visit fetches fresh in the new language; otherwise
       // the user sees the previous-language menu until the 1h TTL expires.
       invalidateAllCache();
-      toast.success('Language updated');
+      toast.success(t('profile.languageUpdated'));
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to update language');
+      toast.error(e.response?.data?.message || t('profile.languageUpdateFailed'));
     }
   };
 
@@ -166,6 +176,11 @@ export default function ProfilePage() {
       setRingtone(u.alertRingtone || 'chime');
       setVolume(u.alertVolume ?? 70);
       setPref(u.preferredUpiApp || 'GPAY');
+      // Sync the picker to whatever the server says the user's
+      // preferred language is — this was previously missing, so the
+      // dropdown stayed stuck on the initial 'en' fallback even when
+      // the rest of the page was rendering in another language.
+      setLanguage(u.preferredLanguage || i18n.language || 'en');
       if (token) login(u, token);
     }).catch(() => {});
     // eslint-disable-next-line
@@ -173,7 +188,7 @@ export default function ProfilePage() {
 
   const handleLogout = () => {
     logout();
-    toast('Signed out', { icon: '👋' });
+    toast(t('profile.signedOut'), { icon: '👋' });
     navigate('/auth');
   };
 
@@ -182,13 +197,13 @@ export default function ProfilePage() {
     e.target.value = '';
     if (!file) return;
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      toast.error('Only JPG / PNG / WebP'); return;
+      toast.error(t('profile.imageTypeError')); return;
     }
-    if (file.size > 1024 * 1024) { toast.error('Image too large (>1 MB)'); return; }
+    if (file.size > 1024 * 1024) { toast.error(t('profile.imageTooLarge')); return; }
     try {
       const url = await fileToDataUrl(file, 320, 0.85);
       setProfileImageUrl(url);
-    } catch { toast.error('Could not read image'); }
+    } catch { toast.error(t('profile.imageReadFail')); }
   };
 
   const save = async () => {
@@ -205,9 +220,9 @@ export default function ProfilePage() {
         preferredUpiApp: pref,
       });
       if (token) login({ ...user, ...data.data }, token);
-      toast.success('Profile saved');
+      toast.success(t('profile.saved'));
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to save');
+      toast.error(e.response?.data?.message || t('profile.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -233,8 +248,8 @@ export default function ProfilePage() {
   const testVibration = () => {
     if (!canVibrate) {
       toast.error(onIOS
-        ? 'iOS does not support web vibration'
-        : 'This device or browser does not support vibration');
+        ? t('profile.vibrateNotSupportedIos')
+        : t('profile.vibrateNotSupported'));
       return;
     }
     try {
@@ -244,12 +259,12 @@ export default function ProfilePage() {
       // back to navigator.vibrate in browsers.
       const ok = fireVibration([200, 100, 200]);
       if (!ok) {
-        toast.error('Vibration was blocked — check OS sound/vibration settings');
+        toast.error(t('profile.vibrateBlocked'));
       } else {
-        toast.success('Buzz! Did you feel it?');
+        toast.success(t('profile.vibrateSuccess'));
       }
     } catch {
-      toast.error('Vibration failed to fire');
+      toast.error(t('profile.vibrateFailed'));
     }
   };
 
@@ -269,12 +284,12 @@ export default function ProfilePage() {
               </div>
             )}
             <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[10px] font-bold text-center py-1 flex items-center justify-center gap-1">
-              <Camera size={10} /> Change
+              <Camera size={10} /> {t('profile.avatarChange')}
             </div>
           </button>
           <input ref={picRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={onPickPic} />
           <div className="min-w-0">
-            <p className="text-xl font-black text-white truncate">{name || 'You'}</p>
+            <p className="text-xl font-black text-white truncate">{name || t('profile.defaultName')}</p>
             <div className="flex items-center gap-1.5 text-slate-400 text-sm mt-0.5">
               <Phone size={12} />
               <span className="font-mono">{phone}</span>
@@ -284,7 +299,7 @@ export default function ProfilePage() {
                 onClick={() => setProfileImageUrl(null)}
                 className="text-[10px] text-red-300 hover:text-red-400 mt-1 inline-flex items-center gap-1"
               >
-                <XIcon size={10} /> Remove photo
+                <XIcon size={10} /> {t('profile.avatarRemove')}
               </button>
             )}
           </div>
@@ -292,44 +307,44 @@ export default function ProfilePage() {
       </div>
 
       <div className="px-4 -mt-7 relative z-10 space-y-4">
-        {/* Customer QR */}
-        <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <QrCode size={14} className="text-slate-400" />
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Your customer QR</p>
-          </div>
-          <div className="flex justify-center bg-slate-50 rounded-xl p-4">
-            {user?.id ? (
-              <CustomerQR userId={user.id} name={name} profileImageUrl={profileImageUrl} />
-            ) : (
-              <p className="text-xs text-slate-400">Sign in to see your QR</p>
-            )}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-2 text-center">Outlets can scan this to identify you and apply tags.</p>
-        </div>
-
         {/* Identity */}
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-4 space-y-3">
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Identity</p>
-          <Field label="Name" icon={User}>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">{t('profile.identity')}</p>
+          <Field label={t('profile.name')} icon={User}>
             <input value={name} onChange={e => setName(e.target.value)} className="input" />
           </Field>
-          <Field label="Phone" icon={Phone}>
+          <Field label={t('profile.phone')} icon={Phone}>
             <input value={phone} onChange={e => setPhone(e.target.value)} className="input" />
-            <p className="text-[10px] text-slate-400 mt-1">This is your login phone.</p>
+            <p className="text-[10px] text-slate-400 mt-1">{t('profile.phoneIsLoginHint')}</p>
           </Field>
-          <Field label="Email" icon={Mail}>
-            <input value={email} onChange={e => setEmail(e.target.value)} className="input" placeholder="optional" />
+          <Field label={t('profile.email')} icon={Mail}>
+            <input value={email} onChange={e => setEmail(e.target.value)} className="input" placeholder={t('profile.emailPlaceholder')} />
           </Field>
         </div>
+
+        {/* My Dues — only renders the navigation tile; the actual page
+            lives at /dues. Cheap, no balance fetch at profile time. */}
+        <button
+          onClick={() => navigate('/dues')}
+          className="w-full text-left bg-white rounded-2xl shadow-lg border border-slate-100 p-4 flex items-center gap-3"
+        >
+          <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+            <Wallet size={16} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-slate-900">{t('profile.myDues')}</p>
+            <p className="text-xs text-slate-500">{t('profile.myDuesSub')}</p>
+          </div>
+          <ChevronRight size={16} className="text-slate-300 shrink-0" />
+        </button>
 
         {/* Alerts */}
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-4 space-y-3">
           <div className="flex items-center gap-2">
             <Bell size={14} className="text-slate-400" />
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Alerts</p>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">{t('profile.alerts')}</p>
           </div>
-          <Field label="Ringtone">
+          <Field label={t('profile.ringtone')}>
             <div className="flex items-center gap-2">
               <select
                 value={ringtone}
@@ -338,10 +353,10 @@ export default function ProfilePage() {
               >
                 {RINGTONES.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
-              <button onClick={playPreview} className="btn-secondary text-xs"><Volume2 size={12} /> Preview</button>
+              <button onClick={playPreview} className="btn-secondary text-xs"><Volume2 size={12} /> {t('profile.preview')}</button>
             </div>
           </Field>
-          <Field label={`Volume — ${volume}%`}>
+          <Field label={t('profile.volumeLabel', { value: volume })}>
             <input
               type="range" min={0} max={100} step={5}
               value={volume}
@@ -355,7 +370,7 @@ export default function ProfilePage() {
           <div className="flex items-center justify-between pt-1">
             <div className="flex items-center gap-2">
               <Vibrate size={14} className="text-slate-400" />
-              <span className="text-sm text-slate-700">Vibrate on alert</span>
+              <span className="text-sm text-slate-700">{t('profile.vibrateOnAlert')}</span>
             </div>
             {canVibrate ? (
               <div className="flex items-center gap-2">
@@ -363,9 +378,9 @@ export default function ProfilePage() {
                   type="button"
                   onClick={testVibration}
                   className="text-[10px] font-bold text-brand-600 px-2 py-1 rounded-md hover:bg-brand-50"
-                  title="Test vibration now"
+                  title={t('profile.testVibrationTitle')}
                 >
-                  Test
+                  {t('profile.test')}
                 </button>
                 <button
                   type="button"
@@ -386,15 +401,13 @@ export default function ProfilePage() {
               </div>
             ) : (
               <span className="text-[10px] text-slate-400">
-                {onIOS ? 'iOS does not support web vibration' : 'Not supported on this device'}
+                {onIOS ? t('profile.vibrateNotSupportedIos') : t('profile.vibrateNotSupported')}
               </span>
             )}
           </div>
           {canVibrate && (
             <p className="text-[10px] text-slate-400 leading-relaxed">
-              If you don't feel the test buzz: check that your phone isn't on silent /
-              Do Not Disturb / power-saving mode, and that vibration is enabled in
-              the system settings.
+              {t('profile.vibrateHint')}
             </p>
           )}
         </div>
@@ -421,9 +434,9 @@ export default function ProfilePage() {
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-4 space-y-3">
           <div className="flex items-center gap-2">
             <CreditCard size={14} className="text-slate-400" />
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Preferred UPI app</p>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">{t('profile.preferredUpiApp')}</p>
           </div>
-          <p className="text-[11px] text-slate-500">Used as the default at checkout.</p>
+          <p className="text-[11px] text-slate-500">{t('profile.preferredUpiAppHint')}</p>
           <div className="space-y-1.5">
             {UPI_APPS.map(a => {
               const checked = pref === a.id;
@@ -439,6 +452,24 @@ export default function ProfilePage() {
           </div>
         </div>
 
+        {/* Customer QR — moved to the bottom of the page (was at top
+            above Identity). Outlets can scan this to identify the
+            customer and apply tags. */}
+        <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <QrCode size={14} className="text-slate-400" />
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">{t('profile.yourQR')}</p>
+          </div>
+          <div className="flex justify-center bg-slate-50 rounded-xl p-4">
+            {user?.id ? (
+              <CustomerQR userId={user.id} name={name} profileImageUrl={profileImageUrl} />
+            ) : (
+              <p className="text-xs text-slate-400">{t('profile.yourQRSignInHint')}</p>
+            )}
+          </div>
+          <p className="text-[11px] text-slate-400 mt-2 text-center">{t('profile.yourQRDescription')}</p>
+        </div>
+
         {/* Save + Sign out */}
         <button
           onClick={save}
@@ -446,13 +477,13 @@ export default function ProfilePage() {
           className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold py-3.5 rounded-2xl text-sm shadow-lg disabled:opacity-60 flex items-center justify-center gap-2"
         >
           {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-          <Save size={14} /> Save changes
+          <Save size={14} /> {t('profile.saveChanges')}
         </button>
         <button
           onClick={handleLogout}
           className="w-full flex items-center justify-center gap-2 bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold py-3 rounded-2xl text-sm"
         >
-          <LogOut size={14} /> Sign out
+          <LogOut size={14} /> {t('profile.signOut')}
         </button>
       </div>
     </div>

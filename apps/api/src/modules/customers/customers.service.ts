@@ -140,7 +140,13 @@ export class CustomersService {
       select: {
         id: true, orderNumber: true, tokenNumber: true, status: true,
         isParcel: true, isPostpaid: true,
-        subtotal: true, taxAmount: true, totalAmount: true,
+        // Tax breakdown + discount fields are read by the detail modal
+        // when rendering the bill split — without them the modal shows
+        // 0s for SGST/CGST/Discount regardless of the order's real
+        // composition.
+        subtotal: true, taxAmount: true, sgstAmount: true, cgstAmount: true,
+        parcelAmount: true, discountAmount: true,
+        totalAmount: true,
         channel: true, createdAt: true,
         table: { select: { id: true, number: true } },
         items: {
@@ -149,6 +155,16 @@ export class CustomersService {
             status: true, sequenceNumber: true,
             itemNameSnapshot: true, variantNameSnapshot: true,
           },
+        },
+        // Payments + dues ledger so the modal can show payment status
+        // (paid via X / pending) and flag pay-later orders distinctly.
+        // Slim shape — just what the chip needs.
+        payments: {
+          select: { id: true, mode: true, status: true, amount: true, isRefund: true },
+        },
+        duesLedger: {
+          where: { kind: 'DEBIT' },
+          select: { id: true, amount: true, voidedAt: true },
         },
       },
     });

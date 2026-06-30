@@ -129,28 +129,28 @@ enum CashierShiftStatus {
 }
 
 enum RefundStatus {
-  INITIATED       // Cashier filed it; awaiting approval
-  APPROVED        // Approver OK'd; cash refunds complete here, gateway refunds move to PROCESSING
-  PROCESSING      // Razorpay refund API in flight
-  COMPLETED       // Money returned to customer
-  FAILED          // Razorpay rejected or processing errored
-  CANCELLED       // Cancelled before completion
+  INITIATED // Cashier filed it; awaiting approval
+  APPROVED // Approver OK'd; cash refunds complete here, gateway refunds move to PROCESSING
+  PROCESSING // Razorpay refund API in flight
+  COMPLETED // Money returned to customer
+  FAILED // Razorpay rejected or processing errored
+  CANCELLED // Cancelled before completion
 }
 
 // Lifecycle of a single split-bill share. Each share is independent —
 // one diner's WhatsApp-delivered sub-bill against a parent Order.
 enum SplitShareStatus {
-  PENDING         // Row created; WhatsApp not yet dispatched
-  SENT            // WhatsApp delivered to the diner's phone
-  VIEWED          // Diner opened the share detail in the customer PWA
-  PAID            // Payment row materialised against the share
-  CANCELLED       // Operator cancelled before payment
-  EXPIRED         // Auto-expired by the reminder/expiry job (Phase B)
+  PENDING // Row created; WhatsApp not yet dispatched
+  SENT // WhatsApp delivered to the diner's phone
+  VIEWED // Diner opened the share detail in the customer PWA
+  PAID // Payment row materialised against the share
+  CANCELLED // Operator cancelled before payment
+  EXPIRED // Auto-expired by the reminder/expiry job (Phase B)
 }
 
 enum SplitFeeAbsorption {
-  OUTLET          // Default — outlet eats the Razorpay fee, diner pays exactly their share
-  CUSTOMER        // Diner pays share + Razorpay convenience fee + GST on the fee
+  OUTLET // Default — outlet eats the Razorpay fee, diner pays exactly their share
+  CUSTOMER // Diner pays share + Razorpay convenience fee + GST on the fee
 }
 
 // Order origin / aggregator channel. DIRECT = walk-in, customer PWA,
@@ -166,13 +166,13 @@ enum AggregatorChannel {
 }
 
 enum AggregatorOrderStatus {
-  RECEIVED       // Inbound webhook fired; we've recorded it
-  ACCEPTED       // We accepted; the kitchen is on it
-  REJECTED       // We declined (out of stock, closed, etc.)
+  RECEIVED // Inbound webhook fired; we've recorded it
+  ACCEPTED // We accepted; the kitchen is on it
+  REJECTED // We declined (out of stock, closed, etc.)
   PREPARING
   READY
-  DISPATCHED     // Rider picked up
-  DELIVERED      // Aggregator told us delivery happened
+  DISPATCHED // Rider picked up
+  DELIVERED // Aggregator told us delivery happened
   CANCELLED
 }
 
@@ -266,39 +266,41 @@ model User {
   // unchanged.
   ownerScope UserOwnerScope?
 
-  customerOrders         Order[]                 @relation("CustomerOrders")
-  staffOrders            Order[]                 @relation("StaffOrders")
-  customerClusterOrders  ClusterOrder[]          @relation("CustomerClusterOrders")
+  customerOrders         Order[]                  @relation("CustomerOrders")
+  staffOrders            Order[]                  @relation("StaffOrders")
+  customerClusterOrders  ClusterOrder[]           @relation("CustomerClusterOrders")
   customerAlerts         CustomerAlert[]
   sessions               Session[]
   pushSubscriptions      PushSubscription[]
   auditLogs              AuditLog[]
-  kitchenStations        KitchenStation[]        @relation("StationWorker")
+  kitchenStations        KitchenStation[]         @relation("StationWorker")
   serviceStationWorkers  ServiceStationWorker[]
-  customerTagAssignments CustomerTagAssignment[] @relation("UserCustomerTagAssignments")
+  customerTagAssignments CustomerTagAssignment[]  @relation("UserCustomerTagAssignments")
   favorites              Favorite[]
-  outletLinks            OutletCustomer[]        @relation("UserOutletLinks")
+  outletLinks            OutletCustomer[]         @relation("UserOutletLinks")
   responsibilities       UserResponsibility[]
-  orderItemReviews       OrderItemReview[]       @relation("ReviewByCustomer")
-  reviewReplies          OrderItemReview[]       @relation("ReviewReplyBy")
-  couponTargets          CouponCustomer[]        @relation("CouponTargets")
-  couponUsages           CouponUsage[]           @relation("CouponUsages")
-  rewardAccount          CustomerRewardAccount?  @relation("RewardAccount")
-  rewardTransactions     RewardTransaction[]     @relation("RewardTransactions")
-  orderStatusChanges     OrderStatusHistory[]    @relation("OrderStatusHistoryActor")
-  outletShiftsOpened     OutletShift[]           @relation("OutletShiftOpenedBy")
-  outletShiftsClosed     OutletShift[]           @relation("OutletShiftClosedBy")
-  cashierShifts          CashierShift[]          @relation("CashierShifts")
-  refundsInitiated       Refund[]                @relation("RefundsInitiated")
-  refundsApproved        Refund[]                @relation("RefundsApproved")
-  splitShares            SplitShare[]            @relation("SplitShareCustomer")
-  splitSharesCreated     SplitShare[]            @relation("SplitShareCreatedBy")
+  orderItemReviews       OrderItemReview[]        @relation("ReviewByCustomer")
+  reviewReplies          OrderItemReview[]        @relation("ReviewReplyBy")
+  couponTargets          CouponCustomer[]         @relation("CouponTargets")
+  duesLedger             CustomerDuesLedger[]     @relation("UserDuesLedger")
+  duesSettlements        CustomerDuesSettlement[] @relation("UserDuesSettlements")
+  couponUsages           CouponUsage[]            @relation("CouponUsages")
+  rewardAccount          CustomerRewardAccount?   @relation("RewardAccount")
+  rewardTransactions     RewardTransaction[]      @relation("RewardTransactions")
+  orderStatusChanges     OrderStatusHistory[]     @relation("OrderStatusHistoryActor")
+  outletShiftsOpened     OutletShift[]            @relation("OutletShiftOpenedBy")
+  outletShiftsClosed     OutletShift[]            @relation("OutletShiftClosedBy")
+  cashierShifts          CashierShift[]           @relation("CashierShifts")
+  refundsInitiated       Refund[]                 @relation("RefundsInitiated")
+  refundsApproved        Refund[]                 @relation("RefundsApproved")
+  splitShares            SplitShare[]             @relation("SplitShareCustomer")
+  splitSharesCreated     SplitShare[]             @relation("SplitShareCreatedBy")
   preferredUpiApp        String?
-  profileImageUrl        String?                 @db.MediumText
-  alertRingtone          String?                 @default("chime")
-  alertVolume            Int?                    @default(70)
-  mustChangePassword     Boolean                 @default(false)
-  preferredLanguage      String?                 @default("en")
+  profileImageUrl        String?                  @db.MediumText
+  alertRingtone          String?                  @default("chime")
+  alertVolume            Int?                     @default(70)
+  mustChangePassword     Boolean                  @default(false)
+  preferredLanguage      String?                  @default("en")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -430,12 +432,12 @@ model Session {
 // composite unique on (userId, token) makes re-registration cheap —
 // the same device reuses the same row.
 model PushSubscription {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  kind      PushKind @default(FCM)
-  token     String   @db.VarChar(500)
-  platform  String?  @db.VarChar(32)
+  id       String   @id @default(cuid())
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind     PushKind @default(FCM)
+  token    String   @db.VarChar(500)
+  platform String?  @db.VarChar(32)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -446,7 +448,7 @@ model PushSubscription {
 }
 
 enum PushKind {
-  FCM     // Firebase Cloud Messaging (Capacitor Android, iOS, web Chrome via FCM gateway)
+  FCM // Firebase Cloud Messaging (Capacitor Android, iOS, web Chrome via FCM gateway)
   WEBPUSH // VAPID Web Push (browser PWAs that opted out of FCM gateway)
 }
 
@@ -558,6 +560,9 @@ model Business {
   discounts Discount[]
   offers    Offer[]
 
+  duesLedger      CustomerDuesLedger[]     @relation("BusinessDuesLedger")
+  duesSettlements CustomerDuesSettlement[] @relation("BusinessDuesSettlements")
+
   // ── i18n (Phase 3 of perf plan) ──────────────────────────────
   // primaryLanguage = customer-facing default when no preference is
   //   signalled. A Tamil Nadu chain uses 'ta'; defaults to 'en'.
@@ -567,8 +572,8 @@ model Business {
   //   regional language + English + one or two core secondaries.
   // Customers can still request any platform-supported language at
   //   any outlet — these knobs only affect provider-cost ergonomics.
-  primaryLanguage  String?    @default("en") @db.VarChar(8)
-  eagerLanguages   Json?
+  primaryLanguage String? @default("en") @db.VarChar(8)
+  eagerLanguages  Json?
 
   // Denormalised i18n cells — populated by upsertAll alongside the
   // legacy paynpik_translations rows. Shape per cell:
@@ -681,12 +686,14 @@ model Outlet {
   kitchenStations        KitchenStation[]
   serviceStations        ServiceStation[]
   customerTags           CustomerTag[]
-  customerTagAssignments CustomerTagAssignment[] @relation("OutletCustomerTagAssignments")
+  customerTagAssignments CustomerTagAssignment[]  @relation("OutletCustomerTagAssignments")
+  duesLedger             CustomerDuesLedger[]     @relation("OutletDuesLedger")
+  duesSettlements        CustomerDuesSettlement[] @relation("OutletDuesSettlements")
   toppings               Topping[]
   images                 OutletImage[]
   hours                  OutletHour[]
   tableTypes             TableType[]
-  customerLinks          OutletCustomer[]        @relation("OutletCustomerLinks")
+  customerLinks          OutletCustomer[]         @relation("OutletCustomerLinks")
   roles                  Role[]
   menus                  OutletMenu[]
   messageTemplates       MessageTemplate[]
@@ -750,7 +757,7 @@ model Outlet {
   // only via integrations that were already set up before the flag
   // was flipped (the AggregatorIntegration table is independent of
   // this flag). Default false so the toggle is opt-in per outlet.
-  aggregatorEnabled         Boolean            @default(false)
+  aggregatorEnabled Boolean @default(false)
 
   // i18n denorm — see Business.* for the shape/lifecycle.
   name_i18n         Json?
@@ -856,7 +863,7 @@ model Category {
   subcategories Subcategory[]
   discounts     Discount[]
   // Offers that target this category as the freebie pool (scope=CATEGORY).
-  offerGets     Offer[]       @relation("OfferGetCategory")
+  offerGets     Offer[]              @relation("OfferGetCategory")
   // Optional per-day availability windows. Absent = no constraint at this
   // level; the outlet hours and any parent-level slots still apply
   // (cascading semantics — see menu.service.getMenu).
@@ -1076,7 +1083,7 @@ model Item {
   variants           Variant[]
   options            Option[]
   orderItems         OrderItem[]
-  orderItemsAsBundle OrderItem[]        @relation("BundleParent")
+  orderItemsAsBundle OrderItem[]             @relation("BundleParent")
   reviews            OrderItemReview[]
   tags               ItemTag[]
   customerTagPrices  CustomerTagPrice[]
@@ -1085,10 +1092,10 @@ model Item {
   itemToppings       ItemTopping[]
   favorites          Favorite[]
   discounts          Discount[]
-  bundleChildren     ItemBundleChild[]  @relation("BundleParentItem")
-  bundleParentLinks  ItemBundleChild[]  @relation("BundleChildItem")
-  offerBuyFor        Offer[]            @relation("OfferBuyItem")
-  offerGetFor        Offer[]            @relation("OfferGetItem")
+  bundleChildren     ItemBundleChild[]       @relation("BundleParentItem")
+  bundleParentLinks  ItemBundleChild[]       @relation("BundleChildItem")
+  offerBuyFor        Offer[]                 @relation("OfferBuyItem")
+  offerGetFor        Offer[]                 @relation("OfferGetItem")
   // Optional per-day availability windows (see CategoryTimingSlot).
   timingSlots        ItemTimingSlot[]
   // Per-aggregator-channel external id mapping (Zomato/Swiggy/etc).
@@ -1352,16 +1359,16 @@ model Order {
   // orders so reports can split revenue by channel and the kitchen
   // display can call out where the order originated. The
   // AggregatorOrder side-table holds the external IDs + raw payload.
-  channel        AggregatorChannel @default(DIRECT)
+  channel         AggregatorChannel @default(DIRECT)
   aggregatorOrder AggregatorOrder?
 
   // Split-bill denormalised counters. Updated inside the same
   // transaction as SplitShare row mutations so the OrdersPage detail
   // and the customer PWA progress pill never need a sub-query to
   // know "3 of 4 paid".  Zero when the order isn't split-billed.
-  splitTotalShares Int     @default(0)
-  splitPaidShares  Int     @default(0)
-  splitPaidAmount  Decimal @default(0) @db.Decimal(10, 2)
+  splitTotalShares Int          @default(0)
+  splitPaidShares  Int          @default(0)
+  splitPaidAmount  Decimal      @default(0) @db.Decimal(10, 2)
   splitShares      SplitShare[]
 
   // When non-null, this Order is a child of a ClusterOrder — created as part
@@ -1397,6 +1404,7 @@ model Order {
   disputes       Dispute[]
   customerAlerts CustomerAlert[]
   couponUsages   CouponUsage[]
+  duesLedger     CustomerDuesLedger[] @relation("OrderDuesLedger")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1656,13 +1664,13 @@ model Payment {
   cashierShift   CashierShift? @relation(fields: [cashierShiftId], references: [id])
 
   reviewPayback OrderItemReview?
-  refunds       Refund[]            @relation("RefundFromPayment")
+  refunds       Refund[]         @relation("RefundFromPayment")
 
   // When this Payment settles a split-bill share, the share row points
   // back here via SplitShare.paymentId and we mirror the link here so
   // reports can group payments by share without a reverse join.
-  splitShareId  String?            @unique
-  splitShare    SplitShare?        @relation(fields: [splitShareId], references: [id])
+  splitShareId String?     @unique
+  splitShare   SplitShare? @relation(fields: [splitShareId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1685,21 +1693,21 @@ model Payment {
 // is what the cashier closes their drawer with; the outlet level is
 // what the manager / accountant reads at end of day.
 model OutletShift {
-  id              String              @id @default(cuid())
-  outletId        String
-  outlet          Outlet              @relation(fields: [outletId], references: [id])
-  openedAt        DateTime            @default(now())
-  closedAt        DateTime?
+  id             String            @id @default(cuid())
+  outletId       String
+  outlet         Outlet            @relation(fields: [outletId], references: [id])
+  openedAt       DateTime          @default(now())
+  closedAt       DateTime?
   // Note string for the operator opening the shift (e.g. "morning")
   // and an optional close note (variance reason etc.). Free-text.
-  openNote        String?
-  closeNote       String?
-  openedByUserId  String
-  openedBy        User                @relation("OutletShiftOpenedBy", fields: [openedByUserId], references: [id])
-  closedByUserId  String?
-  closedBy        User?               @relation("OutletShiftClosedBy", fields: [closedByUserId], references: [id])
-  status          OutletShiftStatus   @default(ACTIVE)
-  cashierShifts   CashierShift[]
+  openNote       String?
+  closeNote      String?
+  openedByUserId String
+  openedBy       User              @relation("OutletShiftOpenedBy", fields: [openedByUserId], references: [id])
+  closedByUserId String?
+  closedBy       User?             @relation("OutletShiftClosedBy", fields: [closedByUserId], references: [id])
+  status         OutletShiftStatus @default(ACTIVE)
+  cashierShifts  CashierShift[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1709,33 +1717,33 @@ model OutletShift {
 }
 
 model CashierShift {
-  id              String              @id @default(cuid())
-  outletShiftId   String
-  outletShift     OutletShift         @relation(fields: [outletShiftId], references: [id])
+  id            String             @id @default(cuid())
+  outletShiftId String
+  outletShift   OutletShift        @relation(fields: [outletShiftId], references: [id])
   // Denormalised so the most common Z-report queries
   // (outlet/cashier/date scope) can avoid the join.
-  outletId        String
-  cashierId       String
-  cashier         User                @relation("CashierShifts", fields: [cashierId], references: [id])
-  openedAt        DateTime            @default(now())
-  closedAt        DateTime?
+  outletId      String
+  cashierId     String
+  cashier       User               @relation("CashierShifts", fields: [cashierId], references: [id])
+  openedAt      DateTime           @default(now())
+  closedAt      DateTime?
   // Opening cash float the cashier started with. Required at open
   // — even if zero, the operator declares it explicitly.
-  openingFloat    Decimal             @default(0) @db.Decimal(10, 2)
+  openingFloat  Decimal            @default(0) @db.Decimal(10, 2)
   // Set at close: what the cashier physically counted in the drawer.
-  declaredCash    Decimal?            @db.Decimal(10, 2)
+  declaredCash  Decimal?           @db.Decimal(10, 2)
   // Set at close: opening + cash payments - cash refunds across the
   // shift. The cashier's drawer should hold exactly this much; any
   // difference between declaredCash and expectedCash is the variance.
-  expectedCash    Decimal?            @db.Decimal(10, 2)
-  variance        Decimal?            @db.Decimal(10, 2)
-  status          CashierShiftStatus  @default(ACTIVE)
-  openNote        String?
-  closeNote       String?
+  expectedCash  Decimal?           @db.Decimal(10, 2)
+  variance      Decimal?           @db.Decimal(10, 2)
+  status        CashierShiftStatus @default(ACTIVE)
+  openNote      String?
+  closeNote     String?
 
-  orders          Order[]
-  payments        Payment[]
-  refunds         Refund[]
+  orders   Order[]
+  payments Payment[]
+  refunds  Refund[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1759,42 +1767,42 @@ model CashierShift {
 // cumulative refunded amount equals the order's totalAmount flips
 // the order to REFUND_COMPLETE.
 model Refund {
-  id                String        @id @default(cuid())
-  orderId           String
-  order             Order         @relation(fields: [orderId], references: [id])
+  id              String        @id @default(cuid())
+  orderId         String
+  order           Order         @relation(fields: [orderId], references: [id])
   // Source payment this refund is drawn against. Required for gateway
   // refunds (Razorpay needs the original payment_id); for cash-out
   // refunds against a cash-paid order it's also recorded so reports
   // can trace each refund back to a specific receipt.
-  paymentId         String?
-  payment           Payment?      @relation("RefundFromPayment", fields: [paymentId], references: [id])
-  amount            Decimal       @db.Decimal(10, 2)
+  paymentId       String?
+  payment         Payment?      @relation("RefundFromPayment", fields: [paymentId], references: [id])
+  amount          Decimal       @db.Decimal(10, 2)
   // How the money is going back to the customer. Cash refunds are
   // resolved at the cashier's drawer; UPI/CARD/WALLET/NET_BANKING go
   // through Razorpay's refund API.
-  mode              PaymentMode
-  reason            String?
-  status            RefundStatus  @default(INITIATED)
+  mode            PaymentMode
+  reason          String?
+  status          RefundStatus  @default(INITIATED)
   // Razorpay refund id when gateway-processed. Encrypted at rest the
   // same way Payment.gatewayRef is, to keep parity with how PSP refs
   // are handled elsewhere.
-  gatewayRef        String?       @db.Text
-  gatewayResponse   Json?
-  initiatedById     String
-  initiatedBy       User          @relation("RefundsInitiated", fields: [initiatedById], references: [id])
-  approvedById      String?
-  approvedBy        User?         @relation("RefundsApproved", fields: [approvedById], references: [id])
+  gatewayRef      String?       @db.Text
+  gatewayResponse Json?
+  initiatedById   String
+  initiatedBy     User          @relation("RefundsInitiated", fields: [initiatedById], references: [id])
+  approvedById    String?
+  approvedBy      User?         @relation("RefundsApproved", fields: [approvedById], references: [id])
   // Cashier drawer this refund was settled against (set at
   // completion time for cash refunds so drawer reconciliation is
   // correct). Null for gateway refunds.
-  cashierShiftId    String?
-  cashierShift      CashierShift? @relation(fields: [cashierShiftId], references: [id])
+  cashierShiftId  String?
+  cashierShift    CashierShift? @relation(fields: [cashierShiftId], references: [id])
   // Internal notes — failure messages, approver comments.
-  notes             String?
-  createdAt         DateTime      @default(now())
-  approvedAt        DateTime?
-  completedAt       DateTime?
-  updatedAt         DateTime      @updatedAt
+  notes           String?
+  createdAt       DateTime      @default(now())
+  approvedAt      DateTime?
+  completedAt     DateTime?
+  updatedAt       DateTime      @updatedAt
 
   @@index([orderId])
   @@index([status])
@@ -1819,53 +1827,53 @@ model Refund {
 // existing Refund flow against the Payment row — no SplitShare-aware
 // changes needed.
 model SplitShare {
-  id              String           @id @default(cuid())
-  orderId         String
-  order           Order            @relation(fields: [orderId], references: [id])
+  id             String           @id @default(cuid())
+  orderId        String
+  order          Order            @relation(fields: [orderId], references: [id])
   // Share amount in rupees. The sum of all non-CANCELLED shares
   // should equal Order.totalAmount for a fully-split bill; the
   // operator can underallocate (and pay the rest as cash directly
   // on the order) but never overallocate — server validates on
   // create.
-  amount          Decimal          @db.Decimal(10, 2)
+  amount         Decimal          @db.Decimal(10, 2)
   // Diner identity. Phone is required (it's the delivery channel for
   // the WhatsApp message); name is optional. customerId is null
   // until the diner taps the WhatsApp link and the auth/OTP flow
   // resolves them to a real User row — at which point the existing
   // phone-hash lookup finds (or creates) the User.
-  customerPhone   String
-  customerName    String?
-  customerId      String?
-  customer        User?            @relation("SplitShareCustomer", fields: [customerId], references: [id])
-  status          SplitShareStatus @default(PENDING)
+  customerPhone  String
+  customerName   String?
+  customerId     String?
+  customer       User?            @relation("SplitShareCustomer", fields: [customerId], references: [id])
+  status         SplitShareStatus @default(PENDING)
   // Settlement link. Populated when the diner pays through the
   // customer PWA's standard payment page, OR when the operator
   // clicks "Mark cash" on the per-share action.
-  paymentId       String?          @unique
-  payment         Payment?         @relation
+  paymentId      String?          @unique
+  payment        Payment?         @relation
   // Operator who created the share — recorded for the order log so
   // staff can trace which cashier filed the split.
-  createdById     String
-  createdBy       User             @relation("SplitShareCreatedBy", fields: [createdById], references: [id])
+  createdById    String
+  createdBy      User             @relation("SplitShareCreatedBy", fields: [createdById], references: [id])
   // Lifecycle timestamps for the customer-facing progress display
   // and the Phase-B reminders job.
-  sentAt          DateTime?
-  viewedAt        DateTime?
-  paidAt          DateTime?
-  cancelledAt     DateTime?
+  sentAt         DateTime?
+  viewedAt       DateTime?
+  paidAt         DateTime?
+  cancelledAt    DateTime?
   // Free-text notes — used today to record "marked cash by operator
   // on shift X" so the audit trail explains why a share didn't
   // settle through the gateway.
-  notes           String?
+  notes          String?
   // Phase B fields. remindersSent caps the auto-resend job; once it
   // hits the outlet's splitMaxReminders the share is left alone.
   // lastReminderAt is the throttle anchor — the job only sends the
   // next reminder when (now - lastReminderAt) >= splitReminderEvery.
   // expiresAt is computed at create-time from outlet.splitExpireAfter;
   // when crossed without a payment, the share auto-flips to EXPIRED.
-  remindersSent   Int       @default(0)
-  lastReminderAt  DateTime?
-  expiresAt       DateTime?
+  remindersSent  Int              @default(0)
+  lastReminderAt DateTime?
+  expiresAt      DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1892,25 +1900,25 @@ model SplitShare {
 // the adapters log + no-op (safe to ship without breaking the
 // existing direct-channel flow).
 model AggregatorIntegration {
-  id              String              @id @default(cuid())
-  outletId        String
-  outlet          Outlet              @relation(fields: [outletId], references: [id])
-  channel         AggregatorChannel
-  isActive        Boolean             @default(false)
+  id                   String            @id @default(cuid())
+  outletId             String
+  outlet               Outlet            @relation(fields: [outletId], references: [id])
+  channel              AggregatorChannel
+  isActive             Boolean           @default(false)
   // Encrypted credentials JSON — shape varies per provider
   // (e.g. Zomato: api_key + restaurant_id; Swiggy: similar with menu_id;
   // UberEats: client_id + client_secret + store_id).
-  credentialsEnc  String?             @db.Text
+  credentialsEnc       String?           @db.Text
   // Per-channel restaurant identifier, surfaced separately for UI
   // convenience (the operator pastes this from the aggregator dashboard).
   externalRestaurantId String?
   // HMAC secret used to validate inbound webhook signatures.
   // Stored encrypted; the channel-specific adapter re-encrypts/decrypts.
-  webhookSecretEnc String?            @db.Text
+  webhookSecretEnc     String?           @db.Text
   // Last successful menu sync to this channel. Drives the "sync menu"
   // pill on the integrations page so operators see when it last ran.
-  lastMenuSyncAt  DateTime?
-  notes           String?
+  lastMenuSyncAt       DateTime?
+  notes                String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1921,11 +1929,11 @@ model AggregatorIntegration {
 }
 
 model AggregatorOrder {
-  id              String              @id @default(cuid())
+  id              String                @id @default(cuid())
   // One-to-one with Order; the inbound webhook creates both rows in
   // the same transaction. Use the @unique to enforce this at the DB.
-  orderId         String              @unique
-  order           Order               @relation(fields: [orderId], references: [id])
+  orderId         String                @unique
+  order           Order                 @relation(fields: [orderId], references: [id])
   channel         AggregatorChannel
   // The aggregator's order id (Zomato's order_id, Swiggy's order_id,
   // Uber's order.id). Per-channel-unique with the @@unique below.
@@ -1940,7 +1948,7 @@ model AggregatorOrder {
   rawPayload      Json?
   // Last sync attempt response — error message for failures so the
   // operator can see why a status push didn't land.
-  lastSyncError   String?             @db.Text
+  lastSyncError   String?               @db.Text
 
   // Marketplace customer link. Nullable because the aggregator may
   // not expose a stable customer id on every payload, and historical
@@ -1975,30 +1983,30 @@ model AggregatorOrder {
 // across three outlets gets three rows, which is what we want for
 // per-location loyalty/recognition.
 model AggregatorCustomer {
-  id                  String              @id @default(cuid())
-  outletId            String
-  outlet              Outlet              @relation(fields: [outletId], references: [id])
-  channel             AggregatorChannel
+  id                 String            @id @default(cuid())
+  outletId           String
+  outlet             Outlet            @relation(fields: [outletId], references: [id])
+  channel            AggregatorChannel
   // The aggregator's stable per-customer identifier. Falls back to
   // the masked phone when the provider doesn't expose this (rare but
   // possible). The @@unique below uses outletId+channel+this so the
   // upsert path can land on a stable row.
-  externalCustomerId  String
-  displayName         String?
+  externalCustomerId String
+  displayName        String?
   // Aggregator-proxied phone — typically a number that connects to
   // the real customer via the aggregator's call-masking service.
   // Stored for the packing slip and the rider-callback flow.
-  maskedPhone         String?
+  maskedPhone        String?
   // Denormalised aggregates so the recognition pill can render
   // without a follow-up COUNT/MAX query per order.
-  firstOrderAt        DateTime            @default(now())
-  lastOrderAt         DateTime            @default(now())
-  orderCount          Int                 @default(0)
+  firstOrderAt       DateTime          @default(now())
+  lastOrderAt        DateTime          @default(now())
+  orderCount         Int               @default(0)
 
-  orders              AggregatorOrder[]
+  orders AggregatorOrder[]
 
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // map: explicitly shortens the index names so MySQL's 64-char
   // identifier limit doesn't reject them. The default Prisma-generated
@@ -2010,21 +2018,21 @@ model AggregatorCustomer {
 }
 
 model AggregatorItemMapping {
-  id              String              @id @default(cuid())
-  itemId          String
-  item            Item                @relation(fields: [itemId], references: [id])
-  channel         AggregatorChannel
+  id             String            @id @default(cuid())
+  itemId         String
+  item           Item              @relation(fields: [itemId], references: [id])
+  channel        AggregatorChannel
   // The aggregator's per-item identifier — populated from the menu
   // sync response or pasted in from the aggregator dashboard.
-  externalItemId  String
+  externalItemId String
   // Optional channel-specific price override. When set, the menu
   // sync pushes this instead of Item.basePrice (aggregator commission
   // structures often require a bumped price on the marketplace side).
-  externalPrice   Decimal?            @db.Decimal(10, 2)
+  externalPrice  Decimal?          @db.Decimal(10, 2)
   // When false the item is hidden on this channel even if isAvailable
   // is true. Lets staff stop accepting marketplace orders for a dish
   // without affecting the dine-in menu.
-  isEnabled       Boolean             @default(true)
+  isEnabled      Boolean           @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2237,8 +2245,22 @@ model CustomerTag {
   outletId String
   outlet   Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
 
-  itemPrices  CustomerTagPrice[]
-  assignments CustomerTagAssignment[]
+  itemPrices    CustomerTagPrice[]
+  assignments   CustomerTagAssignment[]
+  // ALLOWANCE-coupon targeting — back-relation for CouponTargetTag.
+  couponTargets CouponTargetTag[]
+
+  // Pay-later (employee dues) flag. When ON, customers assigned this
+  // tag get the "Pay later?" prompt at checkout and may place an
+  // order that becomes a DEBIT entry on the customer's dues ledger
+  // instead of going through the payment screen. Settlement happens
+  // separately via the Receivable tab. See docs/cluster-… (TODO doc)
+  allowPayLater Boolean  @default(false)
+  // Optional ceiling on outstanding dues per customer carrying this
+  // tag. Server-side check at order placement: rejects pay-later
+  // orders if (current balance + order total) would exceed this
+  // amount. Null = no ceiling.
+  maxDueAmount  Decimal? @db.Decimal(10, 2)
 
   // i18n denorm — see Business.* for the shape/lifecycle.
   name_i18n Json?
@@ -2283,6 +2305,87 @@ model CustomerTagAssignment {
 
   @@unique([userId, outletId])
   @@map("paynpik_customer_tag_assignments")
+}
+
+// ─── Customer dues (pay-later) ──────────────────────────────
+// Double-entry ledger. A pay-later order writes a DEBIT row of the
+// order total; a settlement writes a CREDIT row of the paid amount
+// and a CustomerDuesSettlement parent that captures the payment
+// method + actor + reference. Running balance for a customer at an
+// outlet is SUM(DEBIT) - SUM(CREDIT) over rows where voidedAt IS NULL.
+//
+// Settlements are not tied 1:1 to orders — a single ₹500 payment
+// can clear three earlier ₹100 / ₹200 / ₹200 orders. The relationship
+// is "customer pays a lump; we credit the ledger" rather than
+// "customer pays this specific bill."
+
+model CustomerDuesLedger {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation("UserDuesLedger", fields: [userId], references: [id], onDelete: Cascade)
+  businessId String
+  business   Business @relation("BusinessDuesLedger", fields: [businessId], references: [id], onDelete: Cascade)
+  outletId   String
+  outlet     Outlet   @relation("OutletDuesLedger", fields: [outletId], references: [id], onDelete: Cascade)
+
+  /// 'DEBIT' (customer incurred a charge — typically an order placed
+  /// as pay-later) | 'CREDIT' (customer paid something off; references
+  /// the parent settlement).
+  kind   String  @db.VarChar(10)
+  amount Decimal @db.Decimal(10, 2)
+
+  /// DEBIT-only: the order this debit covers. Used for the void hook
+  /// when the order is cancelled / refunded.
+  orderId      String?
+  order        Order?                  @relation("OrderDuesLedger", fields: [orderId], references: [id])
+  /// CREDIT-only: the settlement that wrote this credit row.
+  settlementId String?
+  settlement   CustomerDuesSettlement? @relation(fields: [settlementId], references: [id])
+
+  notes    String?
+  /// Set when the linked order is cancelled / refunded so the balance
+  /// is restored. Period queries filter `voidedAt IS NULL`.
+  voidedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, outletId])
+  @@index([outletId, createdAt])
+  @@index([orderId])
+  @@map("paynpik_customer_dues_ledger")
+}
+
+model CustomerDuesSettlement {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation("UserDuesSettlements", fields: [userId], references: [id], onDelete: Cascade)
+  businessId String
+  business   Business @relation("BusinessDuesSettlements", fields: [businessId], references: [id], onDelete: Cascade)
+  outletId   String
+  outlet     Outlet   @relation("OutletDuesSettlements", fields: [outletId], references: [id], onDelete: Cascade)
+
+  amount Decimal @db.Decimal(10, 2)
+
+  /// 'CASH' | 'UPI' | 'CARD' | 'RAZORPAY' | 'OTHER'. Free-form string
+  /// (not the PaymentMode enum) because 'OTHER' covers salary-deduction
+  /// or any out-of-band settlement that doesn't map to a payment rail.
+  paymentMode String  @db.VarChar(20)
+  /// Optional reference: UPI txn id, Razorpay payment id, settlement
+  /// memo. Free-form per `paymentMode`.
+  reference   String? @db.VarChar(120)
+  notes       String?
+
+  /// Staff member who recorded the settlement. Audit trail; not a
+  /// FK target relation to keep User's outbound list lean.
+  settledBy String?
+
+  createdAt DateTime @default(now())
+
+  ledgerEntries CustomerDuesLedger[]
+
+  @@index([userId, outletId])
+  @@index([outletId, createdAt])
+  @@map("paynpik_customer_dues_settlements")
 }
 
 // ─── Toppings (outlet-level catalog) ──────────────────────
@@ -2673,10 +2776,26 @@ model Coupon {
 
   // ALL: any customer ordering at the outlet may pick it.
   // SPECIFIC: only customers listed in targetCustomers may pick it.
+  // TAG: any customer assigned one of the listed CustomerTags at the
+  //   outlet (TAG requires outletId to be set — tags are outlet-scoped).
   targetType String  @default("ALL") @db.VarChar(10)
   isActive   Boolean @default(true)
 
+  // Coupon kind drives the redemption math.
+  //   STANDARD  → flat bill-level discount (existing behaviour).
+  //   ALLOWANCE → periodic item-unit entitlement (employee perks etc.):
+  //               up to perPeriodQuota item-units per resetPeriod from the
+  //               configured scope, at discountValue per unit. See
+  //               docs/coupon-allowance-design.md.
+  kind           String  @default("STANDARD") @db.VarChar(20)
+  // ALLOWANCE only: 'DAILY' | 'WEEKLY' | 'MONTHLY'. Null for STANDARD.
+  resetPeriod    String? @db.VarChar(10)
+  // ALLOWANCE only: integer item-units allowed per reset period.
+  perPeriodQuota Int?
+
   targetCustomers CouponCustomer[]
+  targetTags      CouponTargetTag[]
+  scopes          CouponScope[]
   usages          CouponUsage[]
 
   createdAt DateTime @default(now())
@@ -2687,6 +2806,44 @@ model Coupon {
   @@index([code])
   @@index([isActive, validFrom, validUntil])
   @@map("paynpik_coupons")
+}
+
+// ALLOWANCE scope rows — what cart items the coupon discounts. refId
+// is polymorphic over Item / Category / Subcategory (kept as a plain
+// String, no FK relation, same pattern as Discount/Offer). Existence
+// is checked in the service layer. Eligibility is an OR across all
+// rows: a cart line is eligible if any row matches its item, its
+// subcategory, or its category.
+model CouponScope {
+  id       String @id @default(cuid())
+  couponId String
+  coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  kind     String @db.VarChar(20) // 'ITEM' | 'CATEGORY' | 'SUBCATEGORY'
+  refId    String
+
+  createdAt DateTime @default(now())
+
+  @@unique([couponId, kind, refId])
+  @@index([kind, refId])
+  @@map("paynpik_coupon_scopes")
+}
+
+// TAG targeting — any user assigned this CustomerTag at the coupon's
+// outlet sees the coupon as available. Tags are outlet-scoped so any
+// coupon using TAG targeting must itself be outlet-scoped (enforced
+// in CouponsService.validate).
+model CouponTargetTag {
+  id            String      @id @default(cuid())
+  couponId      String
+  coupon        Coupon      @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  customerTagId String
+  customerTag   CustomerTag @relation(fields: [customerTagId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([couponId, customerTagId])
+  @@index([customerTagId])
+  @@map("paynpik_coupon_target_tags")
 }
 
 model CouponCustomer {
@@ -2715,9 +2872,20 @@ model CouponUsage {
   discountAmount Decimal  @db.Decimal(10, 2)
   appliedAt      DateTime @default(now())
 
+  // ALLOWANCE quota accounting. itemUnits = how many quota-eligible
+  // units this redemption consumed against the per-period cap. 0 for
+  // STANDARD so a kind-flip cannot poison the period-consumed sum.
+  // voidedAt is set when the linked order is cancelled/refunded so
+  // the quota is restored — period sum filters voidedAt IS NULL.
+  itemUnits Int       @default(0)
+  voidedAt  DateTime?
+
   @@index([couponId])
   @@index([userId])
   @@index([orderId])
+  // Period-consumed sum hits this composite for ALLOWANCE quotes:
+  //   WHERE couponId=? AND userId=? AND appliedAt >= <periodStart>
+  @@index([couponId, userId, appliedAt])
   @@map("paynpik_coupon_usages")
 }
 

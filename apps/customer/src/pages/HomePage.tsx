@@ -6,36 +6,43 @@ import {
   ShoppingBag, Clock, ChevronRight, ChefHat, CheckCircle2,
   XCircle, Package2, RefreshCw, Flame, Bell, Star, X, Download,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 import { useCustomerAlerts } from '../context/CustomerAlertsContext';
 import ThermalReceipt from '../components/ThermalReceipt';
 import { downloadReceiptPdf } from '../components/downloadReceiptPdf';
 
+// Status keys mirror what the backend emits — values stay in the
+// dictionary (`home.statusCREATED` etc.) so labels translate.
 const STATUS = {
-  CREATED:         { label: 'Placed',          cls: 'bg-blue-100 text-blue-700',      icon: Clock },
-  QUEUED:          { label: 'Queued',          cls: 'bg-yellow-100 text-yellow-700',  icon: CheckCircle2 },
-  PREPARING:       { label: 'Preparing',       cls: 'bg-brand-100 text-brand-900',  icon: ChefHat },
-  READY:           { label: 'Ready',           cls: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2 },
-  OUT_FOR_SERVICE: { label: 'On its way',      cls: 'bg-teal-100 text-teal-700',      icon: Package2 },
-  SERVED:          { label: 'Served',          cls: 'bg-slate-100 text-slate-600',    icon: CheckCircle2 },
-  CANCELLED:       { label: 'Cancelled',       cls: 'bg-red-100 text-red-600',        icon: XCircle },
-  DISPUTED:        { label: 'Disputed',        cls: 'bg-purple-100 text-purple-700',  icon: XCircle },
-  RESOLVED:        { label: 'Resolved',        cls: 'bg-sky-100 text-sky-700',        icon: CheckCircle2 },
-  FOR_REFUND:      { label: 'Refund pending',  cls: 'bg-pink-100 text-pink-700',      icon: Clock },
-  REFUND_COMPLETE: { label: 'Refund complete', cls: 'bg-purple-100 text-purple-700',  icon: CheckCircle2 },
+  CREATED:         { cls: 'bg-blue-100 text-blue-700',      icon: Clock },
+  QUEUED:          { cls: 'bg-yellow-100 text-yellow-700',  icon: CheckCircle2 },
+  PREPARING:       { cls: 'bg-brand-100 text-brand-900',    icon: ChefHat },
+  READY:           { cls: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2 },
+  OUT_FOR_SERVICE: { cls: 'bg-teal-100 text-teal-700',      icon: Package2 },
+  SERVED:          { cls: 'bg-slate-100 text-slate-600',    icon: CheckCircle2 },
+  CANCELLED:       { cls: 'bg-red-100 text-red-600',        icon: XCircle },
+  DISPUTED:        { cls: 'bg-purple-100 text-purple-700',  icon: XCircle },
+  RESOLVED:        { cls: 'bg-sky-100 text-sky-700',        icon: CheckCircle2 },
+  FOR_REFUND:      { cls: 'bg-pink-100 text-pink-700',      icon: Clock },
+  REFUND_COMPLETE: { cls: 'bg-purple-100 text-purple-700',  icon: CheckCircle2 },
 } as const;
 
 type OrderStatus = keyof typeof STATUS;
 const ACTIVE_STATUSES: OrderStatus[] = ['CREATED', 'QUEUED', 'PREPARING', 'READY', 'OUT_FOR_SERVICE'];
 
-function homeElapsed(t: string) {
-  const m = Math.floor((Date.now() - new Date(t).getTime()) / 60000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m`;
+// Format the time-since-placed badge using the i18n t() so the
+// suffix translates ("5m" vs "5 मि", "1d" vs "1 दिन"). Caller
+// supplies the t() — the helper itself stays free of hooks so
+// existing call sites that build a string up-front continue to work.
+function homeElapsed(iso: string, t: (k: string, opts?: any) => string) {
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (m < 1) return t('home.elapsedJustNow');
+  if (m < 60) return t('home.elapsedMinutes', { minutes: m });
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
+  if (h < 24) return t('home.elapsedHours', { hours: h });
+  return t('home.elapsedDays', { days: Math.floor(h / 24) });
 }
 
 interface Order {
@@ -68,6 +75,7 @@ interface Order {
 }
 
 export default function HomePage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { user } = useCustomerAuth();
   const [orders, setOrders] = useState<Order[]>([]);
@@ -94,7 +102,7 @@ export default function HomePage() {
         await downloadReceiptPdf(pdfRef.current, `Receipt-${data.data.orderNumber}`);
       }
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Could not download receipt');
+      toast.error(e?.response?.data?.message || t('home.receiptDownloadFailed'));
     } finally {
       setPdfOrder(null);
       setDownloadingId(null);
@@ -152,8 +160,8 @@ export default function HomePage() {
         <div className="absolute -top-12 -right-12 w-40 h-40 bg-brand-500/20 rounded-full blur-3xl" />
         <div className="relative flex items-start justify-between gap-3">
           <div>
-            <p className="text-slate-400 text-sm">Hello,</p>
-            <p className="text-2xl font-black text-white">{user?.name?.split(' ')[0] || 'there'} 👋</p>
+            <p className="text-slate-400 text-sm">{t('home.hello')}</p>
+            <p className="text-2xl font-black text-white">{user?.name?.split(' ')[0] || t('home.fallbackName')} 👋</p>
           </div>
           <AlertsBellButton />
         </div>
@@ -164,7 +172,7 @@ export default function HomePage() {
         <section>
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-              <Flame size={14} className="text-brand-500" /> Current Order
+              <Flame size={14} className="text-brand-500" /> {t('home.currentOrder')}
             </h2>
             <button onClick={fetch} disabled={loading}
               className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600">
@@ -179,8 +187,8 @@ export default function HomePage() {
               <div className="w-12 h-12 mx-auto bg-slate-100 rounded-2xl flex items-center justify-center mb-2">
                 <ShoppingBag size={18} className="text-slate-400" />
               </div>
-              <p className="text-sm font-semibold text-slate-600">No active order</p>
-              <p className="text-xs text-slate-400 mt-0.5">Scan a QR to place one</p>
+              <p className="text-sm font-semibold text-slate-600">{t('home.noActiveOrder')}</p>
+              <p className="text-xs text-slate-400 mt-0.5">{t('home.scanToPlace')}</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -197,11 +205,11 @@ export default function HomePage() {
                       <div className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-black">FC</div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Food court order</p>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">{t('home.foodCourtOrder')}</p>
                       <p className="text-sm font-bold text-slate-900 truncate">{g.clusterName}</p>
                     </div>
                     <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
-                      {g.orders.length} outlet{g.orders.length !== 1 ? 's' : ''}
+                      {t('home.outletsCount', { count: g.orders.length })}
                     </span>
                   </div>
                   <div className="divide-y divide-slate-100">
@@ -261,7 +269,7 @@ export default function HomePage() {
 
         {/* Past orders */}
         <section className="pb-4">
-          <h2 className="text-sm font-bold text-slate-900 mb-2">Past Orders</h2>
+          <h2 className="text-sm font-bold text-slate-900 mb-2">{t('home.pastOrders')}</h2>
           {loading ? (
             <div className="space-y-2">
               {Array.from({ length: 3 }).map((_, i) => (
@@ -269,7 +277,7 @@ export default function HomePage() {
               ))}
             </div>
           ) : past.length === 0 ? (
-            <p className="text-center text-xs text-slate-400 py-6">No past orders yet.</p>
+            <p className="text-center text-xs text-slate-400 py-6">{t('home.noPastOrders')}</p>
           ) : (
             <div className="space-y-2">
               {past.map(o => (
@@ -298,7 +306,9 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay, onDownload, do
   onDownload?: () => void;
   downloading?: boolean;
 }) {
+  const { t } = useTranslation();
   const s = STATUS[order.status] || STATUS.SERVED;
+  const statusLabel = t(`home.status${order.status}`);
   // Collapse expanded combo children under the parent name so the one-
   // line preview reads "Thali, Lassi" instead of every child of the combo.
   const items = (() => {
@@ -308,7 +318,7 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay, onDownload, do
       if (i.bundleId) {
         if (seen.has(i.bundleId)) continue;
         seen.add(i.bundleId);
-        const name = i.bundleParent?.name || 'Combo';
+        const name = i.bundleParent?.name || t('home.comboFallback');
         parts.push(name);
       } else {
         parts.push(`${i.item.name}${i.quantity > 1 ? ` ×${i.quantity}` : ''}`);
@@ -339,14 +349,14 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay, onDownload, do
               <p className="text-sm font-bold text-slate-900">{order.outlet.name}</p>
               {order.tokenNumber != null && (
                 <span className="text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full">
-                  #{order.tokenNumber}
+                  {t('home.tokenShort', { number: order.tokenNumber })}
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">{order.orderNumber} · {homeElapsed(order.createdAt)} ago</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">{order.orderNumber} · {homeElapsed(order.createdAt, t)} {t('home.elapsedSuffix')}</p>
           </div>
           <span className={clsx('inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full', s.cls)}>
-            <s.icon size={9} /> {s.label}
+            <s.icon size={9} /> {statusLabel}
           </span>
         </div>
         <p className="text-[11px] text-slate-500 line-clamp-1">{items}</p>
@@ -358,16 +368,16 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay, onDownload, do
                 onClick={(e) => { e.stopPropagation(); onDownload(); }}
                 disabled={downloading}
                 className="text-[11px] font-bold text-slate-500 hover:text-brand-600 inline-flex items-center gap-1 disabled:opacity-50"
-                title="Download receipt"
+                title={t('home.receiptTitle')}
               >
                 {downloading
                   ? <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
                   : <Download size={11} />}
-                Receipt
+                {t('home.receipt')}
               </button>
             )}
             <button onClick={onTrack} className="text-[11px] font-bold text-brand-600 inline-flex items-center gap-1 hover:text-brand-700">
-              Track <ChevronRight size={11} />
+              {t('home.track')} <ChevronRight size={11} />
             </button>
           </div>
         </div>
@@ -387,21 +397,21 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay, onDownload, do
               <p className="text-sm font-black text-slate-900">{order.orderNumber}</p>
               {order.tokenNumber != null && (
                 <span className="inline-flex items-center gap-0.5 text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full">
-                  Token #{order.tokenNumber}
+                  {t('home.tokenPrefix', { number: order.tokenNumber })}
                 </span>
               )}
               {billReady && (
                 <span className="inline-flex items-center gap-0.5 text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded-full">
-                  Bill ready
+                  {t('home.billReady')}
                 </span>
               )}
             </div>
             <p className="text-xs text-slate-400 mt-0.5 truncate">
-              {order.outlet.name} · {homeElapsed(order.createdAt)} ago
+              {order.outlet.name} · {homeElapsed(order.createdAt, t)} {t('home.elapsedSuffix')}
             </p>
           </div>
           <span className={clsx('inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full', s.cls)}>
-            <s.icon size={9} /> {s.label}
+            <s.icon size={9} /> {statusLabel}
           </span>
         </div>
         <p className="text-xs text-slate-500 line-clamp-1 mb-3">{items}</p>
@@ -413,24 +423,24 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay, onDownload, do
                 onClick={(e) => { e.stopPropagation(); onDownload(); }}
                 disabled={downloading}
                 className="flex items-center gap-1 text-xs font-bold px-2.5 py-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors disabled:opacity-50"
-                title="Download receipt"
+                title={t('home.receiptTitle')}
               >
                 {downloading
                   ? <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
                   : <Download size={12} />}
-                Receipt
+                {t('home.receipt')}
               </button>
             )}
             {billReady && onPay ? (
               <button onClick={onPay}
                 className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white transition-colors">
-                Pay now <ChevronRight size={12} />
+                {t('home.payNow')} <ChevronRight size={12} />
               </button>
             ) : (
               <button onClick={onTrack}
                 className={clsx('flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl transition-colors',
                   active ? 'bg-brand-500 text-white hover:bg-brand-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>
-                {active ? 'Track' : 'View'} <ChevronRight size={12} />
+                {active ? t('home.track') : t('home.view')} <ChevronRight size={12} />
               </button>
             )}
           </div>
@@ -441,13 +451,14 @@ function OrderCard({ order, active, compactGroup, onTrack, onPay, onDownload, do
 }
 
 function AlertsBellButton() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { unreadCount } = useCustomerAlerts();
   return (
     <button
       onClick={() => navigate('/alerts')}
       className="relative w-10 h-10 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
-      aria-label="Alerts"
+      aria-label={t('home.alertsLabel')}
     >
       <Bell size={18} className="text-white" />
       {unreadCount > 0 && (
@@ -463,6 +474,7 @@ function AlertsBellButton() {
    Picks the most recent SERVED order with at least one unrated item and
    invites the customer to rate it. A small ✕ dismisses for the session. */
 function FeedbackPrompt({ orders }: { orders: Order[] }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try { return sessionStorage.getItem('feedback-prompt-dismissed') === '1'; } catch { return false; }
@@ -481,7 +493,7 @@ function FeedbackPrompt({ orders }: { orders: Order[] }) {
             try { sessionStorage.setItem('feedback-prompt-dismissed', '1'); } catch {}
           }}
           className="absolute top-2 right-2 w-7 h-7 rounded-full text-slate-400 hover:text-slate-600 hover:bg-white/60 flex items-center justify-center"
-          aria-label="Dismiss"
+          aria-label={t('home.feedbackDismiss')}
         >
           <X size={14} />
         </button>
@@ -490,9 +502,9 @@ function FeedbackPrompt({ orders }: { orders: Order[] }) {
             <Star size={18} fill="currentColor" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-bold text-slate-900">How was your order?</p>
+            <p className="text-sm font-bold text-slate-900">{t('home.feedbackTitle')}</p>
             <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
-              Your feedback will be valuable for improving our services and also help other customers like you choose better.
+              {t('home.feedbackBody')}
             </p>
           </div>
         </div>
@@ -500,7 +512,9 @@ function FeedbackPrompt({ orders }: { orders: Order[] }) {
           onClick={() => navigate(`/track/${target.id}`)}
           className="mt-3 w-full bg-gradient-to-r from-amber-500 to-brand-700 text-white font-bold text-xs py-2.5 rounded-xl shadow"
         >
-          Rate {unratedCount === 1 ? 'this item' : `${unratedCount} items`} on {target.outlet.name}
+          {unratedCount === 1
+            ? t('home.feedbackRateOne', { outlet: target.outlet.name })
+            : t('home.feedbackRateMany', { count: unratedCount, outlet: target.outlet.name })}
         </button>
       </div>
     </section>

@@ -67,6 +67,28 @@ function timerColor(mins: number) {
   return       { card: '#fff1f2', border: '#fca5a5', timer: '#be123c', badge: '#ffe4e6', badgeText: '#9f1239' };
 }
 
+// Filter payment-related noise out of the order's customer-notes field
+// before showing it on the kitchen card. The chef shouldn't see payment-
+// gateway diagnostics ("TEST BYPASS", "payment auto-marked SUCCESS",
+// "razorpay txn id ...") — notes is meant for cooking instructions
+// ("no chilli", "extra crisp"). Patterns are matched
+// case-insensitively. Returns null when the entire note is payment
+// noise — caller then skips the rendering entirely.
+const PAYMENT_NOISE_PATTERNS = [
+  /test\s*bypass/i,
+  /payment\s+auto[- ]marked/i,
+  /razorpay\s+(payment|txn|order)/i,
+  /upi\s+(ref|txn)/i,
+];
+function kitchenSafeNote(raw?: string | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // If the whole thing matches any payment-noise pattern, hide it.
+  if (PAYMENT_NOISE_PATTERNS.some((p) => p.test(trimmed))) return null;
+  return trimmed;
+}
+
 export default function KitchenPage() {
   const user = useSelector((s: RootState) => s.auth.user);
   const { tier } = useUserRole();
@@ -879,10 +901,10 @@ export default function KitchenPage() {
                     );
                   })}
 
-                  {order.notes && (
+                  {kitchenSafeNote(order.notes) && (
                     <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
                       <span className="text-amber-500 text-sm shrink-0">⚠</span>
-                      <p className="text-xs text-amber-800">{order.notes}</p>
+                      <p className="text-xs text-amber-800">{kitchenSafeNote(order.notes)}</p>
                     </div>
                   )}
                 </div>

@@ -27,6 +27,7 @@ import AggregatorsPage from './pages/aggregators/AggregatorsPage';
 import MappingsPage from './pages/aggregators/MappingsPage';
 import TagsPage from './pages/tags/TagsPage';
 import CustomersPage from './pages/customers/CustomersPage';
+import DuesReceivablePage from './pages/dues/DuesReceivablePage';
 import ToppingsPage from './pages/toppings/ToppingsPage';
 import TableTypesPage from './pages/table-types/TableTypesPage';
 import BusinessProfilePage from './pages/business/BusinessProfilePage';
@@ -132,6 +133,7 @@ export default function App() {
           <Route path="toppings"   element={<ToppingsPage />} />
           <Route path="table-types" element={<TableTypesPage />} />
           <Route path="customers"  element={<CustomersPage />} />
+          <Route path="dues/receivable" element={<DuesReceivablePage />} />
           <Route path="business"   element={<BusinessProfilePage />} />
           <Route path="outlet-profile" element={<OutletProfilePage />} />
           <Route path="settings"   element={<SettingsPage />} />

@@ -17,12 +17,18 @@ export class CustomerTagsController {
   }
 
   @Post()
-  create(@Param('outletId') outletId: string, @Body() body: { name: string; color?: string }) {
+  create(
+    @Param('outletId') outletId: string,
+    @Body() body: { name: string; color?: string; allowPayLater?: boolean; maxDueAmount?: number | null },
+  ) {
     return this.service.create(outletId, body);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() body: { name?: string; color?: string }) {
+  update(
+    @Param('id') id: string,
+    @Body() body: { name?: string; color?: string; allowPayLater?: boolean; maxDueAmount?: number | null },
+  ) {
     return this.service.update(id, body);
   }
 

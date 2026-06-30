@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { ShoppingBag, Calendar, ChevronRight, Store } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 
 interface Stats {
@@ -29,11 +30,14 @@ const QUICK_RANGES: { label: string; unit: 'day' | 'month'; n: number }[] = [
 
 // Status filter — pulled in from the old History page so the dashboard can
 // surface "completed only" / "cancelled" subsets without a separate screen.
-const STATUS_LABEL: Record<string, string> = {
+// Maps machine status → i18n key suffix; the component builds the t() key
+// via `dashboard.status${STATUS_KEY[status]}` so adding a status only
+// requires a new key in en.json.
+const STATUS_KEY: Record<string, string> = {
   CREATED: 'Created', QUEUED: 'Queued', PREPARING: 'Preparing', READY: 'Ready',
-  OUT_FOR_SERVICE: 'On its way', SERVED: 'Served',
+  OUT_FOR_SERVICE: 'OnItsWay', SERVED: 'Served',
   CANCELLED: 'Cancelled', DISPUTED: 'Disputed', RESOLVED: 'Resolved',
-  FOR_REFUND: 'Refund pending', REFUND_COMPLETE: 'Refunded',
+  FOR_REFUND: 'ForRefund', REFUND_COMPLETE: 'RefundComplete',
 };
 const STATUS_TONE: Record<string, string> = {
   CREATED: 'bg-blue-100 text-blue-700',
@@ -52,6 +56,7 @@ const STATUS_TONE: Record<string, string> = {
 type StatusFilter = 'ALL' | 'SERVED' | 'CANCELLED' | 'DISPUTED';
 
 export default function DashboardPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const today = new Date();
   const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -101,8 +106,8 @@ export default function DashboardPage() {
     <div className="max-w-md mx-auto pb-4">
       {/* Header */}
       <div className="px-5 pt-6 pb-3">
-        <h1 className="text-2xl font-black text-slate-900">Your dashboard</h1>
-        <p className="text-xs text-slate-500 mt-0.5">Order activity and history</p>
+        <h1 className="text-2xl font-black text-slate-900">{t('dashboard.title')}</h1>
+        <p className="text-xs text-slate-500 mt-0.5">{t('dashboard.subtitle')}</p>
       </div>
 
       {/* Date range */}
@@ -121,7 +126,7 @@ export default function DashboardPage() {
               onClick={() => applyQuickRange(p.unit, p.n)}
               className="text-[11px] font-semibold bg-white border border-slate-200 text-slate-600 px-3 py-1.5 rounded-full hover:bg-slate-50 whitespace-nowrap"
             >
-              Last {p.label}
+              {t('dashboard.lastRange', { range: p.label })}
             </button>
           ))}
         </div>
@@ -133,15 +138,15 @@ export default function DashboardPage() {
           accusatory next to that. The metric is still computed on
           the backend (used for outlet-side customer insights). */}
       <div className="px-4 mt-4">
-        <KpiCard label="Orders" value={stats?.totalOrders ?? 0} icon={ShoppingBag} tone="orange" />
+        <KpiCard label={t('dashboard.kpiOrders')} value={stats?.totalOrders ?? 0} icon={ShoppingBag} tone="orange" />
       </div>
 
       {/* Daily chart */}
       <div className="px-4 mt-4">
         <div className="bg-white rounded-2xl border border-slate-100 p-4">
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Orders per day</p>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">{t('dashboard.ordersPerDay')}</p>
           {loading ? (
-            <div className="h-32 flex items-center justify-center text-xs text-slate-400">Loading…</div>
+            <div className="h-32 flex items-center justify-center text-xs text-slate-400">{t('common.loading')}</div>
           ) : stats?.daily?.length ? (
             <div className="flex items-end gap-1 h-32">
               {stats.daily.map(d => (
@@ -155,7 +160,7 @@ export default function DashboardPage() {
               ))}
             </div>
           ) : (
-            <p className="h-32 flex items-center justify-center text-xs text-slate-400">No orders in this range</p>
+            <p className="h-32 flex items-center justify-center text-xs text-slate-400">{t('dashboard.noOrdersInRange')}</p>
           )}
           {stats?.daily?.length ? (
             <div className="flex justify-between mt-2 text-[10px] text-slate-400">
@@ -169,9 +174,9 @@ export default function DashboardPage() {
       {/* Hourly chart */}
       <div className="px-4 mt-3">
         <div className="bg-white rounded-2xl border border-slate-100 p-4">
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Orders by hour of day</p>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">{t('dashboard.ordersByHour')}</p>
           {loading ? (
-            <div className="h-24 flex items-center justify-center text-xs text-slate-400">Loading…</div>
+            <div className="h-24 flex items-center justify-center text-xs text-slate-400">{t('common.loading')}</div>
           ) : (
             <>
               <div className="flex items-end gap-0.5 h-24">
@@ -195,7 +200,7 @@ export default function DashboardPage() {
 
       {/* Orders list (merged from the old History page) */}
       <div className="px-4 mt-4">
-        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 px-1">Orders</p>
+        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 px-1">{t('dashboard.ordersHeading')}</p>
 
         {/* Status filter pills */}
         <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-2 -mx-1 px-1">
@@ -209,7 +214,7 @@ export default function DashboardPage() {
                   : 'bg-white text-slate-600 border-slate-200'
               }`}
             >
-              {f === 'ALL' ? 'All' : f === 'SERVED' ? 'Completed' : f === 'CANCELLED' ? 'Cancelled' : 'Disputed'}
+              {f === 'ALL' ? t('dashboard.filterAll') : f === 'SERVED' ? t('dashboard.filterCompleted') : f === 'CANCELLED' ? t('dashboard.filterCancelled') : t('dashboard.filterDisputed')}
             </button>
           ))}
         </div>
@@ -230,18 +235,18 @@ export default function DashboardPage() {
               </div>
               <div className="flex-1 min-w-0 text-left">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <p className="text-sm font-semibold text-slate-800 truncate">{o.outlet?.name || 'Outlet'}</p>
+                  <p className="text-sm font-semibold text-slate-800 truncate">{o.outlet?.name || t('dashboard.outletFallback')}</p>
                   {o.tokenNumber != null && (
                     <span className="inline-flex items-center text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full">
-                      Token #{o.tokenNumber}
+                      {t('dashboard.tokenPrefix', { number: o.tokenNumber })}
                     </span>
                   )}
                 </div>
                 <p className="text-[11px] text-slate-400">
-                  {dayjs(o.createdAt).format('DD MMM, hh:mm A')}{o.items?.length ? ` · ${o.items.length} items` : ''}
+                  {dayjs(o.createdAt).format('DD MMM, hh:mm A')}{o.items?.length ? ` · ${t('dashboard.itemsCount', { count: o.items.length })}` : ''}
                 </p>
                 <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full mt-1 ${STATUS_TONE[o.status] || 'bg-slate-100 text-slate-600'}`}>
-                  {STATUS_LABEL[o.status] || o.status}
+                  {STATUS_KEY[o.status] ? t(`dashboard.status${STATUS_KEY[o.status]}`) : o.status}
                 </span>
               </div>
               <div className="text-right">
@@ -250,7 +255,7 @@ export default function DashboardPage() {
               <ChevronRight size={14} className="text-slate-300 shrink-0" />
             </button>
           )) : (
-            <p className="text-xs text-slate-400 italic text-center py-6">No orders in this range</p>
+            <p className="text-xs text-slate-400 italic text-center py-6">{t('dashboard.noOrdersInRange')}</p>
           )}
         </div>
       </div>

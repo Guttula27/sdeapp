@@ -53,7 +53,14 @@ export default function CustomersPage() {
     setLoadingOrders(true);
     try {
       const { data } = await api.get(`/outlets/${outletId}/customers/${customer.id}/orders`);
-      setCustomerOrders(data.data || []);
+      // The customer-orders endpoint returns a paginated envelope
+      //   { items, nextCursor, limit }
+      // (changed in the perf-phase-2 cursor-pagination work). Earlier
+      // versions returned a bare array, so we defensively accept both
+      // shapes — `data.data` can be the array directly OR the wrapper.
+      const payload = data.data ?? data;
+      const list = Array.isArray(payload) ? payload : (payload?.items ?? []);
+      setCustomerOrders(Array.isArray(list) ? list : []);
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to load orders');
     } finally {
@@ -72,16 +79,30 @@ export default function CustomersPage() {
       .catch(() => {});
   }, [businessId]);
 
+  // userId -> outstanding dues balance for the active outlet. Populated
+  // off the receivable endpoint so we don't hit GET /balance per row.
+  const [duesByUser, setDuesByUser] = useState<Record<string, number>>({});
+
   const fetchAll = useCallback(async () => {
     if (!outletId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [c, t] = await Promise.all([
+      const [c, t, d] = await Promise.all([
         api.get(`/outlets/${outletId}/customers`),
         api.get(`/outlets/${outletId}/customer-tags`),
+        // Receivable returns one row per customer with any pay-later
+        // activity. Customers without activity are absent from the
+        // response → treat as zero. Failure is non-fatal so the page
+        // still renders without the dues column.
+        api.get(`/outlets/${outletId}/dues/receivable`).catch(() => ({ data: { data: [] } })),
       ]);
       setCustomers(c.data.data || []);
       setTags(t.data.data || []);
+      const map: Record<string, number> = {};
+      for (const row of (d.data.data || d.data || []) as Array<{ userId: string; currentBalance: number }>) {
+        map[row.userId] = row.currentBalance;
+      }
+      setDuesByUser(map);
     } finally {
       setLoading(false);
     }
@@ -244,6 +265,7 @@ export default function CustomersPage() {
                     Last Order {sortBy === 'RECENT' && '↓'}
                   </button>
                 </th>
+                <th className="px-4 pt-3 pb-1 text-right font-semibold">Dues</th>
                 <th className="px-4 pt-3 pb-1 text-left font-semibold">Tag</th>
               </tr>
               {/* Inline filter row inside the header */}
@@ -293,6 +315,7 @@ export default function CustomersPage() {
                     </button>
                   )}
                 </th>
+                <th className="px-4 pb-2 normal-case font-normal" />
                 <th className="px-4 pb-2 normal-case font-normal">
                   <select
                     value={tagFilter}
@@ -333,6 +356,13 @@ export default function CustomersPage() {
                   <td className="px-4 py-3 text-right font-bold text-slate-700">₹{c.totalSpend.toFixed(0)}</td>
                   <td className="px-4 py-3 text-slate-500 text-xs">
                     {c.lastOrderAt ? dayjs(c.lastOrderAt).fromNow() : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {duesByUser[c.id] > 0 ? (
+                      <span className="font-bold text-rose-700">₹{duesByUser[c.id].toFixed(2)}</span>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center gap-2">
@@ -398,7 +428,7 @@ export default function CustomersPage() {
                     <ShoppingBag size={14} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-semibold text-slate-800 truncate">
                         #{o.orderNumber}{o.tokenNumber != null && <span className="text-slate-400 font-normal"> · Token {o.tokenNumber}</span>}
                       </p>
@@ -412,6 +442,7 @@ export default function CustomersPage() {
                       >
                         {o.status}
                       </span>
+                      <PaymentChip order={o} />
                     </div>
                     <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
                       <Clock size={10} />
@@ -456,6 +487,7 @@ export default function CustomersPage() {
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200">
               <span className="w-2 h-2 rounded-full bg-slate-500" />
               <span className="text-xs font-semibold text-slate-700">{orderDetail.status}</span>
+              <PaymentChip order={orderDetail} />
             </div>
 
             <div className="space-y-2">
@@ -466,8 +498,18 @@ export default function CustomersPage() {
                     {it.quantity}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-slate-800 truncate">{it.item?.name}</p>
-                    {it.variant && <p className="text-xs text-slate-400">{it.variant.name}</p>}
+                    {/* The customer-orders endpoint returns the slim
+                        shape (perf-phase-2) — item / variant relations
+                        aren't selected. Read the snapshot fields
+                        (frozen at order time so receipts stay stable
+                        through name edits), with the relation as a
+                        legacy fallback. */}
+                    <p className="text-sm font-semibold text-slate-800 truncate">
+                      {it.itemNameSnapshot ?? it.item?.name ?? '—'}
+                    </p>
+                    {(it.variantNameSnapshot || it.variant?.name) && (
+                      <p className="text-xs text-slate-400">{it.variantNameSnapshot ?? it.variant?.name}</p>
+                    )}
                     {it.notes && <p className="text-[11px] text-slate-400 italic mt-0.5">{it.notes}</p>}
                   </div>
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600 whitespace-nowrap">
@@ -565,5 +607,43 @@ export default function CustomersPage() {
         </form>
       </Modal>
     </div>
+  );
+}
+
+/**
+ * Compact chip summarising how an order was settled. Three branches:
+ *   1) DUES   — pay-later debit on the customer's ledger, not voided.
+ *   2) PAID   — has a Payment row with status SUCCESS (real refunds
+ *               excluded so a refund row doesn't masquerade as a paid
+ *               settlement).
+ *   3) UNPAID — anything else (postpaid tab waiting for Bill Now,
+ *               pending Razorpay, cancelled / refunded fully…).
+ *
+ * Reads slim fields the customer-orders endpoint now projects:
+ *   order.payments[], order.duesLedger[].
+ */
+function PaymentChip({ order }: { order: any }) {
+  const duesLive = (order?.duesLedger ?? []).some((d: any) => !d.voidedAt);
+  if (duesLive) {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap bg-amber-100 text-amber-800 border border-amber-200">
+        Dues · pay later
+      </span>
+    );
+  }
+  const settledPayment = (order?.payments ?? []).find(
+    (p: any) => p.status === 'SUCCESS' && !p.isRefund,
+  );
+  if (settledPayment) {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap bg-emerald-100 text-emerald-800 border border-emerald-200">
+        Paid · {settledPayment.mode}
+      </span>
+    );
+  }
+  return (
+    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap bg-slate-100 text-slate-600 border border-slate-200">
+      Unpaid
+    </span>
   );
 }

@@ -23,6 +23,7 @@ import { LeadsModule } from './modules/leads/leads.module';
 import { KitchenStationsModule } from './modules/kitchen-stations/kitchen-stations.module';
 import { ServiceStationsModule } from './modules/service-stations/service-stations.module';
 import { CustomerTagsModule } from './modules/customer-tags/customer-tags.module';
+import { CustomerDuesModule } from './modules/customer-dues/customer-dues.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { ToppingsModule } from './modules/toppings/toppings.module';
 import { TableTypesModule } from './modules/table-types/table-types.module';
@@ -104,6 +105,7 @@ import { RedisModule } from './config/redis/redis.module';
     KitchenStationsModule,
     ServiceStationsModule,
     CustomerTagsModule,
+    CustomerDuesModule,
     CustomersModule,
     ToppingsModule,
     TableTypesModule,

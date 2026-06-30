@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Receipt, CheckCircle2, Clock, XCircle, ChevronRight,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 
@@ -12,6 +13,7 @@ import { useCustomerAuth } from '../context/CustomerAuthContext';
  * pay or see status.
  */
 export default function BillsPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { user } = useCustomerAuth();
   const [rows, setRows] = useState<any[]>([]);
@@ -31,22 +33,22 @@ export default function BillsPage() {
     <div className="min-h-screen bg-slate-50 pb-24">
       <header className="bg-white border-b border-slate-200 px-4 py-4">
         <h1 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-          <Receipt size={18} className="text-brand-700" /> My bills
+          <Receipt size={18} className="text-brand-700" /> {t('bills.title')}
         </h1>
         <p className="text-xs text-slate-500 mt-0.5">
-          Shared bills sent to your number. Tap to view and pay.
+          {t('bills.subtitle')}
         </p>
       </header>
 
       <main className="p-4 space-y-2">
         {loading ? (
-          <div className="text-center text-xs text-slate-400 py-12">Loading…</div>
+          <div className="text-center text-xs text-slate-400 py-12">{t('common.loading')}</div>
         ) : rows.length === 0 ? (
           <div className="text-center py-12 px-6">
             <Receipt size={28} className="mx-auto text-slate-300 mb-2" />
-            <p className="text-sm text-slate-600 font-semibold">No bills yet</p>
+            <p className="text-sm text-slate-600 font-semibold">{t('bills.empty')}</p>
             <p className="text-xs text-slate-400 mt-1">
-              When someone splits a bill with you, it shows up here.
+              {t('bills.emptyHint')}
             </p>
           </div>
         ) : rows.map((row) => {
@@ -72,10 +74,10 @@ export default function BillsPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-slate-900 truncate">
-                  {order?.outlet?.name ?? 'Outlet'}
+                  {order?.outlet?.name ?? t('bills.outletFallback')}
                 </p>
                 <p className="text-[11px] text-slate-500 truncate">
-                  Order {order?.orderNumber}
+                  {t('bills.orderPrefix', { number: order?.orderNumber ?? '' })}
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1">

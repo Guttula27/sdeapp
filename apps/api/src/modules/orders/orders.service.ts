@@ -12,6 +12,7 @@ import { LifecycleDispatcherService } from '../customer-alerts/lifecycle-dispatc
 import { PricingService } from '../pricing/pricing.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { ServiceStationsService } from '../service-stations/service-stations.service';
+import { CustomerDuesService } from '../customer-dues/customer-dues.service';
 import {
   evaluateCascade,
   nowInOutletTz,
@@ -57,6 +58,7 @@ export class OrdersService {
     private audit: AuditLogService,
     private encryption: EncryptionService,
     private userLookup: UserLookupService,
+    private customerDues: CustomerDuesService,
   ) {}
 
   /**
@@ -267,6 +269,10 @@ export class OrdersService {
     let discountAmount = 0;
     let appliedCouponId: string | null = null;
     let appliedCouponDiscount = 0;
+    // ALLOWANCE coupons: units this redemption consumed against the
+    // customer's per-period quota. 0 for STANDARD so a kind-flip on
+    // the coupon row can't poison the period-consumed sum.
+    let appliedCouponItemUnits = 0;
     let appliedRewardPoints = 0;
     let appliedRewardAmount = 0;
 
@@ -329,6 +335,7 @@ export class OrdersService {
       discountAmount = Math.max(0, subtotal - quote.subtotal);
       appliedCouponId = quote.coupon?.id ?? null;
       appliedCouponDiscount = quote.coupon?.amount ?? 0;
+      appliedCouponItemUnits = quote.coupon?.itemUnits ?? 0;
       appliedRewardPoints = quote.reward?.points ?? 0;
       appliedRewardAmount = quote.reward?.amount ?? 0;
     } catch (e: any) {
@@ -337,6 +344,25 @@ export class OrdersService {
       // would otherwise be off by the discount they thought they'd get.
       if (dto.couponId || dto.rewardPoints) throw e;
       // No promotions requested — silently fall back to the un-promo bill.
+    }
+
+    // Pay-later gate. When set, the customer expects the order to be
+    // booked as dues (no immediate payment). We pre-check here so a
+    // tag mismatch / ceiling overflow fails fast — before stock
+    // decrement, order-number issuance, etc. — rather than rolling
+    // back inside the transaction. Mutual exclusion with paymentMode:
+    // a request claiming both is contradictory (pay now AND later).
+    if (dto.payLater) {
+      if (dto.paymentMode) {
+        throw new BadRequestException('Cannot pay later AND pay now in the same request');
+      }
+      if (!resolvedCustomerId) {
+        throw new BadRequestException('Pay-later requires an identified customer');
+      }
+      // Throws BadRequestException with a customer-readable message
+      // when the customer's tag doesn't allow pay-later or the order
+      // would push them over the configured ceiling.
+      await this.customerDues.assertCanPayLater(resolvedCustomerId, outletId, totalAmount);
     }
 
     // Pull-and-increment the outlet's persistent order sequence and configurable
@@ -502,6 +528,25 @@ export class OrdersService {
         },
       });
 
+      // Pay-later: record a DEBIT on the customer's dues ledger inside
+      // the same transaction as the order, so a rollback (stock race,
+      // coupon failure later in this tx) takes the ledger row with it.
+      if (dto.payLater && resolvedCustomerId) {
+        const outletRow = await tx.outlet.findUnique({
+          where: { id: outletId },
+          select: { businessId: true },
+        });
+        if (!outletRow) throw new BadRequestException('Outlet not found');
+        await this.customerDues.recordOrderDebit(tx, {
+          userId:     resolvedCustomerId,
+          businessId: outletRow.businessId,
+          outletId,
+          orderId:    created.id,
+          amount:     totalAmount,
+          notes:      `Pay-later · ${orderNumber}`,
+        });
+      }
+
       // Persist the coupon redemption (ledger row + counter increment) inside
       // the same transaction as the order — atomic against double-claims.
       if (appliedCouponId && resolvedCustomerId) {
@@ -511,6 +556,7 @@ export class OrdersService {
             userId: resolvedCustomerId,
             orderId: created.id,
             discountAmount: appliedCouponDiscount,
+            itemUnits: appliedCouponItemUnits,
           },
         });
         await tx.coupon.update({
@@ -1066,6 +1112,27 @@ export class OrdersService {
       notes: dto.notes ?? null,
       ...(actedAt ? { actedAt: actedAt.toISOString() } : {}),
     } as any);
+
+    // Void any coupon redemption tied to this order when it goes to a
+    // money-back-or-discarded terminal state. ALLOWANCE coupons rely
+    // on this to restore the customer's per-period quota; STANDARD
+    // rows get voidedAt set too so a future re-issue of the same
+    // coupon to the same customer is honoured. Idempotent — the
+    // voidedAt: null filter means re-running this on an already-voided
+    // row is a no-op.
+    if (dto.status === OrderStatus.CANCELLED || dto.status === OrderStatus.REFUND_COMPLETE) {
+      await this.prisma.couponUsage.updateMany({
+        where: { orderId: id, voidedAt: null },
+        data: { voidedAt: new Date() },
+      });
+      // Same hook for the pay-later DEBIT: cancelled / refunded orders
+      // restore the customer's dues balance. updateMany filters
+      // voidedAt IS NULL → idempotent on re-firing.
+      await this.prisma.customerDuesLedger.updateMany({
+        where: { orderId: id, kind: 'DEBIT', voidedAt: null },
+        data: { voidedAt: new Date() },
+      });
+    }
 
     // Service-desk lane routing on the new status:
     //   - self-service: kitchen-done → OUT_FOR_SERVICE → "release" lane.

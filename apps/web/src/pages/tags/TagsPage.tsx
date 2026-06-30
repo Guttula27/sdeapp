@@ -63,14 +63,21 @@ export default function TagsPage() {
 
   useEffect(() => { fetchTags(); }, [fetchTags]);
 
+  const [allowPayLater, setAllowPayLater] = useState(false);
+  const [maxDueAmount, setMaxDueAmount] = useState('');
+
   const openCreate = () => {
     setName('');
     setColor(SWATCHES[0]);
+    setAllowPayLater(false);
+    setMaxDueAmount('');
     setModal({ open: true });
   };
   const openEdit = (t: any) => {
     setName(t.name);
     setColor(t.color);
+    setAllowPayLater(!!t.allowPayLater);
+    setMaxDueAmount(t.maxDueAmount != null ? String(t.maxDueAmount) : '');
     setModal({ open: true, editing: t });
   };
 
@@ -79,11 +86,19 @@ export default function TagsPage() {
     if (!name.trim()) return;
     setSaving(true);
     try {
+      const body = {
+        name: name.trim(),
+        color,
+        allowPayLater,
+        // Force-null the ceiling when pay-later is off so the persisted
+        // row never carries a stranded cap on a non-pay-later tag.
+        maxDueAmount: allowPayLater && maxDueAmount ? Number(maxDueAmount) : null,
+      };
       if (modal.editing) {
-        await api.patch(`/outlets/${outletId}/customer-tags/${modal.editing.id}`, { name: name.trim(), color });
+        await api.patch(`/outlets/${outletId}/customer-tags/${modal.editing.id}`, body);
         toast.success('Tag updated');
       } else {
-        await api.post(`/outlets/${outletId}/customer-tags`, { name: name.trim(), color });
+        await api.post(`/outlets/${outletId}/customer-tags`, body);
         toast.success('Tag created');
       }
       setModal({ open: false });
@@ -161,9 +176,14 @@ export default function TagsPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-slate-800 truncate">{t.name}</p>
-                <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5">
+                <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5 flex-wrap">
                   <span className="flex items-center gap-1"><Users size={11} /> {t._count?.assignments || 0}</span>
                   <span>{t._count?.itemPrices || 0} prices</span>
+                  {t.allowPayLater && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold">
+                      Pay later{t.maxDueAmount != null ? ` · cap ₹${t.maxDueAmount}` : ''}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-1">
@@ -213,6 +233,36 @@ export default function TagsPage() {
               ))}
             </div>
           </Field>
+
+          {/* Pay-later (dues) — customers with this tag can place
+              orders that go onto a salary-deduct / settle-later ledger
+              instead of paying at checkout. */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 space-y-2">
+            <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <input
+                type="checkbox"
+                checked={allowPayLater}
+                onChange={(e) => setAllowPayLater(e.target.checked)}
+              />
+              Allow customers with this tag to pay later (dues)
+            </label>
+            {allowPayLater && (
+              <Field label="Max outstanding amount (₹) — optional ceiling">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="input"
+                  placeholder="Leave blank for no cap"
+                  value={maxDueAmount}
+                  onChange={(e) => setMaxDueAmount(e.target.value)}
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Customer's pay-later order is rejected at checkout if it would push their balance over this amount.
+                </p>
+              </Field>
+            )}
+          </div>
         </form>
       </Modal>
 

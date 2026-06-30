@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, Receipt, Users, CheckCircle2, Clock, XCircle,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 import { useCustomerAuth } from '../context/CustomerAuthContext';
 
@@ -20,6 +21,7 @@ import { useCustomerAuth } from '../context/CustomerAuthContext';
  * OrdersPage panel shows when the diner saw their share.
  */
 export default function BillSharePage() {
+  const { t } = useTranslation();
   const { shareId } = useParams<{ shareId: string }>();
   const navigate = useNavigate();
   const { user } = useCustomerAuth();
@@ -32,23 +34,23 @@ export default function BillSharePage() {
     setLoading(true);
     api.get(`/split-shares/${shareId}`)
       .then((r) => setShare(r.data?.data ?? null))
-      .catch((e) => setError(e?.response?.data?.message || 'Failed to load bill'))
+      .catch((e) => setError(e?.response?.data?.message || t('bills.loadFailed')))
       .finally(() => setLoading(false));
-  }, [user, shareId]);
+  }, [user, shareId, t]);
 
   if (!user) return null;
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center text-xs text-slate-400">Loading…</div>;
+    return <div className="min-h-screen flex items-center justify-center text-xs text-slate-400">{t('common.loading')}</div>;
   }
   if (error || !share) {
     return (
       <div className="min-h-screen flex items-center justify-center px-6 text-center">
         <div>
           <XCircle size={28} className="mx-auto text-rose-400 mb-2" />
-          <p className="text-sm text-slate-700 font-semibold">{error || 'Bill not found'}</p>
+          <p className="text-sm text-slate-700 font-semibold">{error || t('bills.billNotFound')}</p>
           <button onClick={() => navigate('/bills')} className="btn-primary mt-4 text-sm">
-            Back to My Bills
+            {t('bills.backToMyBills')}
           </button>
         </div>
       </div>
@@ -70,8 +72,8 @@ export default function BillSharePage() {
           <ArrowLeft size={16} />
         </button>
         <div className="flex-1">
-          <h1 className="text-sm font-bold text-slate-900">Split bill share</h1>
-          <p className="text-[11px] text-slate-500">Order {order?.orderNumber}</p>
+          <h1 className="text-sm font-bold text-slate-900">{t('bills.shareTitle')}</h1>
+          <p className="text-[11px] text-slate-500">{t('bills.orderPrefix', { number: order?.orderNumber ?? '' })}</p>
         </div>
       </header>
 
@@ -84,22 +86,22 @@ export default function BillSharePage() {
               : <Receipt size={18} />}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-base font-bold text-slate-900 truncate">{order?.outlet?.name ?? 'Outlet'}</p>
-            <p className="text-[11px] text-slate-500">Bill total · ₹{Number(order?.totalAmount ?? 0).toFixed(2)}</p>
+            <p className="text-base font-bold text-slate-900 truncate">{order?.outlet?.name ?? t('bills.outletFallback')}</p>
+            <p className="text-[11px] text-slate-500">{t('bills.billTotal', { amount: Number(order?.totalAmount ?? 0).toFixed(2) })}</p>
           </div>
         </div>
 
         {/* Share amount card */}
         <div className="bg-gradient-to-br from-brand-50 to-amber-50/30 rounded-2xl border border-brand-100 p-4 text-center">
           <p className="text-[10px] uppercase tracking-wider font-bold text-brand-700 mb-1">
-            Your share
+            {t('bills.yourShare')}
           </p>
           <p className="text-3xl font-black text-slate-900 tabular-nums">
             ₹{Number(share.amount).toFixed(2)}
           </p>
           <div className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 bg-white/70 border border-slate-200 px-2.5 py-1 rounded-full">
             <Users size={11} />
-            {order?.splitPaidShares ?? 0} of {order?.splitTotalShares ?? 0} shares paid
+            {t('bills.sharesPaid', { paid: order?.splitPaidShares ?? 0, total: order?.splitTotalShares ?? 0 })}
           </div>
           <div className="mt-3">
             <StatusPill status={share.status} />
@@ -110,13 +112,13 @@ export default function BillSharePage() {
         {Array.isArray(order?.items) && order.items.length > 0 && (
           <details className="bg-white rounded-2xl border border-slate-200">
             <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700">
-              See what was ordered ({order.items.length} items)
+              {t('bills.seeWhatWasOrdered', { count: order.items.length })}
             </summary>
             <ul className="px-4 pb-3 space-y-1.5 text-xs text-slate-600">
               {order.items.map((it: any) => (
                 <li key={it.id} className="flex items-center justify-between">
                   <span className="truncate">
-                    {it.quantity}× {it.item?.name ?? 'Item'}
+                    {it.quantity}× {it.item?.name ?? t('bills.itemFallback')}
                     {it.variant ? ` · ${it.variant.name}` : ''}
                   </span>
                   <span className="tabular-nums shrink-0 ml-2">
@@ -146,14 +148,14 @@ export default function BillSharePage() {
         >
           {isPaid ? (
             <>
-              <CheckCircle2 size={16} /> Paid · thanks!
+              <CheckCircle2 size={16} /> {t('bills.paidThanks')}
             </>
           ) : isCancelled ? (
             <>
               <XCircle size={16} /> {share.status}
             </>
           ) : (
-            <>Pay ₹{Number(share.amount).toFixed(2)}</>
+            <>{t('bills.payAmount', { amount: Number(share.amount).toFixed(2) })}</>
           )}
         </button>
       </div>
@@ -162,20 +164,21 @@ export default function BillSharePage() {
 }
 
 function StatusPill({ status }: { status: string }) {
-  const cfg: Record<string, { icon: any; cls: string; label: string }> = {
-    PENDING:   { icon: Clock,         cls: 'bg-amber-50 text-amber-800 border-amber-200', label: 'PENDING' },
-    SENT:      { icon: Clock,         cls: 'bg-amber-50 text-amber-800 border-amber-200', label: 'SENT' },
-    VIEWED:    { icon: Clock,         cls: 'bg-amber-50 text-amber-800 border-amber-200', label: 'VIEWED' },
-    PAID:      { icon: CheckCircle2,  cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', label: 'PAID' },
-    CANCELLED: { icon: XCircle,       cls: 'bg-slate-100 text-slate-500 border-slate-200', label: 'CANCELLED' },
-    EXPIRED:   { icon: XCircle,       cls: 'bg-slate-100 text-slate-500 border-slate-200', label: 'EXPIRED' },
+  const { t } = useTranslation();
+  const cfg: Record<string, { icon: any; cls: string; key: string }> = {
+    PENDING:   { icon: Clock,         cls: 'bg-amber-50 text-amber-800 border-amber-200', key: 'bills.statusPending' },
+    SENT:      { icon: Clock,         cls: 'bg-amber-50 text-amber-800 border-amber-200', key: 'bills.statusSent' },
+    VIEWED:    { icon: Clock,         cls: 'bg-amber-50 text-amber-800 border-amber-200', key: 'bills.statusViewed' },
+    PAID:      { icon: CheckCircle2,  cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', key: 'bills.statusPaid' },
+    CANCELLED: { icon: XCircle,       cls: 'bg-slate-100 text-slate-500 border-slate-200', key: 'bills.statusCancelled' },
+    EXPIRED:   { icon: XCircle,       cls: 'bg-slate-100 text-slate-500 border-slate-200', key: 'bills.statusExpired' },
   };
   const c = cfg[status] ?? cfg.PENDING;
   const Icon = c.icon;
   return (
     <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${c.cls}`}>
       <Icon size={10} />
-      {c.label}
+      {t(c.key)}
     </span>
   );
 }

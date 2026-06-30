@@ -124,6 +124,16 @@ export class CreateOrderDto {
   @IsOptional()
   paymentMode?: string; // 'CASH' | 'UPI' | …  (used by staff Place Order flow)
 
+  // Pay-later request. When TRUE, the order is created without an
+  // immediate payment and the total is recorded as a DEBIT on the
+  // customer's dues ledger for the outlet. Server-side gated by
+  // the customer's tag at this outlet having `allowPayLater = true`
+  // and the order not pushing the customer over the tag's
+  // `maxDueAmount` ceiling.
+  @IsBoolean()
+  @IsOptional()
+  payLater?: boolean;
+
   @IsOptional()
   @ValidateNested()
   @Type(() => OrderPaymentDto)
