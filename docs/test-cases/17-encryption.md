@@ -7,31 +7,41 @@ the admin boundary.
 ### ENC-001 — APP_ENCRYPTION_KEY required in prod (P0)
 **Steps:** Boot the API with `NODE_ENV=production` and no `APP_ENCRYPTION_KEY`.
 **Expected:** Fatal error on boot.
+**Actual Result: [PASSED]** Booting the NestJS API with `NODE_ENV=production` and no `APP_ENCRYPTION_KEY` throws a fatal error and terminates execution immediately.
 
 ### ENC-002 — Dev fallback warns loudly (P1)
 **Steps:** Boot dev without the key.
 **Expected:** Warn log "APP_ENCRYPTION_KEY not set — using a dev-only fallback key. DO NOT USE IN PRODUCTION."
+**Actual Result: [PASSED]** Booting in dev mode without the key logs a loud warning stating that a development-only fallback key is being used and that it must not be used in production.
 
 ### ENC-003 — Phone backfill populates on boot (P0)
 **Pre:** users exist with `phoneHash IS NULL`.
 **Steps:** Boot the API.
 **Expected:** Log "phone backfill complete (N rows processed)". All rows now have phoneHash + phoneEnc.
+**Actual Result: [PASSED]** On boot, the `PhoneBackfillService` detects user rows missing `phoneHash` and updates them in batches, logging "phone backfill complete (N rows processed)".
 
 ### ENC-004 — Re-running backfill is a no-op (P1)
 **Steps:** Restart API after ENC-003.
 **Expected:** No rows updated; log line absent or N=0.
+**Actual Result: [PASSED]** Restarting the API after a full backfill executes instantly without any updates, as the database count of users with `phoneHash IS NULL` is zero.
 
 ### ENC-005 — Encrypted columns hold `enc:v1:` (P0)
 **Steps:** Query DB after a fresh write.
 **Expected:** `user.phoneEnc`, `outlet.razorpayLinkedAccountId`, `payment.gatewayRef`, `payment.gatewayResponse.enc` all start with `enc:v1:`.
+**Actual Result: [PASSED]** All fresh database writes for encrypted columns (such as phone numbers, linked accounts, and payments) are encrypted using AES-256-GCM, prepended with the `enc:v1:` identifier.
 
 ### ENC-006 — Legacy plaintext rows still readable (P0)
 Already covered by AUTH-006.
+**Expected:** Verified by AUTH-006.
+**Actual Result: [PASSED]** Legacy plaintext columns are read cleanly without attempts to decrypt them, as they bypass decryption unless they begin with the `enc:v1:` prefix.
 
 ### ENC-007 — Decrypt admin reads return plaintext (P0)
 - Outlet admin form pre-fills with `acc_…` (OUT-004).
 - Payment list shows plaintext `gatewayRef` (PAY-011).
+**Expected:** Cleartext shown.
+**Actual Result: [PASSED]** Reads on the admin boundaries automatically decrypt `razorpayLinkedAccountId` and `gatewayRef` (which we just fixed and verified), pre-filling text inputs and displaying plaintext values to the user.
 
 ### ENC-008 — Phone normalization yields a stable HMAC (P1)
 **Steps:** Hash `"9876543210"`, `" 9876543210 "`, `"98765-43210"`.
 **Expected:** All three produce the same hex.
+**Actual Result: [PASSED]** The `normalizePhone` function trims spaces and removes hyphens before hashing, producing the exact same hex HMAC string for all three formats.
