@@ -10,7 +10,7 @@ the platform-fee defaults + per-business overrides.
 **Actual Result: [GAP / FAIL]** The API does not check user roles. Any logged-in user can create a new business.
 
 ### PLAT-002 — Open business detail page (P0)
-**Steps:** Click a non-cluster business row in the list.
+**Steps:** Click a non-cluster business row in the list
 **Expected:** Redirect to `/platform/businesses/:id`. Identity, contact, subscription, platform-fee override and outlets render.
 **Actual Result: [GAP / FAIL]** Tested on the live server. A staff user token successfully fetched the list of all businesses (200 OK) and can fetch details for any business.
 
