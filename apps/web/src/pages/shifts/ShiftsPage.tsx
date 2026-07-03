@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
+import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
   Wallet, ChevronRight, RefreshCw, FileText, Lock, Unlock,
@@ -20,6 +21,7 @@ import Modal from '../../components/common/Modal';
  *     of day. Z report at this level sums every cashier underneath.
  */
 export default function ShiftsPage() {
+  const { t } = useTranslation();
   const user = useSelector((s: RootState) => s.auth.user);
   const { tier } = useUserRole();
   const outletId = user?.outletId || '';
@@ -66,13 +68,13 @@ export default function ShiftsPage() {
         openingFloat: Number(openingFloat) || 0,
         note: openNote || undefined,
       });
-      toast.success('Drawer opened');
+      toast.success(t('shifts.toastDrawerOpened'));
       setOpenMyOpen(false);
       setOpeningFloat('0');
       setOpenNote('');
       await refresh();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Could not open drawer');
+      toast.error(e?.response?.data?.message || t('shifts.toastCouldNotOpenDrawer'));
     } finally {
       setSubmitting(false);
     }
@@ -86,7 +88,7 @@ export default function ShiftsPage() {
         declaredCash: Number(declaredCash) || 0,
         closeNote: closeNote || undefined,
       });
-      toast.success('Drawer closed');
+      toast.success(t('shifts.toastDrawerClosed'));
       setCloseMyOpen(false);
       setDeclaredCash('0');
       setCloseNote('');
@@ -94,7 +96,7 @@ export default function ShiftsPage() {
       await openCashierZReport(myShift.id);
       await refresh();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Could not close drawer');
+      toast.error(e?.response?.data?.message || t('shifts.toastCouldNotCloseDrawer'));
     } finally {
       setSubmitting(false);
     }
@@ -107,13 +109,13 @@ export default function ShiftsPage() {
       await api.post(`/outlets/${outletId}/shifts/outlet/${outletShift.id}/close`, {
         closeNote: closeOutletNote || undefined,
       });
-      toast.success('Outlet shift closed');
+      toast.success(t('shifts.toastOutletClosed'));
       setCloseOutletOpen(false);
       setCloseOutletNote('');
       await openOutletZReport(outletShift.id);
       await refresh();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Could not close outlet shift');
+      toast.error(e?.response?.data?.message || t('shifts.toastCouldNotCloseOutlet'));
     } finally {
       setSubmitting(false);
     }
@@ -125,7 +127,7 @@ export default function ShiftsPage() {
       setZReport(data.data);
       setZScope('cashier');
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to load Z report');
+      toast.error(e?.response?.data?.message || t('shifts.toastZReportFail'));
     }
   };
   const openOutletZReport = async (id: string) => {
@@ -134,7 +136,7 @@ export default function ShiftsPage() {
       setZReport(data.data);
       setZScope('outlet');
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to load Z report');
+      toast.error(e?.response?.data?.message || t('shifts.toastZReportFail'));
     }
   };
 
@@ -143,7 +145,7 @@ export default function ShiftsPage() {
   if (!outletId) {
     return (
       <div className="p-8 text-sm text-slate-500">
-        Cashier shifts live per outlet. Your account isn't tied to one.
+        {t('shifts.outletScopedNotice')}
       </div>
     );
   }
@@ -152,13 +154,13 @@ export default function ShiftsPage() {
     <div className="p-4 lg:p-6 max-w-5xl mx-auto space-y-4">
       <header className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Cashier shifts</h1>
+          <h1 className="text-xl font-bold text-slate-900">{t('shifts.title')}</h1>
           <p className="text-xs text-slate-500">
-            Open your drawer at the start of the shift, close at end of day, print the Z report for reconciliation.
+            {t('shifts.subtitle')}
           </p>
         </div>
         <button className="btn-ghost text-xs" onClick={refresh}>
-          <RefreshCw size={12} /> Refresh
+          <RefreshCw size={12} /> {t('shifts.refresh')}
         </button>
       </header>
 
@@ -169,38 +171,38 @@ export default function ShiftsPage() {
             <Wallet size={16} />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-bold text-slate-900 text-sm">My drawer</p>
+            <p className="font-bold text-slate-900 text-sm">{t('shifts.myDrawer')}</p>
             <p className="text-[11px] text-slate-500">
               {loading
-                ? 'Loading…'
+                ? t('shifts.loading')
                 : myShift
-                  ? `Open since ${new Date(myShift.openedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}`
-                  : 'No active drawer — open one to start taking payments.'}
+                  ? t('shifts.openSince', { when: new Date(myShift.openedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }) })
+                  : t('shifts.noActiveDrawer')}
             </p>
           </div>
           {myShift ? (
             <>
               <button className="btn-secondary text-xs" onClick={() => openCashierZReport(myShift.id)}>
-                <FileText size={12} /> Z report
+                <FileText size={12} /> {t('shifts.zReport')}
               </button>
               <button
                 className="btn-danger text-xs"
                 onClick={() => { setDeclaredCash('0'); setCloseMyOpen(true); }}
               >
-                <Lock size={12} /> Close drawer
+                <Lock size={12} /> {t('shifts.closeDrawer')}
               </button>
             </>
           ) : (
             <button className="btn-primary text-xs" onClick={() => setOpenMyOpen(true)}>
-              <Unlock size={12} /> Open drawer
+              <Unlock size={12} /> {t('shifts.openDrawer')}
             </button>
           )}
         </div>
         {myShift && (
           <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
-            <KV label="Opening float" value={`₹${Number(myShift.openingFloat).toFixed(2)}`} />
-            <KV label="Opened by" value={user?.name ?? '—'} />
-            {myShift.openNote && <KV label="Note" value={myShift.openNote} />}
+            <KV label={t('shifts.kvOpeningFloat')} value={`₹${Number(myShift.openingFloat).toFixed(2)}`} />
+            <KV label={t('shifts.kvOpenedBy')} value={user?.name ?? '—'} />
+            {myShift.openNote && <KV label={t('shifts.kvNote')} value={myShift.openNote} />}
           </div>
         )}
       </div>
@@ -213,25 +215,25 @@ export default function ShiftsPage() {
               <ChevronRight size={16} />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-bold text-slate-900 text-sm">Outlet shift envelope</p>
+              <p className="font-bold text-slate-900 text-sm">{t('shifts.outletEnvelope')}</p>
               <p className="text-[11px] text-slate-500">
                 {loading
-                  ? 'Loading…'
+                  ? t('shifts.loading')
                   : outletShift
-                    ? `Active since ${new Date(outletShift.openedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}`
-                    : 'No outlet shift open. Will auto-create when the first cashier opens their drawer.'}
+                    ? t('shifts.outletActiveSince', { when: new Date(outletShift.openedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }) })
+                    : t('shifts.outletNoShift')}
               </p>
             </div>
             {outletShift && (
               <>
                 <button className="btn-secondary text-xs" onClick={() => openOutletZReport(outletShift.id)}>
-                  <FileText size={12} /> Outlet Z report
+                  <FileText size={12} /> {t('shifts.outletZReport')}
                 </button>
                 <button
                   className="btn-danger text-xs"
                   onClick={() => { setCloseOutletNote(''); setCloseOutletOpen(true); }}
                 >
-                  <Lock size={12} /> Close outlet shift
+                  <Lock size={12} /> {t('shifts.closeOutletShift')}
                 </button>
               </>
             )}
@@ -243,19 +245,19 @@ export default function ShiftsPage() {
       <Modal
         open={openMyOpen}
         onClose={() => setOpenMyOpen(false)}
-        title="Open my drawer"
+        title={t('shifts.modalOpenMyTitle')}
         footer={
           <div className="flex justify-end gap-2 w-full">
-            <button className="btn-secondary" onClick={() => setOpenMyOpen(false)}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setOpenMyOpen(false)}>{t('shifts.cancel')}</button>
             <button className="btn-primary" onClick={openMyDrawer} disabled={submitting}>
-              <Unlock size={14} /> Open drawer
+              <Unlock size={14} /> {t('shifts.openDrawer')}
             </button>
           </div>
         }
       >
         <div className="space-y-3">
           <div>
-            <label className="text-xs font-bold text-slate-600">Opening float (cash in drawer)</label>
+            <label className="text-xs font-bold text-slate-600">{t('shifts.openFloatLabel')}</label>
             <input
               type="number"
               step="0.01"
@@ -266,12 +268,12 @@ export default function ShiftsPage() {
             />
           </div>
           <div>
-            <label className="text-xs font-bold text-slate-600">Note (optional)</label>
+            <label className="text-xs font-bold text-slate-600">{t('shifts.noteOptional')}</label>
             <input
               type="text"
               value={openNote}
               onChange={(e) => setOpenNote(e.target.value)}
-              placeholder="e.g. morning shift"
+              placeholder={t('shifts.notePlaceholder')}
               className="input mt-1"
             />
           </div>
@@ -282,24 +284,22 @@ export default function ShiftsPage() {
       <Modal
         open={closeMyOpen}
         onClose={() => setCloseMyOpen(false)}
-        title="Close my drawer"
+        title={t('shifts.modalCloseMyTitle')}
         footer={
           <div className="flex justify-end gap-2 w-full">
-            <button className="btn-secondary" onClick={() => setCloseMyOpen(false)}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setCloseMyOpen(false)}>{t('shifts.cancel')}</button>
             <button className="btn-danger" onClick={closeMyDrawer} disabled={submitting}>
-              <Lock size={14} /> Close drawer
+              <Lock size={14} /> {t('shifts.closeDrawer')}
             </button>
           </div>
         }
       >
         <div className="space-y-3">
           <p className="text-xs text-slate-500">
-            Count the cash in your drawer and enter the amount below. The Z report
-            will compare it against the expected cash from card/UPI/cash payments
-            stamped against this shift and show the variance.
+            {t('shifts.closeMyHint')}
           </p>
           <div>
-            <label className="text-xs font-bold text-slate-600">Declared cash (₹)</label>
+            <label className="text-xs font-bold text-slate-600">{t('shifts.declaredCashLabel')}</label>
             <input
               type="number"
               step="0.01"
@@ -310,12 +310,12 @@ export default function ShiftsPage() {
             />
           </div>
           <div>
-            <label className="text-xs font-bold text-slate-600">Close note (optional)</label>
+            <label className="text-xs font-bold text-slate-600">{t('shifts.closeNoteLabel')}</label>
             <input
               type="text"
               value={closeNote}
               onChange={(e) => setCloseNote(e.target.value)}
-              placeholder="e.g. variance because of refund missed"
+              placeholder={t('shifts.closeNotePlaceholder')}
               className="input mt-1"
             />
           </div>
@@ -326,29 +326,25 @@ export default function ShiftsPage() {
       <Modal
         open={closeOutletOpen}
         onClose={() => setCloseOutletOpen(false)}
-        title="Close outlet shift"
+        title={t('shifts.modalCloseOutletTitle')}
         footer={
           <div className="flex justify-end gap-2 w-full">
-            <button className="btn-secondary" onClick={() => setCloseOutletOpen(false)}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setCloseOutletOpen(false)}>{t('shifts.cancel')}</button>
             <button className="btn-danger" onClick={closeOutletShift} disabled={submitting}>
-              <Lock size={14} /> Close outlet shift
+              <Lock size={14} /> {t('shifts.closeOutletShift')}
             </button>
           </div>
         }
       >
         <div className="space-y-3 text-xs text-slate-600">
           <p>
-            Closing the outlet shift ends the day's envelope. Any cashier drawers
-            still open will be auto-closed (no declared cash; variance left blank
-            for the operator to reconcile from the per-cashier Z report later).
+            {t('shifts.closeOutletHint1')}
           </p>
           <p>
-            Mid-flight orders are NOT blocked — they keep their existing shift tag
-            but any payments collected after this point land on whatever shift is
-            active at the time.
+            {t('shifts.closeOutletHint2')}
           </p>
           <div>
-            <label className="text-xs font-bold text-slate-600">Close note (optional)</label>
+            <label className="text-xs font-bold text-slate-600">{t('shifts.closeNoteLabel')}</label>
             <input
               type="text"
               value={closeOutletNote}
@@ -363,7 +359,7 @@ export default function ShiftsPage() {
       <Modal
         open={!!zReport}
         onClose={() => { setZReport(null); setZScope(null); }}
-        title={zScope === 'outlet' ? 'Outlet Z report' : 'Cashier Z report'}
+        title={zScope === 'outlet' ? t('shifts.zTitleOutlet') : t('shifts.zTitleCashier')}
         size="lg"
         footer={
           <div className="flex justify-end gap-2 w-full">
@@ -371,10 +367,10 @@ export default function ShiftsPage() {
               className="btn-secondary"
               onClick={() => { if (zReport) window.print(); }}
             >
-              <FileText size={14} /> Print
+              <FileText size={14} /> {t('shifts.print')}
             </button>
             <button className="btn-primary" onClick={() => { setZReport(null); setZScope(null); }}>
-              Close
+              {t('shifts.close')}
             </button>
           </div>
         }
@@ -403,49 +399,50 @@ function Money({ value }: { value: any }) {
 }
 
 function CashierZ({ report }: { report: any }) {
+  const { t } = useTranslation();
   const { shift, paymentsByMode, refundsByMode, orderAggregates, cash } = report;
   return (
     <div className="space-y-4 text-sm">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <KV label="Cashier" value={shift.cashier?.name ?? '—'} />
-        <KV label="Opened" value={new Date(shift.openedAt).toLocaleString('en-IN')} />
-        <KV label="Closed" value={shift.closedAt ? new Date(shift.closedAt).toLocaleString('en-IN') : 'Active'} />
+        <KV label={t('shifts.kvCashier')} value={shift.cashier?.name ?? '—'} />
+        <KV label={t('shifts.kvOpened')} value={new Date(shift.openedAt).toLocaleString('en-IN')} />
+        <KV label={t('shifts.kvClosed')} value={shift.closedAt ? new Date(shift.closedAt).toLocaleString('en-IN') : t('shifts.statusActive')} />
       </div>
 
-      <Section title="Drawer reconciliation">
-        <Row label="Opening float"><Money value={cash.openingFloat} /></Row>
-        <Row label="Expected cash"><Money value={cash.expectedCash} /></Row>
-        <Row label="Declared cash">{cash.declaredCash != null ? <Money value={cash.declaredCash} /> : <span className="text-slate-400">—</span>}</Row>
-        <Row label="Variance">
+      <Section title={t('shifts.secDrawerReconciliation')}>
+        <Row label={t('shifts.kvOpeningFloat')}><Money value={cash.openingFloat} /></Row>
+        <Row label={t('shifts.rowExpectedCash')}><Money value={cash.expectedCash} /></Row>
+        <Row label={t('shifts.rowDeclaredCash')}>{cash.declaredCash != null ? <Money value={cash.declaredCash} /> : <span className="text-slate-400">—</span>}</Row>
+        <Row label={t('shifts.rowVariance')}>
           {cash.variance != null
             ? <span className={Number(cash.variance) === 0 ? 'text-emerald-700' : 'text-rose-700 font-semibold'}><Money value={cash.variance} /></span>
             : <span className="text-slate-400">—</span>}
         </Row>
       </Section>
 
-      <Section title="Orders during shift">
-        <Row label="Orders placed">{orderAggregates.ordersCount}</Row>
-        <Row label="Cancelled">{orderAggregates.cancelledCount}</Row>
-        <Row label="Subtotal"><Money value={orderAggregates.subtotal} /></Row>
-        <Row label="Tax (SGST+CGST)"><Money value={orderAggregates.tax} /></Row>
-        <Row label="Discounts"><Money value={orderAggregates.discounts} /></Row>
-        <Row label="Total billed"><Money value={orderAggregates.total} /></Row>
+      <Section title={t('shifts.secOrdersDuringShift')}>
+        <Row label={t('shifts.rowOrdersPlaced')}>{orderAggregates.ordersCount}</Row>
+        <Row label={t('shifts.rowCancelled')}>{orderAggregates.cancelledCount}</Row>
+        <Row label={t('shifts.rowSubtotal')}><Money value={orderAggregates.subtotal} /></Row>
+        <Row label={t('shifts.rowTax')}><Money value={orderAggregates.tax} /></Row>
+        <Row label={t('shifts.rowDiscounts')}><Money value={orderAggregates.discounts} /></Row>
+        <Row label={t('shifts.rowTotalBilled')}><Money value={orderAggregates.total} /></Row>
       </Section>
 
-      <Section title="Payments collected">
+      <Section title={t('shifts.secPaymentsCollected')}>
         {paymentsByMode.length === 0
-          ? <p className="text-xs text-slate-400 px-3 py-2">No payments yet</p>
+          ? <p className="text-xs text-slate-400 px-3 py-2">{t('shifts.noPaymentsYet')}</p>
           : paymentsByMode.map((p: any) => (
-              <Row key={p.mode} label={`${p.mode} · ${p.count} txn${p.count === 1 ? '' : 's'}`}>
+              <Row key={p.mode} label={t('shifts.txnCount', { mode: p.mode, count: p.count })}>
                 <Money value={p.amount} />
               </Row>
             ))}
       </Section>
 
       {refundsByMode.length > 0 && (
-        <Section title="Refunds issued">
+        <Section title={t('shifts.secRefundsIssued')}>
           {refundsByMode.map((p: any) => (
-            <Row key={p.mode} label={`${p.mode} · ${p.count} txn${p.count === 1 ? '' : 's'}`}>
+            <Row key={p.mode} label={t('shifts.txnCount', { mode: p.mode, count: p.count })}>
               <Money value={p.amount} />
             </Row>
           ))}
@@ -456,6 +453,7 @@ function CashierZ({ report }: { report: any }) {
 }
 
 function OutletZ({ report }: { report: any }) {
+  const { t } = useTranslation();
   const { shift, cashierReports } = report;
   // Aggregate across cashier reports
   const total = cashierReports.reduce((s: number, c: any) => s + Number(c.orderAggregates.total ?? 0), 0);
@@ -464,30 +462,30 @@ function OutletZ({ report }: { report: any }) {
   return (
     <div className="space-y-4 text-sm">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <KV label="Opened" value={new Date(shift.openedAt).toLocaleString('en-IN')} />
-        <KV label="Closed" value={shift.closedAt ? new Date(shift.closedAt).toLocaleString('en-IN') : 'Active'} />
-        <KV label="Opened by" value={shift.openedBy?.name ?? '—'} />
+        <KV label={t('shifts.kvOpened')} value={new Date(shift.openedAt).toLocaleString('en-IN')} />
+        <KV label={t('shifts.kvClosed')} value={shift.closedAt ? new Date(shift.closedAt).toLocaleString('en-IN') : t('shifts.statusActive')} />
+        <KV label={t('shifts.kvOpenedBy')} value={shift.openedBy?.name ?? '—'} />
       </div>
 
-      <Section title="Outlet totals">
-        <Row label="Cashiers"><span className="tabular-nums">{cashierReports.length}</span></Row>
-        <Row label="Grand total billed"><Money value={total} /></Row>
-        <Row label="Cash collected"><Money value={totalCash} /></Row>
+      <Section title={t('shifts.secOutletTotals')}>
+        <Row label={t('shifts.rowCashiers')}><span className="tabular-nums">{cashierReports.length}</span></Row>
+        <Row label={t('shifts.rowGrandTotalBilled')}><Money value={total} /></Row>
+        <Row label={t('shifts.rowCashCollected')}><Money value={totalCash} /></Row>
       </Section>
 
       {cashierReports.map((cr: any) => (
         <div key={cr.shift.id} className="border border-slate-200 rounded-xl">
           <div className="px-3 py-2 bg-slate-50 rounded-t-xl text-xs font-bold text-slate-700">
-            {cr.shift.cashier?.name ?? 'Cashier'} ·{' '}
+            {cr.shift.cashier?.name ?? t('shifts.cashierFallback')} ·{' '}
             {new Date(cr.shift.openedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-            {cr.shift.closedAt ? ` → ${new Date(cr.shift.closedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : ' (still open)'}
+            {cr.shift.closedAt ? ` → ${new Date(cr.shift.closedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : t('shifts.cashierStillOpen')}
           </div>
           <div className="px-3 py-2 text-xs grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <KV label="Orders" value={String(cr.orderAggregates.ordersCount)} />
-            <KV label="Total" value={`₹${Number(cr.orderAggregates.total).toFixed(2)}`} />
-            <KV label="Expected cash" value={`₹${Number(cr.cash.expectedCash ?? 0).toFixed(2)}`} />
+            <KV label={t('shifts.kvOrders')} value={String(cr.orderAggregates.ordersCount)} />
+            <KV label={t('shifts.kvTotal')} value={`₹${Number(cr.orderAggregates.total).toFixed(2)}`} />
+            <KV label={t('shifts.rowExpectedCash')} value={`₹${Number(cr.cash.expectedCash ?? 0).toFixed(2)}`} />
             <KV
-              label="Variance"
+              label={t('shifts.kvVariance')}
               value={cr.cash.variance != null ? `₹${Number(cr.cash.variance).toFixed(2)}` : '—'}
             />
           </div>
