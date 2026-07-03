@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { Navigate } from 'react-router-dom';
+import { Trans, useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import {
@@ -32,6 +33,7 @@ import { buildReceiptPayload } from '../../utils/receiptPayload';
  * longer wants to see them in the list.
  */
 export default function OfflineOrdersPage() {
+  const { t } = useTranslation();
   const user = useSelector((s: RootState) => s.auth.user);
   const { tier } = useUserRole();
   const { online, apiReachable } = useNetworkStatus();
@@ -74,12 +76,12 @@ export default function OfflineOrdersPage() {
     setSyncing(true);
     try {
       const result = await drain(replayEntry);
-      if (result.succeeded > 0) toast.success(`Synced ${result.succeeded} order${result.succeeded === 1 ? '' : 's'}`);
-      else if (result.failed > 0) toast.error(`${result.failed} order${result.failed === 1 ? '' : 's'} failed to sync`);
-      else toast('Nothing to sync', { icon: 'ℹ️' });
+      if (result.succeeded > 0) toast.success(t('offlineOrders.toastSyncedCount', { count: result.succeeded }));
+      else if (result.failed > 0) toast.error(t('offlineOrders.toastFailedCount', { count: result.failed }));
+      else toast(t('offlineOrders.toastNothingToSync'), { icon: 'ℹ️' });
       await refresh();
     } catch (e: any) {
-      toast.error(e?.message || 'Sync failed');
+      toast.error(e?.message || t('offlineOrders.toastSyncFail'));
     } finally {
       setSyncing(false);
     }
@@ -88,7 +90,7 @@ export default function OfflineOrdersPage() {
   const reprint = async (row: OfflineOrder) => {
     const printerId = row.snapshot?.outlet?.receiptPrinterId ?? null;
     if (!isBluetoothSupported()) {
-      toast.error('Web Bluetooth is not supported on this browser');
+      toast.error(t('offlineOrders.toastBluetoothUnsupported'));
       return;
     }
     // The snapshot doesn't carry the outlet's receiptPrinterId — pull
@@ -96,38 +98,24 @@ export default function OfflineOrdersPage() {
     // unpaired since the order was placed, this errors clearly.
     const printerToUse = printerId;
     if (!printerToUse) {
-      toast.error('No receipt printer is configured for this outlet');
+      toast.error(t('offlineOrders.toastNoPrinter'));
       return;
     }
     try {
       if (!isPrinterConnected(printerToUse)) await connectPrinter(printerToUse);
       await printCustomerReceipt(printerToUse, buildReceiptPayload(row.snapshot));
-      toast.success('Receipt reprinted');
+      toast.success(t('offlineOrders.toastReprinted'));
     } catch (e: any) {
-      toast.error(e?.message || 'Print failed');
+      toast.error(e?.message || t('offlineOrders.toastPrintFail'));
     }
   };
 
-  // Bill = "this tab is done". One click does:
-  //   1. Print the consolidated customer receipt — the physical bill
-  //      handed over, totalling every batch the tab accumulated.
-  //   2. Close the tab locally (isOpenTab=false, servedAt=now) so
-  //      further appends from PlaceOrderPage can't sneak items in.
-  //   3. Fire the consolidated server POST with all batches' items as
-  //      one body, stamped with the bill's Idempotency-Key. The api
-  //      interceptor handles both the online (fires now) and the
-  //      offline (queues to outbox) cases without us branching.
-  //   4. On the online happy path, immediately chain the force-status
-  //      PATCH (CREATED → SERVED, actedAt=bill time) so reports
-  //      attribute revenue to the real bill hour. On the offline
-  //      path, replayEntry's existing chain handles the same thing
-  //      when the drain eventually runs.
-  //
-  // There's intentionally no separate "Mark Served" step — billing
-  // IS the served signal.
   const bill = async (row: OfflineOrder) => {
+    const batchesSuffix = row.batches && row.batches.length > 1
+      ? t('offlineOrders.confirmBillBatches', { count: row.batches.length })
+      : '';
     if (!window.confirm(
-      `Bill ${row.id}? This prints the consolidated bill, closes the offline tab, and syncs as SERVED${row.batches && row.batches.length > 1 ? ` (${row.batches.length} batches)` : ''}.`,
+      t('offlineOrders.confirmBill', { id: row.id, batchesSuffix }),
     )) return;
     const billedAt = new Date().toISOString();
     try {
@@ -140,37 +128,25 @@ export default function OfflineOrdersPage() {
             if (!isPrinterConnected(printerId)) await connectPrinter(printerId);
             await printCustomerReceipt(printerId, buildReceiptPayload(row.snapshot));
           } catch (printErr: any) {
-            toast.error(`Receipt print failed: ${printErr?.message || printErr}`);
+            toast.error(t('offlineOrders.toastReceiptPrintFail', { msg: printErr?.message || String(printErr) }));
           }
         }
       }
 
-      // 2. Close the tab locally + stamp servedAt. closeOfflineTab
-      //    does both atomically — once this lands, the running cart
-      //    on PlaceOrderPage can't re-route subsequent items into
-      //    this tab (the sticky-tab lookup filters by isOpenTab).
+      // 2. Close the tab locally + stamp servedAt.
       await closeOfflineTab(row.id, billedAt);
 
-      // 3. Build the consolidated POST body from batches. Legacy
-      //    single-batch rows (placed before the sticky-tab schema)
-      //    have no batches array — they ALREADY have a queued
-      //    placement entry from the original PlaceOrderPage submit,
-      //    so we skip the explicit POST below and let the drain
-      //    replay that pre-existing entry (with the chained SERVED
-      //    follow-up via replayEntry).
+      // 3. Build the consolidated POST body from batches.
       const consolidatedBody = buildConsolidatedPostBody(row);
       const isLegacyRow = !consolidatedBody;
       if (isLegacyRow) {
-        toast.success('Billed — legacy order will sync via the existing queued POST', { icon: '📡' });
+        toast.success(t('offlineOrders.toastLegacyBilled'), { icon: '📡' });
         await refresh();
         void drain(replayEntry).then(() => refresh()).catch(() => { /* best-effort */ });
         return;
       }
 
-      // 4. Fire the placement. The api interceptor routes infra-
-      //    transient errors to the outbox with the OFF-... Idempotency-
-      //    Key, where replayEntry's chain takes care of the SERVED
-      //    follow-up. On success here, we fire the chain inline.
+      // 4. Fire the placement.
       try {
         const { data } = await api.post(
           `/outlets/${row.outletId}/orders`,
@@ -182,50 +158,37 @@ export default function OfflineOrdersPage() {
         );
         const placed = data?.data;
         if (placed?.id) {
-          // Chain the SERVED PATCH so the synced order lands at the
-          // bill time, not "now" on the server's clock. servedAt is
-          // already set by closeOfflineTab above.
           try {
             await api.patch(
               `/outlets/${row.outletId}/orders/${placed.id}/status`,
               { status: 'SERVED', actedAt: billedAt, force: true },
               { headers: { 'Idempotency-Key': `${row.id}-served` } },
             );
-          } catch { /* best-effort — order is on the server; staff can complete via OrdersPage */ }
-          toast.success(`Billed and synced as ${placed.orderNumber}`);
+          } catch { /* best-effort */ }
+          toast.success(t('offlineOrders.toastBilledSynced', { number: placed.orderNumber }));
         } else {
-          toast.success('Billed locally — sync pending');
+          toast.success(t('offlineOrders.toastBilledLocalPending'));
         }
       } catch (e: any) {
         const httpStatus = e?.response?.status ?? 0;
         const isInfraTransient = !e?.response || httpStatus === 502 || httpStatus === 503 || httpStatus === 504;
         if (isInfraTransient) {
-          // Interceptor already queued the entry under row.id. servedAt
-          // is set, so replayEntry's chain will fire SERVED when the
-          // drain eventually runs. Tell the operator + refresh.
-          toast.success('Bill queued — will sync as SERVED when network is back', { icon: '📡' });
+          toast.success(t('offlineOrders.toastBillQueued'), { icon: '📡' });
         } else {
-          toast.error(e?.response?.data?.message || 'Bill failed on the server');
+          toast.error(e?.response?.data?.message || t('offlineOrders.toastBillFailedServer'));
         }
       }
 
       await refresh();
       void drain(replayEntry).then(() => refresh()).catch(() => { /* best-effort */ });
     } catch (e: any) {
-      toast.error(e?.message || 'Could not bill this order');
+      toast.error(e?.message || t('offlineOrders.toastCouldNotBill'));
     }
   };
 
-  // Flattens every batch into a single placement body. Returns null
-  // for legacy rows (no batches array — placed before the sticky-tab
-  // schema), letting the bill action fall back to draining the
-  // pre-existing queued entry instead of re-constructing one.
   const buildConsolidatedPostBody = (row: OfflineOrder): any | null => {
     const batches = row.batches;
     if (!batches || batches.length === 0) return null;
-    // Common order-level fields live on the first batch's payload
-    // (table, postpaid flag, customer phone). Later batches duplicate
-    // them, but the first is authoritative for the placement.
     const head = batches[0].payload ?? {};
     const allItems: any[] = [];
     for (const b of batches) {
@@ -238,10 +201,8 @@ export default function OfflineOrdersPage() {
   };
 
   const remove = async (row: OfflineOrder) => {
-    if (!window.confirm(`Remove ${row.id} from this list? (does not undo the order — the server copy stays)`)) return;
+    if (!window.confirm(t('offlineOrders.confirmRemove', { id: row.id }))) return;
     try {
-      // Defer to direct IDB delete — kept inline so we don't add yet
-      // another helper to utils/idb.ts for a one-off action.
       const req = indexedDB.open('paynpik-pos');
       req.onsuccess = () => {
         const db = req.result;
@@ -250,7 +211,7 @@ export default function OfflineOrdersPage() {
         tx.oncomplete = () => refresh();
       };
     } catch {
-      toast.error('Could not remove the record');
+      toast.error(t('offlineOrders.toastCouldNotRemove'));
     }
   };
 
@@ -263,7 +224,7 @@ export default function OfflineOrdersPage() {
   if (!outletId) {
     return (
       <div className="p-8 text-sm text-slate-500">
-        Offline orders are kept per-outlet on the device that placed them. Your account isn't linked to an outlet.
+        {t('offlineOrders.outletScopedNotice')}
       </div>
     );
   }
@@ -272,10 +233,9 @@ export default function OfflineOrdersPage() {
     <div className="p-4 lg:p-6 max-w-5xl mx-auto">
       <header className="flex items-center justify-between gap-3 flex-wrap mb-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Offline orders</h1>
+          <h1 className="text-xl font-bold text-slate-900">{t('offlineOrders.title')}</h1>
           <p className="text-xs text-slate-500">
-            Orders placed while the API was unreachable. They sync automatically when the network comes back —
-            but you can also force a sync, reprint a receipt, or clear up reconciled rows.
+            {t('offlineOrders.subtitle')}
           </p>
         </div>
         <button
@@ -286,15 +246,19 @@ export default function OfflineOrdersPage() {
           {syncing
             ? <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
             : <RefreshCw size={13} />}
-          {syncing ? 'Syncing…' : `Sync now${counts.pending ? ` (${counts.pending})` : ''}`}
+          {syncing
+            ? t('offlineOrders.syncing')
+            : counts.pending
+              ? t('offlineOrders.syncNowWithCount', { count: counts.pending })
+              : t('offlineOrders.syncNow')}
         </button>
       </header>
 
       {/* Lane summaries */}
       <div className="grid grid-cols-3 gap-3 mb-4">
-        <Summary icon={Clock}       label="Pending" value={counts.pending} accent="text-amber-700"   bg="bg-amber-50"   border="border-amber-200" />
-        <Summary icon={CheckCircle2}  label="Synced"  value={counts.synced}  accent="text-emerald-700" bg="bg-emerald-50" border="border-emerald-200" />
-        <Summary icon={AlertCircle} label="Failed"  value={counts.failed}  accent="text-rose-700"    bg="bg-rose-50"    border="border-rose-200" />
+        <Summary icon={Clock}         label={t('offlineOrders.lanePending')} value={counts.pending} accent="text-amber-700"   bg="bg-amber-50"   border="border-amber-200" />
+        <Summary icon={CheckCircle2}  label={t('offlineOrders.laneSynced')}  value={counts.synced}  accent="text-emerald-700" bg="bg-emerald-50" border="border-emerald-200" />
+        <Summary icon={AlertCircle}   label={t('offlineOrders.laneFailed')}  value={counts.failed}  accent="text-rose-700"    bg="bg-rose-50"    border="border-rose-200" />
       </div>
 
       {loading ? (
@@ -304,19 +268,19 @@ export default function OfflineOrdersPage() {
       ) : rows.length === 0 ? (
         <div className="card text-center py-12">
           <CloudOff size={32} className="mx-auto text-slate-300 mb-2" />
-          <p className="text-sm text-slate-500">No offline orders on this device.</p>
-          <p className="text-[11px] text-slate-400 mt-1">Orders placed here while the network is down will show up automatically.</p>
+          <p className="text-sm text-slate-500">{t('offlineOrders.emptyTitle')}</p>
+          <p className="text-[11px] text-slate-400 mt-1">{t('offlineOrders.emptyHint')}</p>
         </div>
       ) : (
         <div className="card overflow-hidden">
           <table className="w-full text-sm border-collapse">
             <thead className="bg-slate-50 border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-500">
               <tr>
-                <th className="text-left  font-semibold px-4 py-2.5">Order</th>
-                <th className="text-left  font-semibold px-4 py-2.5 hidden md:table-cell">When</th>
-                <th className="text-right font-semibold px-4 py-2.5">Total</th>
-                <th className="text-left  font-semibold px-4 py-2.5">Status</th>
-                <th className="text-right font-semibold px-4 py-2.5 w-[260px]">Actions</th>
+                <th className="text-left  font-semibold px-4 py-2.5">{t('offlineOrders.colOrder')}</th>
+                <th className="text-left  font-semibold px-4 py-2.5 hidden md:table-cell">{t('offlineOrders.colWhen')}</th>
+                <th className="text-right font-semibold px-4 py-2.5">{t('offlineOrders.colTotal')}</th>
+                <th className="text-left  font-semibold px-4 py-2.5">{t('offlineOrders.colStatus')}</th>
+                <th className="text-right font-semibold px-4 py-2.5 w-[260px]">{t('offlineOrders.colActions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -326,7 +290,7 @@ export default function OfflineOrdersPage() {
                     <div className="font-mono text-[11px] font-semibold text-slate-900">{row.id}</div>
                     {row.serverOrderNumber && (
                       <div className="text-[10px] text-slate-500 mt-0.5">
-                        Server: <span className="font-mono">{row.serverOrderNumber}</span>
+                        {t('offlineOrders.serverPrefix')} <span className="font-mono">{row.serverOrderNumber}</span>
                       </div>
                     )}
                   </td>
@@ -341,9 +305,9 @@ export default function OfflineOrdersPage() {
                     {row.servedAt && (
                       <span
                         className="ml-1 inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 align-middle"
-                        title={`Billed locally at ${new Date(row.servedAt).toLocaleString('en-IN')}`}
+                        title={t('offlineOrders.billedTitle', { when: new Date(row.servedAt).toLocaleString('en-IN') })}
                       >
-                        <Receipt size={9} /> BILLED
+                        <Receipt size={9} /> {t('offlineOrders.billedBadge')}
                       </span>
                     )}
                   </td>
@@ -352,32 +316,25 @@ export default function OfflineOrdersPage() {
                       <button
                         onClick={() => reprint(row)}
                         className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg text-brand-600 hover:bg-brand-50 transition-colors"
-                        title="Send the snapshot back to the bluetooth printer"
+                        title={t('offlineOrders.reprintTitle')}
                       >
-                        <PrinterIcon size={12} /> Reprint
+                        <PrinterIcon size={12} /> {t('offlineOrders.reprint')}
                       </button>
-                      {/* Bill — visible only while the row is still
-                          pending sync AND hasn't already been billed.
-                          Billing prints the customer receipt and
-                          stamps the local record so the chained sync
-                          lands the server order in SERVED at the bill
-                          time. Service staff never has a separate
-                          "Mark Served" step — billing IS that signal. */}
                       {row.syncState === 'pending' && !row.servedAt && (
                         <button
                           onClick={() => bill(row)}
                           className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg text-emerald-700 hover:bg-emerald-50 transition-colors"
-                          title="Print the customer receipt and sync as SERVED"
+                          title={t('offlineOrders.billTitle')}
                         >
-                          <Receipt size={12} /> Bill
+                          <Receipt size={12} /> {t('offlineOrders.bill')}
                         </button>
                       )}
                       <button
                         onClick={() => remove(row)}
                         className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors"
-                        title="Remove this row from the local list (server copy stays)"
+                        title={t('offlineOrders.clearTitle')}
                       >
-                        <Trash2 size={12} /> Clear
+                        <Trash2 size={12} /> {t('offlineOrders.clear')}
                       </button>
                     </div>
                   </td>
@@ -389,8 +346,13 @@ export default function OfflineOrdersPage() {
       )}
 
       <p className="text-[11px] text-slate-400 mt-4">
-        Naming: orders placed offline get an <span className="font-mono">OFF-…</span> prefix; orders confirmed online use
-        <span className="font-mono"> ON-…</span>. The two formats can't collide — the orderNumber column is unique-indexed on the server.
+        <Trans
+          i18nKey="offlineOrders.footerNaming"
+          components={{
+            off: <span className="font-mono" />,
+            on:  <span className="font-mono" />,
+          }}
+        />
       </p>
     </div>
   );
@@ -412,16 +374,17 @@ function Summary({ icon: Icon, label, value, accent, bg, border }: {
 }
 
 function StateBadge({ state, error }: { state: OfflineOrder['syncState']; error?: string }) {
+  const { t } = useTranslation();
   if (state === 'synced')
-    return <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700"><CheckCircle2 size={10} /> SYNCED</span>;
+    return <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700"><CheckCircle2 size={10} /> {t('offlineOrders.stateSynced')}</span>;
   if (state === 'failed')
     return (
       <span
         className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700"
-        title={error || 'Server rejected the replay'}
+        title={error || t('offlineOrders.stateFailedTitle')}
       >
-        <AlertCircle size={10} /> FAILED
+        <AlertCircle size={10} /> {t('offlineOrders.stateFailed')}
       </span>
     );
-  return <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700"><Clock size={10} /> PENDING</span>;
+  return <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700"><Clock size={10} /> {t('offlineOrders.statePending')}</span>;
 }
