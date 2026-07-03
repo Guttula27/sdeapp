@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useSelector } from 'react-redux';
+import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { Users, Plus, Phone, Mail, Shield, ToggleLeft, ToggleRight, Search, Pencil, Lock } from 'lucide-react';
@@ -44,6 +45,7 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
 );
 
 export default function StaffPage() {
+  const { t } = useTranslation();
   const user = useSelector((s: RootState) => s.auth.user);
   const businessId = user?.businessId || 'demo-business';
   // Outlet operators (and outlet-tier sub-roles like cashier / kitchen)
@@ -201,11 +203,11 @@ export default function StaffPage() {
         revokes: overrides.revokes,
       });
 
-      toast.success(modal.editing ? 'Staff updated' : 'Staff member added');
+      toast.success(modal.editing ? t('staff.toastUpdated') : t('staff.toastAdded'));
       setModal({ open: false });
       fetchAll();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed');
+      toast.error(e.response?.data?.message || t('staff.toastFailed'));
     } finally { setSaving(false); }
   };
 
@@ -214,10 +216,14 @@ export default function StaffPage() {
     setSaving(true);
     try {
       await api.patch(`/users/${toggleTarget.id}/toggle-status`);
-      toast.success(`${toggleTarget.name} ${toggleTarget.status === 'ACTIVE' ? 'deactivated' : 'activated'}`);
+      toast.success(
+        toggleTarget.status === 'ACTIVE'
+          ? t('staff.toastDeactivated', { name: toggleTarget.name })
+          : t('staff.toastActivated',   { name: toggleTarget.name }),
+      );
       setToggleTarget(null);
       fetchAll();
-    } catch { toast.error('Failed to update'); }
+    } catch { toast.error(t('staff.toastUpdateFailed')); }
     finally { setSaving(false); }
   };
 
@@ -249,26 +255,26 @@ export default function StaffPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="page-title">Staff Management</h1>
-          <p className="page-subtitle">{staff.length} team member{staff.length !== 1 ? 's' : ''}</p>
+          <h1 className="page-title">{t('staff.pageTitle')}</h1>
+          <p className="page-subtitle">{t('staff.teamCount', { count: staff.length })}</p>
         </div>
-        <button className="btn-primary" onClick={openCreate}><Plus size={15} /> Add Staff</button>
+        <button className="btn-primary" onClick={openCreate}><Plus size={15} /> {t('staff.addStaff')}</button>
       </div>
 
       <ListToolbar
         search={search}
         onSearchChange={setSearch}
-        searchPlaceholder="Search by name, phone, email, role, outlet…"
+        searchPlaceholder={t('staff.searchPlaceholder')}
         sortBy={sortBy}
         onSortByChange={(v) => setSortBy(v as typeof sortBy)}
         sortDir={sortDir}
         onSortDirChange={setSortDir}
         sortOptions={[
-          { value: 'name',      label: 'Name' },
-          { value: 'role',      label: 'Role' },
-          { value: 'outlet',    label: 'Outlet' },
-          { value: 'status',    label: 'Status' },
-          { value: 'createdAt', label: 'Joined' },
+          { value: 'name',      label: t('staff.sortName') },
+          { value: 'role',      label: t('staff.sortRole') },
+          { value: 'outlet',    label: t('staff.sortOutlet') },
+          { value: 'status',    label: t('staff.sortStatus') },
+          { value: 'createdAt', label: t('staff.sortJoined') },
         ]}
       />
 
@@ -279,8 +285,8 @@ export default function StaffPage() {
       ) : filtered.length === 0 ? (
         <div className="card flex flex-col items-center py-20 text-center">
           <Users size={40} className="text-slate-200 mb-3" />
-          <p className="text-slate-500 font-medium">{search ? 'No results found' : 'No staff yet'}</p>
-          {!search && <button className="btn-primary mt-4" onClick={openCreate}><Plus size={14} /> Add first staff member</button>}
+          <p className="text-slate-500 font-medium">{search ? t('staff.emptySearch') : t('staff.empty')}</p>
+          {!search && <button className="btn-primary mt-4" onClick={openCreate}><Plus size={14} /> {t('staff.addFirstStaff')}</button>}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -295,7 +301,7 @@ export default function StaffPage() {
                   {member.role && <span className="badge badge-orange text-[10px]">{member.role.name}</span>}
                 </div>
                 <span className={clsx('badge shrink-0', member.status === 'ACTIVE' ? 'badge-green' : 'badge-red')}>
-                  {member.status}
+                  {member.status === 'ACTIVE' ? t('staff.statusActive') : t('staff.statusInactive')}
                 </span>
               </div>
 
@@ -323,7 +329,7 @@ export default function StaffPage() {
                   onClick={() => openEdit(member)}
                   className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
                 >
-                  <Pencil size={13} /> Edit
+                  <Pencil size={13} /> {t('staff.edit')}
                 </button>
                 <button
                   onClick={() => setToggleTarget(member)}
@@ -335,7 +341,7 @@ export default function StaffPage() {
                   )}
                 >
                   {member.status === 'ACTIVE' ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
-                  {member.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                  {member.status === 'ACTIVE' ? t('staff.deactivate') : t('staff.activate')}
                 </button>
               </div>
             </div>
@@ -347,43 +353,43 @@ export default function StaffPage() {
       <Modal
         open={modal.open}
         onClose={() => setModal({ open: false })}
-        title={modal.editing ? 'Edit Staff Member' : 'Add Staff Member'}
+        title={modal.editing ? t('staff.modalTitleEdit') : t('staff.modalTitleAdd')}
         size="xl"
         footer={
           <>
-            <button className="btn-secondary" onClick={() => setModal({ open: false })}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setModal({ open: false })}>{t('staff.cancel')}</button>
             <button form="staff-form" type="submit" className="btn-primary" disabled={saving}>
               {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-              {modal.editing ? 'Save Changes' : 'Add Staff'}
+              {modal.editing ? t('staff.saveChanges') : t('staff.addStaff')}
             </button>
           </>
         }
       >
         <form id="staff-form" onSubmit={saveStaff} className="space-y-5 px-6 py-5 overflow-y-auto">
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Full Name">
-              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required className="input" placeholder="John Doe" />
+            <Field label={t('staff.fieldFullName')}>
+              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required className="input" placeholder={t('staff.placeholderName')} />
             </Field>
-            <Field label="Phone Number">
-              <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} type="tel" required className="input" placeholder="9876543210" />
+            <Field label={t('staff.fieldPhone')}>
+              <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} type="tel" required className="input" placeholder={t('staff.placeholderPhone')} />
             </Field>
           </div>
-          <Field label="Email (optional)">
-            <input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} type="email" className="input" placeholder="john@example.com" />
+          <Field label={t('staff.fieldEmailOptional')}>
+            <input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} type="email" className="input" placeholder={t('staff.placeholderEmail')} />
           </Field>
           {!modal.editing && (
-            <Field label="Password">
-              <input value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} type="password" required minLength={6} className="input" placeholder="Min 6 characters" />
+            <Field label={t('staff.fieldPassword')}>
+              <input value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} type="password" required minLength={6} className="input" placeholder={t('staff.placeholderMin6')} />
             </Field>
           )}
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Role">
+            <Field label={t('staff.fieldRole')}>
               <select value={form.roleId} onChange={e => setForm(f => ({ ...f, roleId: e.target.value }))} className="input">
-                <option value="">No role</option>
+                <option value="">{t('staff.roleNone')}</option>
                 {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
             </Field>
-            <Field label="Assigned Outlet">
+            <Field label={t('staff.fieldAssignedOutlet')}>
               {/* Outlet operators can only assign to their own outlet —
                   lock the selector so the value matches what the
                   server will enforce anyway. Business / platform
@@ -394,12 +400,12 @@ export default function StaffPage() {
                 disabled={isOutletScoped}
                 className="input disabled:bg-slate-50 disabled:text-slate-500"
               >
-                <option value="">All outlets</option>
+                <option value="">{t('staff.outletAll')}</option>
                 {outlets.map((o: any) => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select>
               {isOutletScoped && (
                 <p className="text-[11px] text-slate-400 mt-1">
-                  New staff belong to this outlet and aren't visible at business level.
+                  {t('staff.outletScopedHint')}
                 </p>
               )}
             </Field>
@@ -408,13 +414,13 @@ export default function StaffPage() {
           {/* Permissions matrix */}
           <div>
             <div className="flex items-baseline justify-between mb-2">
-              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Permissions</p>
+              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">{t('staff.permissionsTitle')}</p>
               <p className="text-[11px] text-slate-500">
-                {overrides.grants.length} extra · {overrides.revokes.length} revoked from role
+                {t('staff.permissionsSummary', { extra: overrides.grants.length, revoked: overrides.revokes.length })}
               </p>
             </div>
             <p className="text-[11px] text-slate-500 mb-3">
-              Defaults follow the selected role. Untick to revoke a role perm for this staff member, or tick a perm outside the role to grant it as an exception.
+              {t('staff.permissionsHint')}
             </p>
             <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-[28rem] overflow-y-auto">
               {byModule.map(([module, perms]) => (
@@ -448,10 +454,10 @@ export default function StaffPage() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="font-mono font-semibold text-slate-800">{p.name}</span>
-                              {isGrant   && <span className="text-[9px] font-bold text-emerald-700 bg-emerald-100 px-1 py-0.5 rounded">EXTRA</span>}
-                              {isRevoke  && <span className="text-[9px] font-bold text-red-700 bg-red-100 px-1 py-0.5 rounded">REVOKED</span>}
-                              {inRole && checked && !isGrant && <span className="text-[9px] font-medium text-slate-500">from role</span>}
-                              {disabled  && <span className="text-[9px] text-slate-500 inline-flex items-center gap-0.5"><Lock size={9} /> not grantable</span>}
+                              {isGrant   && <span className="text-[9px] font-bold text-emerald-700 bg-emerald-100 px-1 py-0.5 rounded">{t('staff.badgeExtra')}</span>}
+                              {isRevoke  && <span className="text-[9px] font-bold text-red-700 bg-red-100 px-1 py-0.5 rounded">{t('staff.badgeRevoked')}</span>}
+                              {inRole && checked && !isGrant && <span className="text-[9px] font-medium text-slate-500">{t('staff.badgeFromRole')}</span>}
+                              {disabled  && <span className="text-[9px] text-slate-500 inline-flex items-center gap-0.5"><Lock size={9} /> {t('staff.badgeNotGrantable')}</span>}
                             </div>
                             {p.description && <p className="text-[10px] text-slate-500 mt-0.5">{p.description}</p>}
                           </div>
@@ -470,9 +476,13 @@ export default function StaffPage() {
         open={!!toggleTarget}
         onClose={() => setToggleTarget(null)}
         onConfirm={toggleStatus}
-        title={toggleTarget?.status === 'ACTIVE' ? 'Deactivate Staff' : 'Activate Staff'}
-        message={`${toggleTarget?.status === 'ACTIVE' ? 'Deactivate' : 'Activate'} ${toggleTarget?.name}? They ${toggleTarget?.status === 'ACTIVE' ? 'will no longer be able to log in' : 'will regain access'}.`}
-        confirmLabel={toggleTarget?.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+        title={toggleTarget?.status === 'ACTIVE' ? t('staff.confirmDeactivateTitle') : t('staff.confirmActivateTitle')}
+        message={
+          toggleTarget?.status === 'ACTIVE'
+            ? t('staff.confirmDeactivateMsg', { name: toggleTarget?.name })
+            : t('staff.confirmActivateMsg',   { name: toggleTarget?.name })
+        }
+        confirmLabel={toggleTarget?.status === 'ACTIVE' ? t('staff.deactivate') : t('staff.activate')}
         danger={toggleTarget?.status === 'ACTIVE'}
         loading={saving}
       />

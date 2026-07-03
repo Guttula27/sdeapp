@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/generate-locales.mjs --existing-only || echo 'locale generation skipped'",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "lint": "eslint src --ext ts,tsx"
+    "lint": "eslint src --ext ts,tsx",
+    "locales:generate": "node scripts/generate-locales.mjs",
+    "locales:generate:force": "node scripts/generate-locales.mjs --force"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.4",

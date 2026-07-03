@@ -13,9 +13,11 @@ import {
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
+import { useTranslation } from 'react-i18next';
 import { useUserRole, UserTier } from '../../hooks/useUserRole';
 import { allowsSeating } from '../../utils/outletType';
 import api from '../../services/api';
+import LanguageSwitcher from '../common/LanguageSwitcher';
 
 // Nav routes that only make sense for outlets that actually seat
 // customers — dine-in sections, service-station assignment, and the
@@ -70,7 +72,7 @@ function disableServiceStationsIfNoSections(items: NavItem[], hasSections: boole
   if (hasSections) return items;
   const mark = (it: NavItem): NavItem =>
     it.to === '/service-stations'
-      ? { ...it, disabled: true, disabledReason: 'Create at least one Dine-In Section first' }
+      ? { ...it, disabled: true, disabledReason: 'nav.disabledSectionsFirst' }
       : it;
   return items.map((it) =>
     it.children
@@ -98,107 +100,108 @@ type NavItem = {
 };
 
 // Sub-sections that hang under "Settings" for each tier. Routes themselves
-// remain unchanged so deep links keep working.
+// remain unchanged so deep links keep working. Labels are i18n keys resolved
+// at render time in NavRow.
 const SETTINGS_CHILDREN: Record<UserTier, NavItem[]> = {
   platform: [
-    { to: '/settings',  icon: User,      label: 'Account' },
-    { to: '/roles',     icon: Shield,    label: 'Roles' },
-    { to: '/languages', icon: Languages, label: 'Languages' },
-    { to: '/integrations', icon: Plug,           label: 'Integrations' },
-    { to: '/template-approvals', icon: ClipboardCheck, label: 'Template Approvals' },
+    { to: '/settings',  icon: User,      label: 'nav.account' },
+    { to: '/roles',     icon: Shield,    label: 'nav.roles' },
+    { to: '/languages', icon: Languages, label: 'nav.languages' },
+    { to: '/integrations', icon: Plug,           label: 'nav.integrations' },
+    { to: '/template-approvals', icon: ClipboardCheck, label: 'nav.templateApprovals' },
   ],
   business: [
-    { to: '/settings',           icon: User,          label: 'Account' },
-    { to: '/roles',              icon: Shield,        label: 'Roles' },
-    { to: '/business/languages', icon: Languages,     label: 'Languages' },
-    { to: '/messaging',          icon: MessageCircle, label: 'Messaging' },
+    { to: '/settings',           icon: User,          label: 'nav.account' },
+    { to: '/roles',              icon: Shield,        label: 'nav.roles' },
+    { to: '/business/languages', icon: Languages,     label: 'nav.languages' },
+    { to: '/messaging',          icon: MessageCircle, label: 'nav.messaging' },
   ],
   outlet: [
-    { to: '/settings',     icon: User,        label: 'Account' },
-    { to: '/roles',        icon: Shield,      label: 'Roles' },
-    { to: '/tags',         icon: Tag,         label: 'Tags' },
-    { to: '/table-types',  icon: LayoutGrid,  label: 'Dine In Sections' },
-    { to: '/stations',     icon: Flame,       label: 'Stations' },
-    { to: '/service-stations', icon: ConciergeBell, label: 'Service Stations' },
-    { to: '/toppings',     icon: Sandwich,    label: 'Toppings' },
-    { to: '/translations', icon: Languages,   label: 'Translations' },
-    { to: '/messaging',    icon: MessageCircle, label: 'Messaging' },
-    { to: '/aggregators',  icon: Plug,        label: 'Aggregators' },
+    { to: '/settings',     icon: User,        label: 'nav.account' },
+    { to: '/roles',        icon: Shield,      label: 'nav.roles' },
+    { to: '/tags',         icon: Tag,         label: 'nav.tags' },
+    { to: '/table-types',  icon: LayoutGrid,  label: 'nav.dineInSections' },
+    { to: '/stations',     icon: Flame,       label: 'nav.stations' },
+    { to: '/service-stations', icon: ConciergeBell, label: 'nav.serviceStations' },
+    { to: '/toppings',     icon: Sandwich,    label: 'nav.toppings' },
+    { to: '/translations', icon: Languages,   label: 'nav.translations' },
+    { to: '/messaging',    icon: MessageCircle, label: 'nav.messaging' },
+    { to: '/aggregators',  icon: Plug,        label: 'nav.aggregators' },
   ],
-  kitchen: [{ to: '/settings', icon: User, label: 'Account' }],
-  counter: [{ to: '/settings', icon: User, label: 'Account' }],
-  store:   [{ to: '/settings', icon: User, label: 'Account' }],
+  kitchen: [{ to: '/settings', icon: User, label: 'nav.account' }],
+  counter: [{ to: '/settings', icon: User, label: 'nav.account' }],
+  store:   [{ to: '/settings', icon: User, label: 'nav.account' }],
 };
 
 const NAV: Record<UserTier, NavItem[]> = {
   platform: [
-    { to: '/dashboard',          icon: LayoutDashboard, label: 'Dashboard' },
-    { to: '/platform',           icon: Gauge,           label: 'Overview' },
-    { to: '/businesses',         icon: Building2,       label: 'Businesses' },
-    { to: '/orders',             icon: ShoppingBag,     label: 'Orders' },
-    { to: '/subscriptions-mgmt', icon: CreditCard,      label: 'Plans' },
-    { to: '/platform-settings',  icon: PercentIcon,     label: 'Fees' },
-    { to: '/settings',           icon: Settings,        label: 'Settings', children: SETTINGS_CHILDREN.platform },
+    { to: '/dashboard',          icon: LayoutDashboard, label: 'nav.dashboard' },
+    { to: '/platform',           icon: Gauge,           label: 'nav.overview' },
+    { to: '/businesses',         icon: Building2,       label: 'nav.businesses' },
+    { to: '/orders',             icon: ShoppingBag,     label: 'nav.orders' },
+    { to: '/subscriptions-mgmt', icon: CreditCard,      label: 'nav.plans' },
+    { to: '/platform-settings',  icon: PercentIcon,     label: 'nav.fees' },
+    { to: '/settings',           icon: Settings,        label: 'nav.settings', children: SETTINGS_CHILDREN.platform },
   ],
   business: [
-    { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { to: '/business',  icon: Building2,       label: 'Business' },
-    { to: '/outlets',   icon: Store,           label: 'Outlets' },
-    { to: '/menu',      icon: UtensilsCrossed, label: 'Menu' },
-    { to: '/orders',    icon: ShoppingBag,     label: 'Orders' },
-    { to: '/promotions/coupons', icon: Ticket, label: 'Promotions', children: [
-      { to: '/promotions/coupons',   icon: Ticket,      label: 'Coupons' },
-      { to: '/promotions/discounts', icon: PercentIcon, label: 'Discounts' },
-      { to: '/promotions/offers',    icon: Gift,        label: 'Offers' },
-      { to: '/promotions/rewards',   icon: Award,       label: 'Rewards' },
+    { to: '/dashboard', icon: LayoutDashboard, label: 'nav.dashboard' },
+    { to: '/business',  icon: Building2,       label: 'nav.business' },
+    { to: '/outlets',   icon: Store,           label: 'nav.outlets' },
+    { to: '/menu',      icon: UtensilsCrossed, label: 'nav.menu' },
+    { to: '/orders',    icon: ShoppingBag,     label: 'nav.orders' },
+    { to: '/promotions/coupons', icon: Ticket, label: 'nav.promotions', children: [
+      { to: '/promotions/coupons',   icon: Ticket,      label: 'nav.coupons' },
+      { to: '/promotions/discounts', icon: PercentIcon, label: 'nav.discounts' },
+      { to: '/promotions/offers',    icon: Gift,        label: 'nav.offers' },
+      { to: '/promotions/rewards',   icon: Award,       label: 'nav.rewards' },
     ]},
-    { to: '/disputes',  icon: ShieldAlert,     label: 'Disputes' },
-    { to: '/feedback',  icon: MessageSquare,   label: 'Feedback' },
-    { to: '/reports',   icon: BarChart3,       label: 'Reports' },
-    { to: '/staff',     icon: Users,           label: 'Staff' },
-    { to: '/settings',  icon: Settings,        label: 'Settings', children: SETTINGS_CHILDREN.business },
+    { to: '/disputes',  icon: ShieldAlert,     label: 'nav.disputes' },
+    { to: '/feedback',  icon: MessageSquare,   label: 'nav.feedback' },
+    { to: '/reports',   icon: BarChart3,       label: 'nav.reports' },
+    { to: '/staff',     icon: Users,           label: 'nav.staff' },
+    { to: '/settings',  icon: Settings,        label: 'nav.settings', children: SETTINGS_CHILDREN.business },
   ],
   outlet: [
-    { to: '/dashboard',       icon: LayoutDashboard, label: 'Dashboard' },
-    { to: '/outlet-profile',  icon: Store,           label: 'Outlet' },
-    { to: '/place-order',     icon: Plus,            label: 'Place Order' },
-    { to: '/orders',    icon: ShoppingBag,     label: 'Orders' },
-    { to: '/menu',      icon: UtensilsCrossed, label: 'Menu' },
-    { to: '/promotions/coupons', icon: Ticket, label: 'Promotions', children: [
-      { to: '/promotions/coupons',   icon: Ticket,      label: 'Coupons' },
-      { to: '/promotions/discounts', icon: PercentIcon, label: 'Discounts' },
-      { to: '/promotions/offers',    icon: Gift,        label: 'Offers' },
-      { to: '/promotions/rewards',   icon: Award,       label: 'Rewards' },
+    { to: '/dashboard',       icon: LayoutDashboard, label: 'nav.dashboard' },
+    { to: '/outlet-profile',  icon: Store,           label: 'nav.outlet' },
+    { to: '/place-order',     icon: Plus,            label: 'nav.placeOrder' },
+    { to: '/orders',    icon: ShoppingBag,     label: 'nav.orders' },
+    { to: '/menu',      icon: UtensilsCrossed, label: 'nav.menu' },
+    { to: '/promotions/coupons', icon: Ticket, label: 'nav.promotions', children: [
+      { to: '/promotions/coupons',   icon: Ticket,      label: 'nav.coupons' },
+      { to: '/promotions/discounts', icon: PercentIcon, label: 'nav.discounts' },
+      { to: '/promotions/offers',    icon: Gift,        label: 'nav.offers' },
+      { to: '/promotions/rewards',   icon: Award,       label: 'nav.rewards' },
     ]},
-    { to: '/customers', icon: Users,           label: 'Customers' },
-    { to: '/kitchen',   icon: ChefHat,         label: 'Kitchen' },
-    { to: '/service-desk', icon: ConciergeBell, label: 'Service Desk' },
-    { to: '/parcel-desk',  icon: Package,       label: 'Parcel Desk' },
-    { to: '/offline-orders', icon: CloudOff,    label: 'Offline Orders' },
-    { to: '/shifts',    icon: Wallet,          label: 'Shifts' },
-    { to: '/refunds',   icon: RotateCcw,       label: 'Refunds' },
-    { to: '/disputes',  icon: ShieldAlert,     label: 'Disputes' },
-    { to: '/feedback',  icon: MessageSquare,   label: 'Feedback' },
-    { to: '/staff',     icon: Users,           label: 'Staff' },
-    { to: '/reports',   icon: BarChart3,       label: 'Reports' },
-    { to: '/settings',  icon: Settings,        label: 'Settings', children: SETTINGS_CHILDREN.outlet },
+    { to: '/customers', icon: Users,           label: 'nav.customers' },
+    { to: '/kitchen',   icon: ChefHat,         label: 'nav.kitchen' },
+    { to: '/service-desk', icon: ConciergeBell, label: 'nav.serviceDesk' },
+    { to: '/parcel-desk',  icon: Package,       label: 'nav.parcelDesk' },
+    { to: '/offline-orders', icon: CloudOff,    label: 'nav.offlineOrders' },
+    { to: '/shifts',    icon: Wallet,          label: 'nav.shifts' },
+    { to: '/refunds',   icon: RotateCcw,       label: 'nav.refunds' },
+    { to: '/disputes',  icon: ShieldAlert,     label: 'nav.disputes' },
+    { to: '/feedback',  icon: MessageSquare,   label: 'nav.feedback' },
+    { to: '/staff',     icon: Users,           label: 'nav.staff' },
+    { to: '/reports',   icon: BarChart3,       label: 'nav.reports' },
+    { to: '/settings',  icon: Settings,        label: 'nav.settings', children: SETTINGS_CHILDREN.outlet },
   ],
   kitchen: [
-    { to: '/kitchen',   icon: ChefHat,         label: 'Kitchen' },
-    { to: '/orders',    icon: ShoppingBag,     label: 'Orders' },
-    { to: '/settings',  icon: Settings,        label: 'Settings' },
+    { to: '/kitchen',   icon: ChefHat,         label: 'nav.kitchen' },
+    { to: '/orders',    icon: ShoppingBag,     label: 'nav.orders' },
+    { to: '/settings',  icon: Settings,        label: 'nav.settings' },
   ],
   counter: [
-    { to: '/dashboard',   icon: LayoutDashboard, label: 'Dashboard' },
-    { to: '/place-order', icon: Plus,            label: 'Place Order' },
-    { to: '/orders',      icon: ShoppingBag,     label: 'Orders' },
-    { to: '/menu',      icon: UtensilsCrossed, label: 'Menu' },
-    { to: '/disputes',  icon: ShieldAlert,     label: 'Disputes' },
-    { to: '/settings',  icon: Settings,        label: 'Settings' },
+    { to: '/dashboard',   icon: LayoutDashboard, label: 'nav.dashboard' },
+    { to: '/place-order', icon: Plus,            label: 'nav.placeOrder' },
+    { to: '/orders',      icon: ShoppingBag,     label: 'nav.orders' },
+    { to: '/menu',      icon: UtensilsCrossed, label: 'nav.menu' },
+    { to: '/disputes',  icon: ShieldAlert,     label: 'nav.disputes' },
+    { to: '/settings',  icon: Settings,        label: 'nav.settings' },
   ],
   store: [
-    { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { to: '/settings',  icon: Settings,        label: 'Settings' },
+    { to: '/dashboard', icon: LayoutDashboard, label: 'nav.dashboard' },
+    { to: '/settings',  icon: Settings,        label: 'nav.settings' },
   ],
 };
 
@@ -206,29 +209,29 @@ const NAV: Record<UserTier, NavItem[]> = {
 // (Platform Admin, Business Owner, Outlet Admin). Items are surfaced based
 // on the user's responsibilities — Account is the only always-on row.
 const MINIMAL_NAV: NavItem[] = [
-  { to: '/place-order', icon: Plus,            label: 'Place Order', requires: ['CREATE_ORDER'] },
-  { to: '/orders',      icon: ShoppingBag,     label: 'Orders',      requires: ['VIEW_ORDERS'] },
-  { to: '/kitchen',     icon: ChefHat,         label: 'Kitchen',     requires: ['VIEW_KITCHEN'] },
-  { to: '/service-desk', icon: ConciergeBell,  label: 'Service Desk', requires: ['VIEW_SERVICE_DESK'] },
-  { to: '/parcel-desk',  icon: Package,        label: 'Parcel Desk',  requires: ['VIEW_PARCEL_DESK'] },
-  { to: '/offline-orders', icon: CloudOff,     label: 'Offline Orders', requires: ['CREATE_ORDER'] },
-  { to: '/shifts',         icon: Wallet,       label: 'Shifts',          requires: ['CREATE_ORDER', 'COLLECT_PAYMENT'] },
-  { to: '/refunds',        icon: RotateCcw,    label: 'Refunds',         requires: ['CANCEL_ORDER'] },
-  { to: '/menu',        icon: UtensilsCrossed, label: 'Menu',        requires: ['VIEW_MENU'] },
-  { to: '/customers',   icon: Users,           label: 'Customers',   requires: ['VIEW_CUSTOMERS'], children: [
-    { to: '/customers',        icon: Users,  label: 'All' },
-    { to: '/dues/receivable',  icon: Wallet, label: 'Dues · Receivable', requires: ['VIEW_CUSTOMERS'] },
+  { to: '/place-order', icon: Plus,            label: 'nav.placeOrder', requires: ['CREATE_ORDER'] },
+  { to: '/orders',      icon: ShoppingBag,     label: 'nav.orders',      requires: ['VIEW_ORDERS'] },
+  { to: '/kitchen',     icon: ChefHat,         label: 'nav.kitchen',     requires: ['VIEW_KITCHEN'] },
+  { to: '/service-desk', icon: ConciergeBell,  label: 'nav.serviceDesk', requires: ['VIEW_SERVICE_DESK'] },
+  { to: '/parcel-desk',  icon: Package,        label: 'nav.parcelDesk',  requires: ['VIEW_PARCEL_DESK'] },
+  { to: '/offline-orders', icon: CloudOff,     label: 'nav.offlineOrders', requires: ['CREATE_ORDER'] },
+  { to: '/shifts',         icon: Wallet,       label: 'nav.shifts',          requires: ['CREATE_ORDER', 'COLLECT_PAYMENT'] },
+  { to: '/refunds',        icon: RotateCcw,    label: 'nav.refunds',         requires: ['CANCEL_ORDER'] },
+  { to: '/menu',        icon: UtensilsCrossed, label: 'nav.menu',        requires: ['VIEW_MENU'] },
+  { to: '/customers',   icon: Users,           label: 'nav.customers',   requires: ['VIEW_CUSTOMERS'], children: [
+    { to: '/customers',        icon: Users,  label: 'nav.all' },
+    { to: '/dues/receivable',  icon: Wallet, label: 'nav.duesReceivable', requires: ['VIEW_CUSTOMERS'] },
   ]},
-  { to: '/disputes',    icon: ShieldAlert,     label: 'Disputes',    requires: ['VIEW_DISPUTES'] },
-  { to: '/feedback',    icon: MessageSquare,   label: 'Feedback',    requires: ['MANAGE_DISPUTES', 'MANAGE_CUSTOMERS'] },
-  { to: '/reports',     icon: BarChart3,       label: 'Reports',     requires: ['VIEW_REPORTS'] },
-  { to: '/settings',    icon: Settings,        label: 'Settings', children: [
-    { to: '/settings',    icon: User,       label: 'Account' },
-    { to: '/roles',       icon: Shield,     label: 'Roles',           requires: ['MANAGE_ROLES'] },
-    { to: '/tags',        icon: Tag,        label: 'Tags',            requires: ['MANAGE_CUSTOMER_TAGS'] },
-    { to: '/table-types', icon: LayoutGrid, label: 'Dine In Sections', requires: ['MANAGE_TABLE_TYPES'] },
-    { to: '/stations',    icon: Flame,      label: 'Stations',        requires: ['MANAGE_KITCHEN_STATIONS'] },
-    { to: '/toppings',    icon: Sandwich,   label: 'Toppings',        requires: ['MANAGE_TOPPINGS'] },
+  { to: '/disputes',    icon: ShieldAlert,     label: 'nav.disputes',    requires: ['VIEW_DISPUTES'] },
+  { to: '/feedback',    icon: MessageSquare,   label: 'nav.feedback',    requires: ['MANAGE_DISPUTES', 'MANAGE_CUSTOMERS'] },
+  { to: '/reports',     icon: BarChart3,       label: 'nav.reports',     requires: ['VIEW_REPORTS'] },
+  { to: '/settings',    icon: Settings,        label: 'nav.settings', children: [
+    { to: '/settings',    icon: User,       label: 'nav.account' },
+    { to: '/roles',       icon: Shield,     label: 'nav.roles',           requires: ['MANAGE_ROLES'] },
+    { to: '/tags',        icon: Tag,        label: 'nav.tags',            requires: ['MANAGE_CUSTOMER_TAGS'] },
+    { to: '/table-types', icon: LayoutGrid, label: 'nav.dineInSections', requires: ['MANAGE_TABLE_TYPES'] },
+    { to: '/stations',    icon: Flame,      label: 'nav.stations',        requires: ['MANAGE_KITCHEN_STATIONS'] },
+    { to: '/toppings',    icon: Sandwich,   label: 'nav.toppings',        requires: ['MANAGE_TOPPINGS'] },
   ]},
 ];
 
@@ -238,11 +241,11 @@ const MINIMAL_NAV: NavItem[] = [
 // owner from landing on empty pages. Each link goes to a route that
 // understands the cluster context.
 const buildClusterNav = (businessId: string): NavItem[] => [
-  { to: `/platform/clusters/${businessId}`, icon: Network, label: 'Cluster' },
-  { to: '/orders',   icon: ShoppingBag,  label: 'Orders' },
-  { to: '/reports',  icon: BarChart3,    label: 'Reports' },
-  { to: '/staff',    icon: Users,        label: 'Staff' },
-  { to: '/settings', icon: Settings,     label: 'Settings', children: SETTINGS_CHILDREN.business },
+  { to: `/platform/clusters/${businessId}`, icon: Network, label: 'nav.cluster' },
+  { to: '/orders',   icon: ShoppingBag,  label: 'nav.orders' },
+  { to: '/reports',  icon: BarChart3,    label: 'nav.reports' },
+  { to: '/staff',    icon: Users,        label: 'nav.staff' },
+  { to: '/settings', icon: Settings,     label: 'nav.settings', children: SETTINGS_CHILDREN.business },
 ];
 
 // Admin roles get the full tier sidebar; everyone else gets MINIMAL_NAV
@@ -272,10 +275,16 @@ function filterNav(items: NavItem[], has: (p: string) => boolean): NavItem[] {
 /* ── nav row (handles flat + nested) ─────────────────────── */
 function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolean; onNavigate?: () => void }) {
   const location = useLocation();
+  const { t } = useTranslation();
   const hasChildren = !!item.children?.length;
   const childPaths = item.children?.map((c) => c.to) ?? [];
   const childActive = childPaths.some((p) => p && (location.pathname === p || location.pathname.startsWith(p + '/')));
   const selfActive = location.pathname === item.to || location.pathname.startsWith(item.to + '/');
+
+  // NAV/SETTINGS_CHILDREN/MINIMAL_NAV/buildClusterNav all store `label`
+  // as an i18n key (e.g. `nav.dashboard`). Resolve here at render time so
+  // the whole tree reacts to language changes without recomputing NAV.
+  const label = t(item.label);
 
   const [expanded, setExpanded] = useState(childActive || (hasChildren && selfActive));
   useEffect(() => {
@@ -295,14 +304,17 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
       // pointer + dimmed colours tell the operator this is a future step,
       // and the title attribute surfaces why (e.g. "Create at least one
       // Dine-In Section first").
+      const reason = item.disabledReason
+        ? t(item.disabledReason)
+        : t('nav.unavailable', { label });
       return (
         <div
-          title={item.disabledReason || `${item.label} unavailable`}
+          title={reason}
           aria-disabled
           className="group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-[.8125rem] font-medium text-slate-600 opacity-50 cursor-not-allowed select-none"
         >
           <Icon size={17} className="shrink-0" />
-          {!compact && <span className="animate-fade-in">{item.label}</span>}
+          {!compact && <span className="animate-fade-in">{label}</span>}
         </div>
       );
     }
@@ -310,7 +322,7 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
       <NavLink
         to={item.to}
         end={item.to === '/settings'}
-        title={compact ? item.label : undefined}
+        title={compact ? label : undefined}
         onClick={onNavigate}
         className={({ isActive }) => rowClasses(isActive)}
       >
@@ -321,7 +333,7 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
                 style={{ background: 'linear-gradient(135deg, rgba(249,115,22,.25) 0%, rgba(234,88,12,.15) 100%)', border: '1px solid rgba(249,115,22,.2)' }} />
             )}
             <Icon size={17} className={clsx('shrink-0 relative z-10 transition-transform', !isActive && 'group-hover:scale-110', isActive && 'text-brand-400')} />
-            {!compact && <span className="relative z-10 animate-fade-in">{item.label}</span>}
+            {!compact && <span className="relative z-10 animate-fade-in">{label}</span>}
             {isActive && !compact && <span className="ml-auto relative z-10 w-1.5 h-1.5 rounded-full bg-brand-400 shrink-0" />}
           </>
         )}
@@ -338,7 +350,7 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
   if (compact) {
     return (
       <>
-        <NavLink to={item.to} end title={item.label} onClick={onNavigate} className={rowClasses(parentActive)}>
+        <NavLink to={item.to} end title={label} onClick={onNavigate} className={rowClasses(parentActive)}>
           {({ isActive }) => (
             <>
               {(isActive || childActive) && (
@@ -350,7 +362,7 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
           )}
         </NavLink>
         {item.children!.filter((c) => c.to !== item.to).map((c) => (
-          <NavLink key={c.to} to={c.to} title={c.label} onClick={onNavigate} className={({ isActive }) => rowClasses(isActive)}>
+          <NavLink key={c.to} to={c.to} title={t(c.label)} onClick={onNavigate} className={({ isActive }) => rowClasses(isActive)}>
             {({ isActive }) => {
               const ChildIcon = c.icon;
               return (
@@ -381,7 +393,7 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
             style={{ background: 'linear-gradient(135deg, rgba(249,115,22,.25) 0%, rgba(234,88,12,.15) 100%)', border: '1px solid rgba(249,115,22,.2)' }} />
         )}
         <Icon size={17} className={clsx('shrink-0 relative z-10', parentActive && 'text-brand-400')} />
-        <span className="relative z-10 flex-1 text-left">{item.label}</span>
+        <span className="relative z-10 flex-1 text-left">{label}</span>
         <ChevronRight
           size={13}
           className={clsx('relative z-10 text-slate-500 transition-transform duration-200', expanded && 'rotate-90')}
@@ -407,7 +419,7 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
                 {({ isActive }) => (
                   <>
                     <ChildIcon size={14} className={clsx('shrink-0', isActive && 'text-brand-400')} />
-                    <span>{c.label}</span>
+                    <span>{t(c.label)}</span>
                   </>
                 )}
               </NavLink>
@@ -419,19 +431,22 @@ function NavRow({ item, compact, onNavigate }: { item: NavItem; compact?: boolea
   );
 }
 
-const TIER_BADGE: Record<UserTier, { label: string; bg: string; dot: string }> = {
-  platform: { label: 'Platform Admin', bg: 'bg-violet-500/15 text-violet-300',  dot: 'bg-violet-400' },
-  business: { label: 'Business Admin', bg: 'bg-sky-500/15 text-sky-300',        dot: 'bg-sky-400' },
-  outlet:   { label: 'Outlet Admin',   bg: 'bg-brand-700/15 text-brand-300',  dot: 'bg-brand-400' },
-  kitchen:  { label: 'Kitchen Staff',  bg: 'bg-emerald-500/15 text-emerald-300',dot: 'bg-emerald-400' },
-  counter:  { label: 'Counter Staff',  bg: 'bg-amber-500/15 text-amber-300',    dot: 'bg-amber-400' },
-  store:    { label: 'Store Staff',    bg: 'bg-teal-500/15 text-teal-300',      dot: 'bg-teal-400' },
+// Palette per tier — the label itself comes from the signed-in user's role
+// name (t()-translated below) so custom role names are respected.
+const TIER_BADGE: Record<UserTier, { bg: string; dot: string }> = {
+  platform: { bg: 'bg-violet-500/15 text-violet-300',   dot: 'bg-violet-400' },
+  business: { bg: 'bg-sky-500/15 text-sky-300',         dot: 'bg-sky-400' },
+  outlet:   { bg: 'bg-brand-700/15 text-brand-300',     dot: 'bg-brand-400' },
+  kitchen:  { bg: 'bg-emerald-500/15 text-emerald-300', dot: 'bg-emerald-400' },
+  counter:  { bg: 'bg-amber-500/15 text-amber-300',     dot: 'bg-amber-400' },
+  store:    { bg: 'bg-teal-500/15 text-teal-300',       dot: 'bg-teal-400' },
 };
 
 /* ── main layout ─────────────────────────────────────────── */
 export default function Layout() {
   const dispatch  = useDispatch<AppDispatch>();
   const navigate  = useNavigate();
+  const { t } = useTranslation();
   const { tier, has, user, isClusterOwner } = useUserRole();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -505,6 +520,8 @@ export default function Layout() {
   // Label = the user's actual role name. When the user has no role assigned
   // we hide the badge entirely instead of falling back to a misleading tier
   // label like "Outlet Admin". Tier still drives the color palette.
+  // Role names are user-editable free text, so we keep them verbatim — no
+  // t() lookup. Custom role names ("Cook", "Cashier") pass straight through.
   const roleLabel = user?.role?.name?.trim() || '';
   const tierBadge = TIER_BADGE[tier];
   const badge = { ...tierBadge, label: roleLabel };
@@ -546,13 +563,13 @@ export default function Layout() {
               <p className="text-xs font-semibold text-slate-200 truncate">{user?.name}</p>
               <p className="text-[10px] text-slate-500 truncate">{user?.role?.name}</p>
             </div>
-            <button onClick={handleLogout} title="Sign out"
+            <button onClick={handleLogout} title={t('layout.signOutTooltip')}
               className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors shrink-0">
               <LogOut size={14} />
             </button>
           </div>
         ) : (
-          <button onClick={handleLogout} title="Sign out"
+          <button onClick={handleLogout} title={t('layout.signOutTooltip')}
             className="w-full flex items-center justify-center p-2.5 rounded-xl text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors">
             <LogOut size={17} />
           </button>
@@ -591,20 +608,32 @@ export default function Layout() {
           style={{ boxShadow: '0 1px 0 #e8eaf0, 0 1px 4px rgb(0 0 0 / .04)', height: '56px' }}>
           <div className="flex items-center gap-3">
             {/* Desktop collapse toggle */}
-            <button onClick={() => setSidebarOpen(v => !v)}
+            <button
+              onClick={() => setSidebarOpen(v => !v)}
+              title={t('layout.collapseSidebar')}
+              aria-label={t('layout.collapseSidebar')}
               className="hidden lg:flex items-center justify-center w-8 h-8 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
               <Menu size={17} />
             </button>
             {/* Mobile open */}
-            <button onClick={() => setMobileSidebar(true)}
+            <button
+              onClick={() => setMobileSidebar(true)}
+              title={t('layout.openMenu')}
+              aria-label={t('layout.openMenu')}
               className="lg:hidden flex items-center justify-center w-8 h-8 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
               <Menu size={17} />
             </button>
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Language switcher */}
+            <LanguageSwitcher />
+
             {/* Notifications */}
-            <button className="relative flex items-center justify-center w-9 h-9 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors">
+            <button
+              title={t('layout.notifications')}
+              aria-label={t('layout.notifications')}
+              className="relative flex items-center justify-center w-9 h-9 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors">
               <Bell size={17} />
               <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-brand-700 ring-2 ring-white" />
             </button>
@@ -643,13 +672,13 @@ export default function Layout() {
                   <div className="py-1">
                     <button onClick={() => { setUserMenu(false); navigate('/settings'); }}
                       className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition-colors">
-                      <User size={14} className="text-slate-400" /> Profile & Settings
+                      <User size={14} className="text-slate-400" /> {t('layout.profileSettings')}
                     </button>
                   </div>
                   <div className="border-t border-slate-100 py-1">
                     <button onClick={() => { setUserMenu(false); handleLogout(); }}
                       className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[13px] text-red-600 hover:bg-red-50 transition-colors font-medium">
-                      <LogOut size={14} /> Sign Out
+                      <LogOut size={14} /> {t('layout.signOut')}
                     </button>
                   </div>
                 </div>

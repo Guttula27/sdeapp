@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
+import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { Search, Clock, ShoppingBag, ArrowRight, X, RefreshCw, Eye, Play, Bell, Utensils, Plus, Tag as TagIcon, User, Download, Maximize2, Minimize2, Filter, ChevronDown, Printer as PrinterIcon, ArrowUp, ArrowDown, RotateCcw, Users as UsersIcon, Trash2 } from 'lucide-react';
@@ -18,19 +19,22 @@ import { downloadReceiptPdf } from '../../components/receipt/downloadReceiptPdf'
 import Modal from '../../components/common/Modal';
 import CoursePlanner from '../../components/orders/CoursePlanner';
 
-const STATUS: Record<string, { label: string; dot: string; bg: string; text: string; border: string }> = {
-  CREATED:          { label: 'Created',          dot: '#3b82f6', bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
-  QUEUED:           { label: 'Queued',           dot: '#f59e0b', bg: '#fffbeb', text: '#b45309', border: '#fde68a' },
-  PREPARING:        { label: 'Preparing',        dot: '#0B4245', bg: '#e8efef', text: '#04181a', border: '#D2E5DF' },
-  READY:            { label: 'Ready',            dot: '#10b981', bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0' },
-  READY_FOR_PICKUP: { label: 'Ready for Pickup', dot: '#2563eb', bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
-  OUT_FOR_SERVICE:  { label: 'Out for Service',  dot: '#14b8a6', bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4' },
-  SERVED:          { label: 'Served',          dot: '#64748b', bg: '#FAFAFA', text: '#475569', border: '#e2e8f0' },
-  CANCELLED:       { label: 'Cancelled',       dot: '#ef4444', bg: '#fff1f2', text: '#be123c', border: '#fecdd3' },
-  DISPUTED:        { label: 'Disputed',        dot: '#8b5cf6', bg: '#faf5ff', text: '#7e22ce', border: '#e9d5ff' },
-  RESOLVED:        { label: 'Resolved',        dot: '#0ea5e9', bg: '#f0f9ff', text: '#0369a1', border: '#bae6fd' },
-  FOR_REFUND:      { label: 'For Refund',      dot: '#ec4899', bg: '#fdf2f8', text: '#be185d', border: '#fbcfe8' },
-  REFUND_COMPLETE: { label: 'Refund Complete', dot: '#a855f7', bg: '#faf5ff', text: '#7e22ce', border: '#e9d5ff' },
+// Status palette. `labelKey` is an i18n key stem (orders.status*) resolved
+// at render time by the components that display statuses; labels are no
+// longer baked in here so switching language re-renders the badge text.
+const STATUS: Record<string, { labelKey: string; dot: string; bg: string; text: string; border: string }> = {
+  CREATED:          { labelKey: 'statusCreated',        dot: '#3b82f6', bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
+  QUEUED:           { labelKey: 'statusQueued',         dot: '#f59e0b', bg: '#fffbeb', text: '#b45309', border: '#fde68a' },
+  PREPARING:        { labelKey: 'statusPreparing',      dot: '#0B4245', bg: '#e8efef', text: '#04181a', border: '#D2E5DF' },
+  READY:            { labelKey: 'statusReady',          dot: '#10b981', bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0' },
+  READY_FOR_PICKUP: { labelKey: 'statusReadyForPickup', dot: '#2563eb', bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
+  OUT_FOR_SERVICE:  { labelKey: 'statusOutForService',  dot: '#14b8a6', bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4' },
+  SERVED:           { labelKey: 'statusServed',         dot: '#64748b', bg: '#FAFAFA', text: '#475569', border: '#e2e8f0' },
+  CANCELLED:        { labelKey: 'statusCancelled',      dot: '#ef4444', bg: '#fff1f2', text: '#be123c', border: '#fecdd3' },
+  DISPUTED:         { labelKey: 'statusDisputed',       dot: '#8b5cf6', bg: '#faf5ff', text: '#7e22ce', border: '#e9d5ff' },
+  RESOLVED:         { labelKey: 'statusResolved',       dot: '#0ea5e9', bg: '#f0f9ff', text: '#0369a1', border: '#bae6fd' },
+  FOR_REFUND:       { labelKey: 'statusForRefund',      dot: '#ec4899', bg: '#fdf2f8', text: '#be185d', border: '#fbcfe8' },
+  REFUND_COMPLETE:  { labelKey: 'statusRefundComplete', dot: '#a855f7', bg: '#faf5ff', text: '#7e22ce', border: '#e9d5ff' },
 };
 // Manual order-level transitions — mid-stages (QUEUED → PREPARING → READY) are
 // driven automatically by item statuses (rollup in the backend). After READY
@@ -50,49 +54,51 @@ function needsOutForService(outletType?: string | null, tableId?: string | null)
   }
 }
 type StatusCtx = { outletType?: string | null; tableId?: string | null; isParcel?: boolean };
-function nextStatusFor(current: string, ctx: StatusCtx): { next: string; label: string } | null {
-  if (current === 'CREATED')          return { next: 'QUEUED', label: 'Accept' };
-  if (current === 'OUT_FOR_SERVICE')  return { next: 'SERVED', label: 'Mark Served' };
-  if (current === 'READY_FOR_PICKUP') return { next: 'SERVED', label: 'Mark Picked Up' };
-  if (current === 'FOR_REFUND')       return { next: 'REFUND_COMPLETE', label: 'Mark Refunded' };
+// `labelKey` is an i18n key stem (orders.next*) resolved at render time
+// by whichever button uses it.
+function nextStatusFor(current: string, ctx: StatusCtx): { next: string; labelKey: string } | null {
+  if (current === 'CREATED')          return { next: 'QUEUED',          labelKey: 'nextAccept' };
+  if (current === 'OUT_FOR_SERVICE')  return { next: 'SERVED',          labelKey: 'nextMarkServed' };
+  if (current === 'READY_FOR_PICKUP') return { next: 'SERVED',          labelKey: 'nextMarkPickedUp' };
+  if (current === 'FOR_REFUND')       return { next: 'REFUND_COMPLETE', labelKey: 'nextMarkRefunded' };
   if (current === 'READY') {
     // Parcel: go through the pickup-counter step so the customer gets the alert.
-    if (ctx.isParcel) return { next: 'READY_FOR_PICKUP', label: 'Ready for Pickup' };
+    if (ctx.isParcel) return { next: 'READY_FOR_PICKUP', labelKey: 'nextReadyForPickup' };
     return needsOutForService(ctx.outletType, ctx.tableId)
-      ? { next: 'OUT_FOR_SERVICE', label: 'Out for Service' }
-      : { next: 'SERVED',          label: 'Mark Served' };
+      ? { next: 'OUT_FOR_SERVICE', labelKey: 'nextOutForService' }
+      : { next: 'SERVED',          labelKey: 'nextMarkServed' };
   }
   return null;
 }
 const FILTERS = ['ACTIVE','ALL','CREATED','QUEUED','PREPARING','READY','READY_FOR_PICKUP','OUT_FOR_SERVICE','SERVED','CANCELLED','DISPUTED','RESOLVED','FOR_REFUND','REFUND_COMPLETE'];
-const FILTER_LABEL: Record<string, string> = {
-  ACTIVE: 'Active',
-  ALL: 'All',
+const FILTER_LABEL_KEY: Record<string, string> = {
+  ACTIVE: 'filterActive',
+  ALL:    'filterAll',
 };
 // Terminal states excluded from the default "Active" view.
 const TERMINAL_STATUSES = new Set(['SERVED', 'CANCELLED']);
 
 type ItemStatus = 'PENDING_VERIFICATION' | 'PENDING' | 'PREPARING' | 'READY' | 'PACKED' | 'SERVED' | 'CANCELLED';
 
-const ITEM_STATUS: Record<ItemStatus, { label: string; bg: string; text: string; border: string; dot: string }> = {
-  PENDING_VERIFICATION: { label: 'Awaiting verify', bg: '#fef3c7', text: '#92400e', border: '#fde68a', dot: '#f59e0b' },
-  PENDING:   { label: 'Pending',   bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', dot: '#94a3b8' },
-  PREPARING: { label: 'Preparing', bg: '#e8efef', text: '#04181a', border: '#D2E5DF', dot: '#0B4245' },
-  READY:     { label: 'Ready',     bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', dot: '#10b981' },
+const ITEM_STATUS: Record<ItemStatus, { labelKey: string; bg: string; text: string; border: string; dot: string }> = {
+  PENDING_VERIFICATION: { labelKey: 'itemAwaitingVerify', bg: '#fef3c7', text: '#92400e', border: '#fde68a', dot: '#f59e0b' },
+  PENDING:   { labelKey: 'itemPending',   bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', dot: '#94a3b8' },
+  PREPARING: { labelKey: 'itemPreparing', bg: '#e8efef', text: '#04181a', border: '#D2E5DF', dot: '#0B4245' },
+  READY:     { labelKey: 'itemReady',     bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', dot: '#10b981' },
   // Parcel-only intermediate between READY and SERVED. The parcel-desk
   // page drives PACKED → READY_FOR_PICKUP via the order-level rollup;
   // the admin view is read-only on this status (no NEXT_ITEM mapping).
-  PACKED:    { label: 'Packed',    bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe', dot: '#3b82f6' },
-  SERVED:    { label: 'Served',    bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', dot: '#14b8a6' },
-  CANCELLED: { label: 'Cancelled', bg: '#fff1f2', text: '#be123c', border: '#fecdd3', dot: '#ef4444' },
+  PACKED:    { labelKey: 'itemPacked',    bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe', dot: '#3b82f6' },
+  SERVED:    { labelKey: 'itemServed',    bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', dot: '#14b8a6' },
+  CANCELLED: { labelKey: 'itemCancelled', bg: '#fff1f2', text: '#be123c', border: '#fecdd3', dot: '#ef4444' },
 };
 // PENDING_VERIFICATION intentionally has no NEXT_ITEM mapping — the kitchen
 // can't advance it; only the service desk (via the dashboard) flips it to
 // PENDING after confirming with the customer.
-const NEXT_ITEM: Partial<Record<ItemStatus, { status: ItemStatus; label: string; icon: any }>> = {
-  PENDING:   { status: 'PREPARING', label: 'Start',  icon: Play },
-  PREPARING: { status: 'READY',     label: 'Ready',  icon: Bell },
-  READY:     { status: 'SERVED',    label: 'Served', icon: Utensils },
+const NEXT_ITEM: Partial<Record<ItemStatus, { status: ItemStatus; labelKey: string; icon: any }>> = {
+  PENDING:   { status: 'PREPARING', labelKey: 'nextStart',  icon: Play },
+  PREPARING: { status: 'READY',     labelKey: 'nextReady',  icon: Bell },
+  READY:     { status: 'SERVED',    labelKey: 'nextServed', icon: Utensils },
 };
 const STEP_ORDER: ItemStatus[] = ['PENDING', 'PREPARING', 'READY', 'SERVED'];
 
@@ -103,6 +109,7 @@ function elapsed(t: string) {
 
 export default function OrdersPage() {
   const dispatch = useDispatch();
+  const { t } = useTranslation();
   const user = useSelector((s: RootState) => s.auth.user);
   const { tier, has } = useUserRole();
   const { orders } = useSelector((s: RootState) => s.orders);
@@ -202,10 +209,10 @@ export default function OrdersPage() {
     if (!outletPrint.printerId) return;
     try {
       await connectPrinter(outletPrint.printerId);
-      setPrinterTick((t) => t + 1);
-      toast.success('Receipt printer paired — auto-print is armed');
+      setPrinterTick((tk) => tk + 1);
+      toast.success(t('orders.toastReceiptPrinter'));
     } catch (e: any) {
-      if (e?.name !== 'NotFoundError') toast.error(e?.message || 'Pairing cancelled');
+      if (e?.name !== 'NotFoundError') toast.error(e?.message || t('orders.toastPairingCancelled'));
     }
   };
 
@@ -245,13 +252,13 @@ export default function OrdersPage() {
       // staple to the delivery bag.
       if (isAggregatorOrder(payload)) {
         await printPackingSlip(outletPrint.printerId, buildPackingSlipPayload(payload));
-        toast.success('Packing slip sent to printer');
+        toast.success(t('orders.toastPackingSlipPrinted'));
       } else {
         await printCustomerReceipt(outletPrint.printerId, buildReceiptPayload(payload));
-        toast.success('Receipt sent to printer');
+        toast.success(t('orders.toastReceiptPrinted'));
       }
     } catch (e: any) {
-      toast.error(e?.message || 'Print failed');
+      toast.error(e?.message || t('orders.toastPrintFailed'));
     } finally {
       setPrinting(false);
     }
@@ -426,7 +433,7 @@ export default function OrdersPage() {
       if (!autoPrintNaggedRef.current) {
         autoPrintNaggedRef.current = true;
         toast(
-          `Order ${order.orderNumber} arrived but the printer isn't paired this session. Tap "Connect printer" to enable auto-print.`,
+          t('orders.toastAutoPrintNag', { number: order.orderNumber }),
           { icon: '🖨️', duration: 7000 },
         );
       }
@@ -440,13 +447,13 @@ export default function OrdersPage() {
       const { data } = await api.get(`/outlets/${order.outletId || outletId}/orders/${order.id}`);
       const full = data?.data ?? order;
       await printCustomerReceipt(outletPrint.printerId, buildReceiptPayload(full));
-      toast.success(`Receipt printed for ${order.orderNumber}`, { icon: '🖨️' });
+      toast.success(t('orders.toastReceiptAutoPrinted', { number: order.orderNumber }), { icon: '🖨️' });
     } catch (e: any) {
       // Rollback so a manual retry isn't blocked by the dedupe.
       autoPrintedReceiptsRef.current.delete(order.id);
-      toast.error(e?.message || 'Receipt auto-print failed — use the manual button');
+      toast.error(e?.message || t('orders.toastReceiptAutoFailed'));
     }
-  }, [outletPrint.auto, outletPrint.printerId, outletId]);
+  }, [outletPrint.auto, outletPrint.printerId, outletId, t]);
 
   const autoPrintAggregatorSlip = useCallback(async (order: any) => {
     if (!order || order.status !== 'READY') return;
@@ -468,13 +475,13 @@ export default function OrdersPage() {
         return;
       }
       await printPackingSlip(outletPrint.printerId, buildPackingSlipPayload(full));
-      toast.success(`Slip printed for ${order.orderNumber}`, { icon: '🖨️' });
+      toast.success(t('orders.toastSlipAutoPrinted', { number: order.orderNumber }), { icon: '🖨️' });
     } catch (e: any) {
       // Let the dedupe stand even on failure — repeated failed prints
       // create noise without value. Operator can manual-print.
-      toast.error(e?.message || 'Auto-print failed — use the manual button');
+      toast.error(e?.message || t('orders.toastAutoFailedManual'));
     }
-  }, [outletPrint.auto, outletPrint.printerId, outletId]);
+  }, [outletPrint.auto, outletPrint.printerId, outletId, t]);
 
   // Debounced needle + sort key. The `search` state already exists
   // (used by the existing client-side filter); we lift its value to
@@ -559,7 +566,7 @@ export default function OrdersPage() {
       // If the snapshot path above already painted, stay silent: the
       // "stale" banner is the user-visible signal.
       if (snapshotAge == null) {
-        toast.error(e?.response?.data?.message || 'Could not load orders');
+        toast.error(e?.response?.data?.message || t('orders.toastCouldNotLoad'));
       }
     } finally { setLoading(false); }
   }, [tier, outletId, businessId, selectedOutletId, debouncedSearch, sortBy, sortDir, dispatch, snapshotAge]);
@@ -570,7 +577,7 @@ export default function OrdersPage() {
     const socket = getSocket(outletId);
     socket.on('orderCreated', (o: any) => {
       dispatch(setOrders([o, ...orders]));
-      toast.success(`New order — ${o.orderNumber}`);
+      toast.success(t('orders.toastNewOrder', { number: o.orderNumber }));
       // Fire-and-forget customer-receipt auto-print. Dedupes per
       // session, skips aggregator orders, and silently bails if the
       // printer was never paired. Direct customer-PWA placements rely
@@ -625,7 +632,7 @@ export default function OrdersPage() {
       const { data } = await api.patch(`/outlets/${outletId}/orders/${orderId}/status`, { status, actedAt });
       dispatch(updateOrder(data.data));
       if (detail?.id === orderId) setDetail(data.data);
-      toast.success(`→ ${STATUS[status].label}`);
+      toast.success(t('orders.toastAdvanceTemplate', { status: t(`orders.${STATUS[status].labelKey}`) }));
     } catch (e: any) {
       // Application errors (4xx/500) revert; infra-transient errors
       // (no response or 502/503/504) leave the optimistic state in
@@ -633,11 +640,11 @@ export default function OrdersPage() {
       const httpStatus = e?.response?.status ?? 0;
       const isInfraTransient = !e?.response || httpStatus === 502 || httpStatus === 503 || httpStatus === 504;
       if (isInfraTransient) {
-        toast.success(`Queued — will sync when network is back`, { icon: '📡' });
+        toast.success(t('orders.toastQueuedNetwork'), { icon: '📡' });
       } else if (target) {
         dispatch(updateOrder(target));
         if (detail?.id === orderId) setDetail(target);
-        toast.error(e.response?.data?.message || 'Failed');
+        toast.error(e.response?.data?.message || t('orders.toastFailed'));
       }
     }
     finally { setSaving(false); }
@@ -650,9 +657,9 @@ export default function OrdersPage() {
       const { data } = await api.patch(`/outlets/${outletId}/orders/${cancelTarget.id}/cancel`, { reason: cancelReason });
       dispatch(updateOrder(data.data));
       if (detail?.id === cancelTarget.id) setDetail(data.data);
-      toast.success('Order cancelled');
+      toast.success(t('orders.toastOrderCancelled'));
       setCancelTarget(null); setCancelReason('');
-    } catch (e: any) { toast.error(e.response?.data?.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.response?.data?.message || t('orders.toastFailed')); }
     finally { setSaving(false); }
   };
 
@@ -716,18 +723,18 @@ export default function OrdersPage() {
         const updated = data.data.order;
         dispatch(updateOrder(updated));
         if (detail?.id === orderId) setDetail(updated);
-        if (data.data.rolledUp) toast.success(`Order moved to ${data.data.rolledUp}`);
-        else toast.success('Item updated');
+        if (data.data.rolledUp) toast.success(t('orders.toastOrderRolledUp', { status: data.data.rolledUp }));
+        else toast.success(t('orders.toastItemUpdated'));
       }
     } catch (e: any) {
       const httpStatus = e?.response?.status ?? 0;
       const isInfraTransient = !e?.response || httpStatus === 502 || httpStatus === 503 || httpStatus === 504;
       if (isInfraTransient) {
-        toast.success(`Queued — will sync when network is back`, { icon: '📡' });
+        toast.success(t('orders.toastQueuedNetwork'), { icon: '📡' });
       } else if (targetOrder) {
         dispatch(updateOrder(targetOrder));
         if (detail?.id === orderId) setDetail(targetOrder);
-        toast.error(e.response?.data?.message || 'Failed');
+        toast.error(e.response?.data?.message || t('orders.toastFailed'));
       }
     }
     finally { setPendingItem(null); }
@@ -795,7 +802,7 @@ export default function OrdersPage() {
           <div className="flex items-start justify-between gap-2">
             <div className="text-[12px] font-black flex items-center gap-1">
               <ShoppingBag size={12} />
-              {order.table ? `Table ${order.table.number}` : order.isParcel ? 'Parcel' : 'Counter'}
+              {order.table ? t('orders.cardTable', { number: order.table.number }) : order.isParcel ? t('orders.cardParcel') : t('orders.cardCounter')}
             </div>
             <span className="flex items-center gap-1 text-[10px] font-bold">
               <Clock size={10} /> {elapsed(order.createdAt)}
@@ -803,7 +810,7 @@ export default function OrdersPage() {
           </div>
           <div className="mt-0.5 flex items-center justify-between gap-2">
             {order.tokenNumber != null && (
-              <p className="text-[11px] font-bold">Token #{order.tokenNumber}</p>
+              <p className="text-[11px] font-bold">{t('orders.cardTokenNumber', { number: order.tokenNumber })}</p>
             )}
             <p className="text-[10px] opacity-80">{new Date(order.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</p>
           </div>
@@ -824,7 +831,7 @@ export default function OrdersPage() {
                 <span
                   className="w-2.5 h-2.5 rounded-sm shrink-0"
                   style={{ background: its.dot }}
-                  title={its.label}
+                  title={t(`orders.${its.labelKey}`)}
                 />
                 <div className="flex-1 min-w-0">
                   <p className="text-[12px] font-semibold text-slate-800 truncate">
@@ -842,7 +849,7 @@ export default function OrdersPage() {
                     onClick={(e) => { e.stopPropagation(); advanceItem(order.id, item.id, next.status); }}
                     disabled={busy}
                     className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-slate-600 border border-slate-200 hover:bg-slate-50 disabled:opacity-50"
-                    title={`Mark ${next.label}`}
+                    title={t('orders.cardMarkTitle', { label: t(`orders.${next.labelKey}`) })}
                   >
                     →
                   </button>
@@ -851,7 +858,7 @@ export default function OrdersPage() {
             );
           })}
           {cardItems.length === 0 && (
-            <p className="text-[10px] text-slate-400 italic text-center py-2">No items for your station</p>
+            <p className="text-[10px] text-slate-400 italic text-center py-2">{t('orders.cardNoStationItems')}</p>
           )}
         </div>
 
@@ -865,9 +872,9 @@ export default function OrdersPage() {
               <button
                 onClick={(e) => { e.stopPropagation(); advanceAll(e as any); }}
                 className="text-[10px] font-bold px-2 py-1 rounded-md bg-gold-500 hover:bg-gold-600 text-charcoal-900"
-                title={`Mark all items as ${commonNext.label}`}
+                title={t('orders.cardMarkAllAsTitle', { label: t(`orders.${commonNext.labelKey}`) })}
               >
-                All → {commonNext.label}
+                {t('orders.cardAllTo', { label: t(`orders.${commonNext.labelKey}`) })}
               </button>
             )}
             {isReadOnly && canAccept && order.status === 'CREATED' && (
@@ -876,7 +883,7 @@ export default function OrdersPage() {
                 disabled={saving}
                 className="text-[10px] font-bold px-2 py-1 rounded-md bg-brand-500 text-white"
               >
-                Accept
+                {t('orders.nextAccept')}
               </button>
             )}
           </div>
@@ -900,9 +907,13 @@ export default function OrdersPage() {
           "Orders" title; the rest of the action cluster (search, fullscreen,
           refresh) hugs the right edge. Wraps on small screens. */}
       <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
-        <h1 className="page-title m-0">Orders</h1>
+        <h1 className="page-title m-0">{t('orders.title')}</h1>
         <span className="text-xs text-slate-400 mr-2">
-          {orders.length} {tier === 'platform' ? 'across platform' : tier === 'business' ? 'across outlets' : 'today'}
+          {tier === 'platform'
+            ? t('orders.countPlatform', { count: orders.length })
+            : tier === 'business'
+              ? t('orders.countBusiness', { count: orders.length })
+              : t('orders.countToday', { count: orders.length })}
         </span>
 
         {/* Primary filter pills — multi-select. Click toggles in/out of the set. */}
@@ -911,7 +922,7 @@ export default function OrdersPage() {
           return (
             <button key={f} onClick={() => toggleFilter(f)}
               className={clsx('filter-pill', active ? 'filter-pill-active' : 'filter-pill-inactive')}>
-              {FILTER_LABEL[f] ?? STATUS[f]?.label}
+              {FILTER_LABEL_KEY[f] ? t(`orders.${FILTER_LABEL_KEY[f]}`) : t(`orders.${STATUS[f]?.labelKey}`)}
               {counts[f] > 0 && (
                 <span className={clsx('inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold ml-1',
                   active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500')}>
@@ -930,10 +941,12 @@ export default function OrdersPage() {
             const selectedSpecific = MORE_FILTERS.filter((f) => filterSet.has(f));
             const hasAny = selectedSpecific.length > 0;
             const label = !hasAny
-              ? 'Status'
+              ? t('orders.filterStatus')
               : selectedSpecific.length === 1
-                ? (FILTER_LABEL[selectedSpecific[0]] ?? STATUS[selectedSpecific[0]]?.label)
-                : `Status · ${selectedSpecific.length}`;
+                ? (FILTER_LABEL_KEY[selectedSpecific[0]]
+                    ? t(`orders.${FILTER_LABEL_KEY[selectedSpecific[0]]}`)
+                    : t(`orders.${STATUS[selectedSpecific[0]]?.labelKey}`))
+                : t('orders.filterStatusN', { count: selectedSpecific.length });
             return (
               <button
                 onClick={() => setStatusMenuOpen((v) => !v)}
@@ -962,7 +975,7 @@ export default function OrdersPage() {
                       active ? 'bg-brand-500 border-brand-500' : 'border-slate-300')}>
                       {active && <span className="w-1.5 h-1.5 rounded-sm bg-white" />}
                     </span>
-                    <span className="flex-1 truncate">{FILTER_LABEL[f] ?? STATUS[f]?.label}</span>
+                    <span className="flex-1 truncate">{FILTER_LABEL_KEY[f] ? t(`orders.${FILTER_LABEL_KEY[f]}`) : t(`orders.${STATUS[f]?.labelKey}`)}</span>
                     {counts[f] > 0 && (
                       <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">
                         {counts[f]}
@@ -984,7 +997,7 @@ export default function OrdersPage() {
               className="input py-1.5 text-xs"
               style={{ minWidth: 140 }}
             >
-              <option value="ALL">All outlets</option>
+              <option value="ALL">{t('orders.outletAll')}</option>
               {businessOutlets.map((o) => (
                 <option key={o.id} value={o.id}>{o.name}</option>
               ))}
@@ -1000,14 +1013,14 @@ export default function OrdersPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Escape') { setSearch(''); setSearchOpen(false); } }}
-                placeholder="Order #, table, customer, phone"
+                placeholder={t('orders.searchPlaceholder')}
                 className="input pl-7 pr-7 py-1.5 text-xs"
                 style={{ width: 180 }}
               />
               <button
                 onClick={() => { setSearch(''); setSearchOpen(false); }}
                 className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700"
-                title="Close search"
+                title={t('orders.searchClose')}
               >
                 <X size={12} />
               </button>
@@ -1016,7 +1029,7 @@ export default function OrdersPage() {
             <button
               onClick={() => setSearchOpen(true)}
               className="btn-ghost p-2 text-slate-500 hover:text-slate-800"
-              title="Search orders"
+              title={t('orders.searchTitle')}
             >
               <Search size={14} />
             </button>
@@ -1030,17 +1043,17 @@ export default function OrdersPage() {
               onChange={(e) => setSortBy(e.target.value as any)}
               className="input py-1.5 text-xs"
               style={{ width: 130 }}
-              title="Sort by"
+              title={t('orders.sortByTitle')}
             >
-              <option value="createdAt">Newest</option>
-              <option value="totalAmount">Total</option>
-              <option value="orderNumber">Order #</option>
-              <option value="status">Status</option>
+              <option value="createdAt">{t('orders.sortNewest')}</option>
+              <option value="totalAmount">{t('orders.sortTotal')}</option>
+              <option value="orderNumber">{t('orders.sortOrderNumber')}</option>
+              <option value="status">{t('orders.sortStatus')}</option>
             </select>
             <button
               onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
               className="btn-ghost p-2 text-slate-500 hover:text-slate-800"
-              title={sortDir === 'asc' ? 'Switch to descending' : 'Switch to ascending'}
+              title={sortDir === 'asc' ? t('orders.sortDescTitle') : t('orders.sortAscTitle')}
             >
               {sortDir === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
             </button>
@@ -1049,12 +1062,12 @@ export default function OrdersPage() {
           <button
             onClick={toggleFullscreen}
             className="btn-ghost p-2 text-slate-500 hover:text-slate-800"
-            title={fullscreen ? 'Exit full screen' : 'Full screen (good for landscape on mobile)'}
+            title={fullscreen ? t('orders.fullscreenExit') : t('orders.fullscreenEnter')}
           >
             {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
 
-          <button className="btn-ghost p-2 text-slate-500 hover:text-slate-800" onClick={fetchOrders} disabled={loading} title="Refresh">
+          <button className="btn-ghost p-2 text-slate-500 hover:text-slate-800" onClick={fetchOrders} disabled={loading} title={t('orders.refreshTitle')}>
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>
 
@@ -1071,10 +1084,10 @@ export default function OrdersPage() {
               }
               title={
                 socketPhase === 'connected'
-                  ? 'Real-time channel connected'
+                  ? t('orders.socketConnectedTitle')
                   : socketPhase === 'reconnecting'
-                    ? 'Reconnecting — orders will sync once the channel is back'
-                    : 'Real-time channel disconnected — orders may be stale'
+                    ? t('orders.socketReconnectingTitle')
+                    : t('orders.socketOfflineTitle')
               }
             >
               <span
@@ -1087,7 +1100,7 @@ export default function OrdersPage() {
                       : 'bg-red-500')
                 }
               />
-              {socketPhase === 'connected' ? 'Live' : socketPhase === 'reconnecting' ? 'Reconnecting' : 'Offline'}
+              {socketPhase === 'connected' ? t('orders.socketLive') : socketPhase === 'reconnecting' ? t('orders.socketReconnecting') : t('orders.socketOffline')}
             </span>
           )}
 
@@ -1104,15 +1117,15 @@ export default function OrdersPage() {
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
                   : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100',
               )}
-              title={printerReady ? 'Receipt printer paired — auto-print armed' : 'Tap to pair the receipt printer for this session'}
+              title={printerReady ? t('orders.printerPairedTitle') : t('orders.printerConnectTitle')}
             >
               <PrinterIcon size={11} />
-              {printerReady ? 'Printer ready' : 'Connect printer'}
+              {printerReady ? t('orders.printerReady') : t('orders.printerConnect')}
             </button>
           )}
 
           {isReadOnly && (
-            <span className="badge badge-slate"><Eye size={10} /> View only</span>
+            <span className="badge badge-slate"><Eye size={10} /> {t('orders.viewOnly')}</span>
           )}
         </div>
       </div>
@@ -1126,9 +1139,9 @@ export default function OrdersPage() {
           <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-200/60">
             <RefreshCw size={11} className="text-amber-700" />
           </span>
-          <span className="font-semibold">Offline — showing last-saved orders</span>
+          <span className="font-semibold">{t('orders.offlineBanner')}</span>
           <span className="text-amber-700/70">
-            cached {Math.max(0, Math.round((Date.now() - snapshotAge) / 60000))} min ago
+            {t('orders.offlineBannerCached', { minutes: Math.max(0, Math.round((Date.now() - snapshotAge) / 60000)) })}
           </span>
         </div>
       )}
@@ -1145,8 +1158,8 @@ export default function OrdersPage() {
       ) : filtered.length === 0 ? (
         <div className="card empty-state flex-shrink-0">
           <div className="empty-state-icon"><ShoppingBag size={22} className="text-slate-400" /></div>
-          <p className="text-sm font-semibold text-slate-600">No orders found</p>
-          <p className="text-xs text-slate-400 mt-1">Try adjusting your filter or search</p>
+          <p className="text-sm font-semibold text-slate-600">{t('orders.emptyTitle')}</p>
+          <p className="text-xs text-slate-400 mt-1">{t('orders.emptyHint')}</p>
         </div>
       ) : (
         <div className="flex gap-3 flex-1 min-h-0">
@@ -1178,28 +1191,34 @@ export default function OrdersPage() {
 
       {/* Detail modal */}
       <Modal open={!!detail} onClose={() => setDetail(null)}
-        title={`Order ${detail?.orderNumber}${detail?.tokenNumber != null ? `  ·  Token #${detail.tokenNumber}` : ''}`}
-        subtitle={detail?.table ? `Table ${detail.table.number}` : detail?.isParcel ? 'Parcel Order' : 'Counter Order'}
+        title={detail?.tokenNumber != null
+          ? t('orders.modalOrderTitleWithToken', { number: detail?.orderNumber, token: detail.tokenNumber })
+          : t('orders.modalOrderTitle', { number: detail?.orderNumber })}
+        subtitle={detail?.table
+          ? t('orders.modalSubtitleTable', { number: detail.table.number })
+          : detail?.isParcel
+            ? t('orders.modalSubtitleParcel')
+            : t('orders.modalSubtitleCounter')}
         size="lg"
         footer={
           isReadOnly ? (
             <div className="flex items-center justify-between w-full">
-              <span className="badge badge-slate"><Eye size={10} /> View only</span>
+              <span className="badge badge-slate"><Eye size={10} /> {t('orders.viewOnly')}</span>
               <div className="flex items-center gap-2">
                 {canAccept && detail?.status === 'CREATED' && (
                   <button onClick={() => advance(detail.id, 'QUEUED')} disabled={saving} className="btn-primary">
                     {saving && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-                    Accept <ArrowRight size={14} />
+                    {t('orders.nextAccept')} <ArrowRight size={14} />
                   </button>
                 )}
-                <button onClick={() => setDetail(null)} className="btn-secondary">Close</button>
+                <button onClick={() => setDetail(null)} className="btn-secondary">{t('orders.close')}</button>
               </div>
             </div>
           ) : (
             <div className="flex items-center gap-2 w-full">
               {detail && ['CREATED','QUEUED','PREPARING'].includes(detail.status) && (
                 <button onClick={() => { setDetail(null); setCancelTarget(detail); }} className="btn-danger btn-sm">
-                  <X size={13} /> Cancel
+                  <X size={13} /> {t('orders.cancel')}
                 </button>
               )}
               {detail
@@ -1210,9 +1229,9 @@ export default function OrdersPage() {
                   <button
                     onClick={() => setRefundTarget(detail)}
                     className="btn-secondary btn-sm"
-                    title="File a refund (partial or full) against this order"
+                    title={t('orders.refundTooltip')}
                   >
-                    <RotateCcw size={13} /> Refund
+                    <RotateCcw size={13} /> {t('orders.refund')}
                   </button>
                 )}
               {detail
@@ -1228,9 +1247,9 @@ export default function OrdersPage() {
                   <button
                     onClick={() => openSplitFor(detail, 2)}
                     className="btn-secondary btn-sm"
-                    title="Split the bill across multiple cash payers"
+                    title={t('orders.splitBillTooltip')}
                   >
-                    <UsersIcon size={13} /> Split bill
+                    <UsersIcon size={13} /> {t('orders.splitBill')}
                   </button>
                 )}
               <div className="flex-1" />
@@ -1250,12 +1269,12 @@ export default function OrdersPage() {
                 return (
                   <button onClick={() => advance(detail.id, step.next)} disabled={saving} className="btn-primary">
                     {saving && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-                    {step.label} <ArrowRight size={14} />
+                    {t(`orders.${step.labelKey}`)} <ArrowRight size={14} />
                   </button>
                 );
               })()}
               <button onClick={downloadDetailReceipt} className="btn-secondary">
-                <Download size={14} /> Download Receipt
+                <Download size={14} /> {t('orders.downloadReceipt')}
               </button>
               {outletPrint.allowManual && outletPrint.printerId && isBluetoothSupported() && (
                 <button
@@ -1263,14 +1282,14 @@ export default function OrdersPage() {
                   disabled={printing}
                   className="btn-secondary"
                   title={isAggregatorOrder(detail)
-                    ? 'Print a packing slip (items + quantities, no prices) for the delivery parcel'
-                    : 'Send the receipt to the configured bluetooth printer'}
+                    ? t('orders.printPackingSlipTitle')
+                    : t('orders.printReceiptTitle')}
                 >
                   {printing && <span className="w-3 h-3 border-2 border-slate-300 border-t-slate-700 rounded-full animate-spin" />}
-                  <PrinterIcon size={14} /> {isAggregatorOrder(detail) ? 'Print Packing Slip' : 'Print Receipt'}
+                  <PrinterIcon size={14} /> {isAggregatorOrder(detail) ? t('orders.printPackingSlip') : t('orders.printReceipt')}
                 </button>
               )}
-              <button onClick={() => setDetail(null)} className="btn-secondary">Close</button>
+              <button onClick={() => setDetail(null)} className="btn-secondary">{t('orders.close')}</button>
             </div>
           )
         }>
@@ -1280,7 +1299,7 @@ export default function OrdersPage() {
             <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl"
               style={{ background: STATUS[detail.status]?.bg, border: `1px solid ${STATUS[detail.status]?.border}` }}>
               <span className="w-2 h-2 rounded-full" style={{ background: STATUS[detail.status]?.dot }} />
-              <span className="text-sm font-semibold" style={{ color: STATUS[detail.status]?.text }}>{STATUS[detail.status]?.label}</span>
+              <span className="text-sm font-semibold" style={{ color: STATUS[detail.status]?.text }}>{t(`orders.${STATUS[detail.status]?.labelKey}`)}</span>
             </div>
 
             {/* Customer + tag + recognition insights. Direct customers
@@ -1362,7 +1381,7 @@ export default function OrdersPage() {
 
             {/* Items with per-item status */}
             <div className="space-y-2">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Items</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{t('orders.itemsHeading')}</p>
               {detail.items?.map((item: any) => {
                 const itemStatus = (item.status || 'PENDING') as ItemStatus;
                 const s    = ITEM_STATUS[itemStatus];
@@ -1392,14 +1411,14 @@ export default function OrdersPage() {
                               ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
                               : 'bg-slate-100 border-slate-200 text-slate-500',
                           )}
-                          title={item.sequenceNumber > (detail.activeSequence ?? 1) ? 'Held until prior course is served' : 'Active course'}
+                          title={item.sequenceNumber > (detail.activeSequence ?? 1) ? t('orders.courseHeldTitle') : t('orders.courseActiveTitle')}
                         >
-                          {(detail.sequenceLabels?.[String(item.sequenceNumber)] || `Course ${item.sequenceNumber}`)}
+                          {(detail.sequenceLabels?.[String(item.sequenceNumber)] || t('orders.courseLabel', { n: item.sequenceNumber }))}
                         </span>
                       )}
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
                         style={{ background: s.bg, color: s.text, border: `1px solid ${s.border}` }}>
-                        {s.label}
+                        {t(`orders.${s.labelKey}`)}
                       </span>
                       <p className="text-sm font-bold text-slate-900 ml-1">₹{Number(item.totalPrice).toFixed(0)}</p>
                     </div>
@@ -1429,14 +1448,14 @@ export default function OrdersPage() {
                                                               'linear-gradient(135deg,#0B4245,#073032)',
                             }}
                           >
-                            <next.icon size={12} /> {next.label}
+                            <next.icon size={12} /> {t(`orders.${next.labelKey}`)}
                           </button>
                         )}
                         <button
                           onClick={() => advanceItem(detail.id, item.id, 'CANCELLED')}
                           disabled={isBusy}
                           className="text-xs text-red-500 hover:bg-red-50 px-2 py-1.5 rounded-lg"
-                          title="Cancel item"
+                          title={t('orders.cancelItemTitle')}
                         >
                           <X size={12} />
                         </button>
@@ -1448,17 +1467,17 @@ export default function OrdersPage() {
             </div>
             {/* Totals */}
             <div className="border-t border-slate-100 pt-3 space-y-1.5">
-              <div className="flex justify-between text-xs text-slate-500"><span>Subtotal</span><span>₹{Number(detail.subtotal).toFixed(2)}</span></div>
+              <div className="flex justify-between text-xs text-slate-500"><span>{t('orders.subtotal')}</span><span>₹{Number(detail.subtotal).toFixed(2)}</span></div>
               {Number(detail.taxAmount) > 0 && (
                 <>
-                  <div className="flex justify-between text-xs text-slate-500"><span>SGST</span><span>₹{Number(detail.sgstAmount ?? Number(detail.taxAmount) / 2).toFixed(2)}</span></div>
-                  <div className="flex justify-between text-xs text-slate-500"><span>CGST</span><span>₹{Number(detail.cgstAmount ?? Number(detail.taxAmount) / 2).toFixed(2)}</span></div>
+                  <div className="flex justify-between text-xs text-slate-500"><span>{t('orders.sgst')}</span><span>₹{Number(detail.sgstAmount ?? Number(detail.taxAmount) / 2).toFixed(2)}</span></div>
+                  <div className="flex justify-between text-xs text-slate-500"><span>{t('orders.cgst')}</span><span>₹{Number(detail.cgstAmount ?? Number(detail.taxAmount) / 2).toFixed(2)}</span></div>
                 </>
               )}
               {Number(detail.parcelAmount) > 0 && (
-                <div className="flex justify-between text-xs text-slate-500"><span>Parcel</span><span>₹{Number(detail.parcelAmount).toFixed(2)}</span></div>
+                <div className="flex justify-between text-xs text-slate-500"><span>{t('orders.parcel')}</span><span>₹{Number(detail.parcelAmount).toFixed(2)}</span></div>
               )}
-              <div className="flex justify-between text-sm font-black text-slate-900 pt-1 border-t border-slate-100"><span>Total</span><span>₹{Number(detail.totalAmount).toFixed(2)}</span></div>
+              <div className="flex justify-between text-sm font-black text-slate-900 pt-1 border-t border-slate-100"><span>{t('orders.total')}</span><span>₹{Number(detail.totalAmount).toFixed(2)}</span></div>
             </div>
 
             {/* Payment breakdown */}
@@ -1468,14 +1487,14 @@ export default function OrdersPage() {
                 .filter((p: any) => p.status === 'SUCCESS')
                 .forEach((p: any) => { split[p.mode] = (split[p.mode] || 0) + Number(p.amount); });
               const labelFor: Record<string, string> = {
-                CASH: 'Cash', UPI: 'UPI', CARD: 'Card', WALLET: 'Wallet', NET_BANKING: 'Net Banking',
+                CASH: t('orders.payCash'), UPI: t('orders.payUpi'), CARD: t('orders.payCard'), WALLET: t('orders.payWallet'), NET_BANKING: t('orders.payNetBanking'),
               };
               const rows = Object.entries(split);
               if (rows.length === 0) return null;
               const paid = rows.reduce((s, [, v]) => s + v, 0);
               return (
                 <div className="border-t border-slate-100 pt-3 space-y-1.5">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Paid via</p>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{t('orders.paidVia')}</p>
                   {rows.map(([mode, amount]) => (
                     <div key={mode} className="flex justify-between text-xs">
                       <span className="text-slate-600">{labelFor[mode] || mode}</span>
@@ -1484,7 +1503,7 @@ export default function OrdersPage() {
                   ))}
                   {paid < Number(detail.totalAmount) && (
                     <div className="flex justify-between text-[11px] text-amber-600 font-semibold">
-                      <span>Balance due</span>
+                      <span>{t('orders.balanceDue')}</span>
                       <span>₹{(Number(detail.totalAmount) - paid).toFixed(2)}</span>
                     </div>
                   )}
@@ -1496,12 +1515,12 @@ export default function OrdersPage() {
                 basic status+time fallback baked into the order detail. */}
             {orderLog?.entries?.length ? (
               <div className="space-y-1.5">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Order log</p>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{t('orders.orderLog')}</p>
                 <div className="border border-slate-100 rounded-xl divide-y divide-slate-100 overflow-hidden">
                   {orderLog.entries.map((h: any) => (
                     <div key={h.id} className="flex items-center gap-3 px-3 py-2 text-xs bg-white">
                       <span className="w-2 h-2 rounded-full shrink-0" style={{ background: STATUS[h.status]?.dot }} />
-                      <span className="font-medium text-slate-700 min-w-[110px]">{STATUS[h.status]?.label || h.status}</span>
+                      <span className="font-medium text-slate-700 min-w-[110px]">{STATUS[h.status]?.labelKey ? t(`orders.${STATUS[h.status].labelKey}`) : h.status}</span>
                       <div className="flex-1 min-w-0">
                         {h.actor ? (
                           <span className="text-slate-600 truncate">
@@ -1509,7 +1528,7 @@ export default function OrdersPage() {
                             {h.actor.role && <span className="text-slate-400"> · {h.actor.role}</span>}
                           </span>
                         ) : (
-                          <span className="text-slate-400 italic">system</span>
+                          <span className="text-slate-400 italic">{t('orders.systemActor')}</span>
                         )}
                         {h.notes && (
                           <p className="text-[11px] text-slate-400 truncate">{h.notes}</p>
@@ -1524,11 +1543,11 @@ export default function OrdersPage() {
               </div>
             ) : detail.statusHistory?.length > 0 ? (
               <div className="space-y-1.5">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Timeline</p>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{t('orders.timeline')}</p>
                 {detail.statusHistory.map((h: any, i: number) => (
                   <div key={i} className="flex items-center gap-3 text-xs">
                     <span className="w-2 h-2 rounded-full shrink-0" style={{ background: STATUS[h.status]?.dot }} />
-                    <span className="font-medium text-slate-700">{STATUS[h.status]?.label}</span>
+                    <span className="font-medium text-slate-700">{STATUS[h.status]?.labelKey ? t(`orders.${STATUS[h.status].labelKey}`) : h.status}</span>
                     <span className="text-slate-400 ml-auto">{new Date(h.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
                 ))}
@@ -1540,13 +1559,13 @@ export default function OrdersPage() {
 
       {/* Cancel modal */}
       <Modal open={!!cancelTarget} onClose={() => { setCancelTarget(null); setCancelReason(''); }}
-        title="Cancel Order" subtitle={cancelTarget?.orderNumber} size="sm"
-        footer={<><button className="btn-secondary" onClick={() => setCancelTarget(null)}>Back</button><button className="btn-danger" onClick={cancelOrder} disabled={saving}>Cancel Order</button></>}>
+        title={t('orders.cancelOrderTitle')} subtitle={cancelTarget?.orderNumber} size="sm"
+        footer={<><button className="btn-secondary" onClick={() => setCancelTarget(null)}>{t('orders.back')}</button><button className="btn-danger" onClick={cancelOrder} disabled={saving}>{t('orders.cancelOrderConfirm')}</button></>}>
         <div className="space-y-3">
-          <p className="text-sm text-slate-600">This action cannot be undone.</p>
+          <p className="text-sm text-slate-600">{t('orders.cancelUndoWarning')}</p>
           <div>
-            <label className="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">Reason (optional)</label>
-            <textarea value={cancelReason} onChange={e => setCancelReason(e.target.value)} className="input resize-none" rows={2} placeholder="Customer requested, out of stock…" />
+            <label className="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">{t('orders.cancelReasonLabel')}</label>
+            <textarea value={cancelReason} onChange={e => setCancelReason(e.target.value)} className="input resize-none" rows={2} placeholder={t('orders.cancelReasonPlaceholder')} />
           </div>
         </div>
       </Modal>
@@ -1557,12 +1576,12 @@ export default function OrdersPage() {
       <Modal
         open={!!refundTarget}
         onClose={() => { setRefundTarget(null); setRefundAmount(''); setRefundReason(''); }}
-        title="Initiate Refund"
+        title={t('orders.refundTitle')}
         subtitle={refundTarget?.orderNumber}
         size="sm"
         footer={
           <>
-            <button className="btn-secondary" onClick={() => setRefundTarget(null)}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setRefundTarget(null)}>{t('orders.cancel')}</button>
             <button
               className="btn-danger"
               disabled={refundSubmitting || !refundAmount || Number(refundAmount) <= 0}
@@ -1575,18 +1594,18 @@ export default function OrdersPage() {
                     amount: Number(refundAmount),
                     reason: refundReason || undefined,
                   });
-                  toast.success('Refund filed — review on the Refunds page for approval');
+                  toast.success(t('orders.toastRefundFiled'));
                   setRefundTarget(null);
                   setRefundAmount('');
                   setRefundReason('');
                 } catch (e: any) {
-                  toast.error(e?.response?.data?.message || 'Refund failed');
+                  toast.error(e?.response?.data?.message || t('orders.toastRefundFailed'));
                 } finally {
                   setRefundSubmitting(false);
                 }
               }}
             >
-              <RotateCcw size={13} /> File Refund
+              <RotateCcw size={13} /> {t('orders.refundFileBtn')}
             </button>
           </>
         }
@@ -1649,12 +1668,12 @@ export default function OrdersPage() {
       <Modal
         open={!!splitTarget}
         onClose={() => { setSplitTarget(null); setSplitRows([]); }}
-        title="Split bill"
+        title={t('orders.splitBill')}
         subtitle={splitTarget?.orderNumber}
         size="sm"
         footer={
           <>
-            <button className="btn-secondary" onClick={() => setSplitTarget(null)}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setSplitTarget(null)}>{t('orders.cancel')}</button>
             <button
               className="btn-primary"
               disabled={
@@ -1681,7 +1700,7 @@ export default function OrdersPage() {
                       })),
                     },
                   );
-                  toast.success(`${splitRows.length} share${splitRows.length === 1 ? '' : 's'} sent`);
+                  toast.success(t('orders.toastSplitSent', { count: splitRows.length }));
                   setSplitTarget(null);
                   setSplitRows([]);
                   // Refresh the detail to show split counters + the
@@ -1693,7 +1712,7 @@ export default function OrdersPage() {
                   } catch { /* best-effort */ }
                   setShareReload((r) => r + 1);
                 } catch (err: any) {
-                  toast.error(err?.response?.data?.message || err?.message || 'Failed to create split');
+                  toast.error(err?.response?.data?.message || err?.message || t('orders.toastSplitFailed'));
                 } finally {
                   setSplitSubmitting(false);
                 }

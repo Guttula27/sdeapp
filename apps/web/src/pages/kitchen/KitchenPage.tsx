@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { Navigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { ChefHat, Timer, CheckCircle2, Flame, Play, Bell, BellOff, X, Utensils, ChevronDown, ChevronUp, Maximize2, Minimize2, Printer as PrinterIcon, Bluetooth, Volume2 } from 'lucide-react';
@@ -23,28 +24,31 @@ import {
 const ACTIVE_KITCHEN_STATUSES = ['CREATED', 'QUEUED', 'PREPARING', 'READY', 'OUT_FOR_SERVICE'] as const;
 const KITCHEN_FILTERS = ['ACTIVE', ...ACTIVE_KITCHEN_STATUSES, 'SERVED', 'CANCELLED'] as const;
 type KitchenFilter = typeof KITCHEN_FILTERS[number];
-const FILTER_LABEL: Record<KitchenFilter, string> = {
-  ACTIVE: 'Active',
-  CREATED: 'New',
-  QUEUED: 'Queued',
-  PREPARING: 'Preparing',
-  READY: 'Ready',
-  OUT_FOR_SERVICE: 'Out for Service',
-  SERVED: 'Served',
-  CANCELLED: 'Cancelled',
+// Filter labels are i18n key stems (kitchen.filter*) resolved at render time.
+const FILTER_KEY: Record<KitchenFilter, string> = {
+  ACTIVE:          'filterActive',
+  CREATED:         'filterNew',
+  QUEUED:          'filterQueued',
+  PREPARING:       'filterPreparing',
+  READY:           'filterReady',
+  OUT_FOR_SERVICE: 'filterOutForService',
+  SERVED:          'filterServed',
+  CANCELLED:       'filterCancelled',
 };
 
 type ItemStatus = 'PENDING' | 'PREPARING' | 'READY' | 'PACKED' | 'SERVED' | 'CANCELLED';
 
-const ITEM_STATUS: Record<ItemStatus, { label: string; bg: string; text: string; border: string; dot: string }> = {
-  PENDING:   { label: 'Pending',   bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', dot: '#94a3b8' },
-  PREPARING: { label: 'Preparing', bg: '#e8efef', text: '#04181a', border: '#D2E5DF', dot: '#0B4245' },
-  READY:     { label: 'Ready',     bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', dot: '#10b981' },
+// Item palette per status. Labels themselves come from t() so we split
+// the label key out of the visual config.
+const ITEM_STATUS: Record<ItemStatus, { bg: string; text: string; border: string; dot: string; labelKey: string }> = {
+  PENDING:   { bg: '#f1f5f9', text: '#475569', border: '#e2e8f0', dot: '#94a3b8', labelKey: 'itemPending' },
+  PREPARING: { bg: '#e8efef', text: '#04181a', border: '#D2E5DF', dot: '#0B4245', labelKey: 'itemPreparing' },
+  READY:     { bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0', dot: '#10b981', labelKey: 'itemReady' },
   // Parcel-only intermediate (parcel-desk packed it; waiting for
   // sibling items / order-level rollup to READY_FOR_PICKUP).
-  PACKED:    { label: 'Packed',    bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe', dot: '#3b82f6' },
-  SERVED:    { label: 'Served',    bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', dot: '#14b8a6' },
-  CANCELLED: { label: 'Cancelled', bg: '#fff1f2', text: '#be123c', border: '#fecdd3', dot: '#ef4444' },
+  PACKED:    { bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe', dot: '#3b82f6', labelKey: 'itemPacked' },
+  SERVED:    { bg: '#f0fdfa', text: '#0f766e', border: '#99f6e4', dot: '#14b8a6', labelKey: 'itemServed' },
+  CANCELLED: { bg: '#fff1f2', text: '#be123c', border: '#fecdd3', dot: '#ef4444', labelKey: 'itemCancelled' },
 };
 
 const NEXT_ITEM: Partial<Record<ItemStatus, ItemStatus>> = {
@@ -53,10 +57,10 @@ const NEXT_ITEM: Partial<Record<ItemStatus, ItemStatus>> = {
   READY:     'SERVED',
 };
 
-const NEXT_ITEM_LABEL: Partial<Record<ItemStatus, { label: string; icon: any }>> = {
-  PENDING:   { label: 'Start',  icon: Play },
-  PREPARING: { label: 'Ready',  icon: Bell },
-  READY:     { label: 'Served', icon: Utensils },
+const NEXT_ITEM_LABEL: Partial<Record<ItemStatus, { labelKey: string; icon: any }>> = {
+  PENDING:   { labelKey: 'nextStart',  icon: Play },
+  PREPARING: { labelKey: 'nextReady',  icon: Bell },
+  READY:     { labelKey: 'nextServed', icon: Utensils },
 };
 
 const STEP_ORDER: ItemStatus[] = ['PENDING', 'PREPARING', 'READY', 'SERVED'];
@@ -90,6 +94,7 @@ function kitchenSafeNote(raw?: string | null): string | null {
 }
 
 export default function KitchenPage() {
+  const { t } = useTranslation();
   const user = useSelector((s: RootState) => s.auth.user);
   const { tier } = useUserRole();
   // Business owners shouldn't operate kitchens — that's outlet-level.
@@ -211,21 +216,21 @@ export default function KitchenPage() {
 
   const connectStationPrinter = async () => {
     if (!printerId) {
-      toast.error('No printer assigned to this station');
+      toast.error(t('kitchen.toastNoPrinter'));
       return;
     }
     try {
       await connectPrinter(printerId);
-      setPrinterTick((t) => t + 1);
-      toast.success('Printer connected');
+      setPrinterTick((tk) => tk + 1);
+      toast.success(t('kitchen.toastPrinterConnected'));
     } catch (e: any) {
-      if (e?.name !== 'NotFoundError') toast.error(e?.message || 'Pairing cancelled');
+      if (e?.name !== 'NotFoundError') toast.error(e?.message || t('kitchen.toastPairingCancelled'));
     }
   };
 
   const printOrder = useCallback(async (orderId: string, silent = false) => {
     if (!printerId) {
-      if (!silent) toast.error('No printer assigned to this station');
+      if (!silent) toast.error(t('kitchen.toastNoPrinter'));
       return;
     }
     // Try to (re-)establish the BLE link before printing. Web Bluetooth
@@ -237,8 +242,8 @@ export default function KitchenPage() {
       await ensurePrinterConnected(printerId);
     } catch (e: any) {
       const msg = isPrinterPaired(printerId)
-        ? `Printer reconnect failed: ${e?.message ?? e}`
-        : 'Auto-print is on but the printer hasn’t been paired yet. Tap "Connect printer" once.';
+        ? t('kitchen.toastReconnectFailed', { msg: e?.message ?? String(e) })
+        : t('kitchen.toastNotPairedAuto');
       toast.error(msg);
       return;
     }
@@ -258,13 +263,13 @@ export default function KitchenPage() {
       for (const r of receipts) {
         await printReceipt(printerId, r);
       }
-      if (!silent) toast.success('Printed');
-      else if (receipts.length > 0) toast.success(`Auto-printed ${receipts.length} slip${receipts.length === 1 ? '' : 's'}`);
+      if (!silent) toast.success(t('kitchen.toastPrinted'));
+      else if (receipts.length > 0) toast.success(t('kitchen.toastAutoPrinted', { count: receipts.length }));
     } catch (e: any) {
-      if (!silent) toast.error(e?.message || e?.response?.data?.message || 'Print failed');
-      else toast.error(`Auto-print failed: ${e?.message ?? e}`);
+      if (!silent) toast.error(e?.message || e?.response?.data?.message || t('kitchen.toastPrintFailed'));
+      else toast.error(t('kitchen.toastAutoPrintFailed', { msg: e?.message ?? String(e) }));
     }
-  }, [printerId, myStations]);
+  }, [printerId, myStations, t]);
 
   // Per-item slip: prints a token-tagged ticket for a single OrderItem
   // — independent of the menu item's printSeparately flag. Lets kitchen
@@ -272,15 +277,15 @@ export default function KitchenPage() {
   // order) with its own token reference for table delivery.
   const printOrderItem = useCallback(async (orderId: string, itemId: string) => {
     if (!printerId) {
-      toast.error('No printer assigned to this station');
+      toast.error(t('kitchen.toastNoPrinter'));
       return;
     }
     try {
       await ensurePrinterConnected(printerId);
     } catch (e: any) {
       toast.error(isPrinterPaired(printerId)
-        ? `Printer reconnect failed: ${e?.message ?? e}`
-        : 'Printer not paired yet. Tap "Connect printer" once.');
+        ? t('kitchen.toastReconnectFailed', { msg: e?.message ?? String(e) })
+        : t('kitchen.toastNotPairedItem'));
       return;
     }
     try {
@@ -289,15 +294,15 @@ export default function KitchenPage() {
       });
       const receipts = res.data.data || [];
       if (receipts.length === 0) {
-        toast.error('Nothing to print');
+        toast.error(t('kitchen.toastNothingToPrint'));
         return;
       }
       for (const r of receipts) await printReceipt(printerId, r);
-      toast.success('Item slip printed');
+      toast.success(t('kitchen.toastItemSlipPrinted'));
     } catch (e: any) {
-      toast.error(e?.message || e?.response?.data?.message || 'Print failed');
+      toast.error(e?.message || e?.response?.data?.message || t('kitchen.toastPrintFailed'));
     }
-  }, [printerId]);
+  }, [printerId, t]);
 
   useEffect(() => { fetchForFilter(filter).catch(() => {}); }, [filter, fetchForFilter]);
 
@@ -329,7 +334,7 @@ export default function KitchenPage() {
           next.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
           return next;
         });
-        toast('🔔 New order!', { duration: 5000 });
+        toast(t('kitchen.toastNewOrder'), { duration: 5000 });
         // Audible bell. Guard on initialFetchDone so we don't ding on
         // the page-load batch of pre-existing PENDING orders. Mute /
         // volume read inside playKitchenBell — no extra check here.
@@ -394,22 +399,22 @@ export default function KitchenPage() {
         });
       }
       if (data.data?.rolledUp) {
-        toast.success(`Order moved to ${data.data.rolledUp}`);
+        toast.success(t('kitchen.toastOrderRolledUp', { status: data.data.rolledUp }));
       }
-    } catch (e: any) { toast.error(e.response?.data?.message || 'Update failed'); }
+    } catch (e: any) { toast.error(e.response?.data?.message || t('kitchen.toastUpdateFailed')); }
     finally { setPendingItem(null); }
   };
 
   const cancelItem = async (orderId: string, itemId: string) => {
-    if (!confirm('Cancel this item?')) return;
+    if (!confirm(t('kitchen.confirmCancelItem'))) return;
     setPendingItem(itemId);
     try {
       const { data } = await api.patch(`/outlets/${outletId}/orders/${orderId}/items/${itemId}/status`, { status: 'CANCELLED' });
       if (data.data?.order) {
         setOrders(p => p.map(o => o.id === orderId ? data.data.order : o));
       }
-      toast.success('Item cancelled');
-    } catch (e: any) { toast.error(e.response?.data?.message || 'Cancel failed'); }
+      toast.success(t('kitchen.toastItemCancelled'));
+    } catch (e: any) { toast.error(e.response?.data?.message || t('kitchen.toastCancelFailed')); }
     finally { setPendingItem(null); }
   };
 
@@ -489,15 +494,15 @@ export default function KitchenPage() {
             <ChefHat size={18} />
           </div>
           <div>
-            <h1 className="page-title">Kitchen Display</h1>
+            <h1 className="page-title">{t('kitchen.title')}</h1>
             <p className="page-subtitle">
               {myStations.length > 0
                 ? isMaster
-                  ? `${myStationName} (master) — all items`
+                  ? t('kitchen.subtitleMasterAllItems', { station: myStationName })
                   : myStations.length === 1
-                    ? `${myStationName} station only`
-                    : `${myStationName} stations`
-                : readOnly ? 'Per-item live tracking (view-only)' : 'Per-item live tracking'}
+                    ? t('kitchen.subtitleSingleStation', { station: myStationName })
+                    : t('kitchen.subtitleMultiStation', { stations: myStationName })
+                : readOnly ? t('kitchen.subtitleLiveReadOnly') : t('kitchen.subtitleLive')}
             </p>
           </div>
           {myStations.length > 0 && (
@@ -507,14 +512,14 @@ export default function KitchenPage() {
           )}
           {readOnly && (
             <span className="ml-1 text-[10px] font-bold px-2 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-              VIEW ONLY
+              {t('kitchen.viewOnly')}
             </span>
           )}
         </div>
         <div className="flex items-center gap-3">
           {visibleOrders.length > 0 && (
             <div className="flex items-center gap-2 bg-brand-50 border border-brand-200 text-brand-900 px-4 py-2 rounded-xl text-sm font-bold">
-              <Flame size={14} /> {visibleOrders.length} order{visibleOrders.length === 1 ? '' : 's'} active
+              <Flame size={14} /> {t('kitchen.activeCount', { count: visibleOrders.length })}
             </div>
           )}
           {/* Socket state pill. "Live" when the channel is healthy;
@@ -534,23 +539,23 @@ export default function KitchenPage() {
             }
             title={
               socketPhase === 'connected'
-                ? 'Real-time channel connected'
+                ? t('kitchen.socketTitleConnected')
                 : socketPhase === 'reconnecting'
-                  ? 'Reconnecting — orders will sync once the channel is back'
-                  : 'Real-time channel disconnected'
+                  ? t('kitchen.socketTitleReconnecting')
+                  : t('kitchen.socketTitleOffline')
             }
           >
             {socketPhase === 'connected' ? (
               <>
-                <span className="dot-live" /> Live
+                <span className="dot-live" /> {t('kitchen.socketLive')}
               </>
             ) : socketPhase === 'reconnecting' ? (
               <>
-                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" /> Reconnecting…
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" /> {t('kitchen.socketReconnecting')}
               </>
             ) : (
               <>
-                <span className="w-2 h-2 rounded-full bg-red-500" /> Offline
+                <span className="w-2 h-2 rounded-full bg-red-500" /> {t('kitchen.socketOffline')}
               </>
             )}
           </div>
@@ -566,10 +571,10 @@ export default function KitchenPage() {
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
                   : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100',
               )}
-              title={printerReady ? `${printerName} — ready` : 'Tap to pair the printer'}
+              title={printerReady ? t('kitchen.printerReadyTitle', { name: printerName }) : t('kitchen.printerConnectTitle')}
             >
               {printerReady ? <PrinterIcon size={13} /> : <Bluetooth size={13} />}
-              {printerReady ? (printerName || 'Printer ready') : 'Connect printer'}
+              {printerReady ? (printerName || t('kitchen.printerReadyLabel')) : t('kitchen.printerConnect')}
             </button>
           )}
           {/* Bell pill — tap to test, long-press / right-click flips
@@ -588,7 +593,7 @@ export default function KitchenPage() {
                 const next = !bellMuted;
                 setBellMuted(next);
                 setKitchenBellMuted(next);
-                toast(next ? 'Bell muted' : 'Bell on', { duration: 1500 });
+                toast(next ? t('kitchen.bellMutedToast') : t('kitchen.bellOnToast'), { duration: 1500 });
               }}
               className={clsx(
                 'flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border transition-colors',
@@ -597,16 +602,16 @@ export default function KitchenPage() {
                   : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100',
               )}
               title={bellMuted
-                ? 'Bell is muted — right-click to unmute'
-                : 'New-order bell on — tap to test, right-click to mute'}
+                ? t('kitchen.bellMutedTitle')
+                : t('kitchen.bellOnTitle')}
             >
               {bellMuted ? <BellOff size={13} /> : <Bell size={13} />}
-              {bellMuted ? 'Muted' : `Bell ${bellVolume}%`}
+              {bellMuted ? t('kitchen.bellMuted') : t('kitchen.bellOnWithVolume', { volume: bellVolume })}
             </button>
             {!bellMuted && (
               <div className="absolute right-0 top-full mt-1 z-20 hidden group-hover:block bg-white border border-slate-200 rounded-xl shadow-lg p-3 w-52">
                 <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                  <Volume2 size={12} /> Bell volume
+                  <Volume2 size={12} /> {t('kitchen.bellVolume')}
                 </div>
                 <input
                   type="range"
@@ -630,7 +635,7 @@ export default function KitchenPage() {
                     setKitchenBellMuted(true);
                   }}
                 >
-                  Mute bell
+                  {t('kitchen.bellMute')}
                 </button>
               </div>
             )}
@@ -638,7 +643,7 @@ export default function KitchenPage() {
           <button
             onClick={toggleFullscreen}
             className="btn-ghost p-2 text-slate-500 hover:text-slate-800"
-            title={fullscreen ? 'Exit full screen' : 'Full screen — good for kitchen monitors or landscape phones'}
+            title={fullscreen ? t('kitchen.fullscreenExit') : t('kitchen.fullscreenEnter')}
           >
             {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
@@ -653,7 +658,7 @@ export default function KitchenPage() {
             onClick={() => setFilter(f)}
             className={clsx('filter-pill', filter === f ? 'filter-pill-active' : 'filter-pill-inactive')}
           >
-            {FILTER_LABEL[f]}
+            {t(`kitchen.${FILTER_KEY[f]}`)}
           </button>
         ))}
       </div>
@@ -672,10 +677,9 @@ export default function KitchenPage() {
               <Utensils size={16} />
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-bold text-slate-800">Items to Prepare</p>
+              <p className="text-sm font-bold text-slate-800">{t('kitchen.itemsToPrepareTitle')}</p>
               <p className="text-xs text-slate-500 mt-0.5">
-                <span className="font-bold text-brand-800">{grandTotal}</span>{' '}
-                item{grandTotal === 1 ? '' : 's'} across {itemAggregates.length} variant{itemAggregates.length === 1 ? '' : 's'}
+                {t('kitchen.itemsSummary', { grand: grandTotal, variants: itemAggregates.length, count: grandTotal })}
               </p>
             </div>
             {/* Inline preview — top items as chips. Hidden on small
@@ -690,7 +694,7 @@ export default function KitchenPage() {
                 </span>
               ))}
               {itemAggregates.length > 4 && (
-                <span className="text-[11px] text-slate-400 shrink-0">+{itemAggregates.length - 4} more</span>
+                <span className="text-[11px] text-slate-400 shrink-0">{t('kitchen.moreItems', { count: itemAggregates.length - 4 })}</span>
               )}
             </div>
             <span className="text-slate-400 shrink-0 ml-1">
@@ -702,11 +706,11 @@ export default function KitchenPage() {
               <table className="w-full text-xs min-w-[420px]">
                 <thead className="text-slate-400 text-[10px] uppercase">
                   <tr>
-                    <th className="text-left font-bold py-1.5">Item</th>
-                    <th className="text-right font-bold py-1.5 px-2">Pending</th>
-                    <th className="text-right font-bold py-1.5 px-2">Preparing</th>
-                    <th className="text-right font-bold py-1.5 px-2">Ready</th>
-                    <th className="text-right font-bold py-1.5">Total</th>
+                    <th className="text-left font-bold py-1.5">{t('kitchen.colItem')}</th>
+                    <th className="text-right font-bold py-1.5 px-2">{t('kitchen.colPending')}</th>
+                    <th className="text-right font-bold py-1.5 px-2">{t('kitchen.colPreparing')}</th>
+                    <th className="text-right font-bold py-1.5 px-2">{t('kitchen.colReady')}</th>
+                    <th className="text-right font-bold py-1.5">{t('kitchen.colTotal')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -723,7 +727,7 @@ export default function KitchenPage() {
                     </tr>
                   ))}
                   <tr className="border-t-2 border-slate-200">
-                    <td className="py-1.5 font-bold text-slate-800" colSpan={4}>Total</td>
+                    <td className="py-1.5 font-bold text-slate-800" colSpan={4}>{t('kitchen.colTotal')}</td>
                     <td className="py-1.5 font-black text-slate-900 text-right">{grandTotal}</td>
                   </tr>
                 </tbody>
@@ -740,10 +744,14 @@ export default function KitchenPage() {
             <CheckCircle2 size={26} className="text-emerald-600" />
           </div>
           <p className="text-lg font-bold text-emerald-800">
-            {myStations.length > 0 ? `No ${myStationName} items pending` : filter === 'ACTIVE' ? 'Kitchen is clear!' : `No ${FILTER_LABEL[filter].toLowerCase()} orders`}
+            {myStations.length > 0
+              ? t('kitchen.emptyNoStationItems', { station: myStationName })
+              : filter === 'ACTIVE'
+                ? t('kitchen.clearKitchen')
+                : t('kitchen.emptyNoFilter', { filter: t(`kitchen.${FILTER_KEY[filter]}`).toLowerCase() })}
           </p>
           <p className="text-sm text-emerald-600 mt-1">
-            {filter === 'ACTIVE' ? 'No pending orders — great job! 🎉' : 'Try a different status.'}
+            {filter === 'ACTIVE' ? t('kitchen.clearGreatJob') : t('kitchen.clearTryDifferent')}
           </p>
         </div>
       ) : (
@@ -769,8 +777,8 @@ export default function KitchenPage() {
                           T#{order.tokenNumber}
                         </span>
                       )}
-                      {order.table && <p className="text-xs font-semibold text-slate-600">Table {order.table.number}</p>}
-                      {order.isParcel && <span className="badge badge-blue">Parcel</span>}
+                      {order.table && <p className="text-xs font-semibold text-slate-600">{t('kitchen.orderTable', { number: order.table.number })}</p>}
+                      {order.isParcel && <span className="badge badge-blue">{t('kitchen.orderParcel')}</span>}
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-0.5 shrink-0">
@@ -779,15 +787,15 @@ export default function KitchenPage() {
                     </div>
                     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap"
                       style={{ background: clr.badge, color: clr.badgeText }}>
-                      {m < 10 ? 'On time' : m < 20 ? 'Late' : 'Urgent!'}
+                      {m < 10 ? t('kitchen.timerOnTime') : m < 20 ? t('kitchen.timerLate') : t('kitchen.timerUrgent')}
                     </span>
                     {outletPrintCfg.allowManual && printerId && (
                       <button
                         onClick={() => printOrder(order.id)}
                         className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-50"
-                        title={printerReady ? 'Print kitchen receipt' : 'Tap "Connect printer" first'}
+                        title={printerReady ? t('kitchen.printBtnTitle') : t('kitchen.printPairFirst')}
                       >
-                        <PrinterIcon size={11} /> Print
+                        <PrinterIcon size={11} /> {t('kitchen.printBtn')}
                       </button>
                     )}
                   </div>
@@ -827,7 +835,7 @@ export default function KitchenPage() {
                               </div>
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
                                 style={{ background: s.bg, color: s.text, border: `1px solid ${s.border}` }}>
-                                {s.label}
+                                {t(`kitchen.${s.labelKey}`)}
                               </span>
                             </div>
 
@@ -872,7 +880,7 @@ export default function KitchenPage() {
                                       color: '#fff',
                                     }}
                                   >
-                                    <nextLabel.icon size={13} /> {nextLabel.label}
+                                    <nextLabel.icon size={13} /> {t(`kitchen.${nextLabel.labelKey}`)}
                                   </button>
                                 )}
                                 {outletPrintCfg.allowManual && printerId && (
@@ -880,7 +888,7 @@ export default function KitchenPage() {
                                     onClick={() => printOrderItem(order.id, item.id)}
                                     disabled={isBusy}
                                     className="w-8 h-8 inline-flex items-center justify-center text-slate-500 hover:bg-slate-100 rounded-lg transition-colors"
-                                    title={printerReady ? 'Print slip for this item' : 'Tap "Connect printer" first'}
+                                    title={printerReady ? t('kitchen.printItemSlipTitle') : t('kitchen.printPairFirst')}
                                   >
                                     <PrinterIcon size={13} />
                                   </button>
@@ -889,7 +897,7 @@ export default function KitchenPage() {
                                   onClick={() => cancelItem(order.id, item.id)}
                                   disabled={isBusy}
                                   className="w-8 h-8 inline-flex items-center justify-center text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                  title="Cancel item"
+                                  title={t('kitchen.cancelItem')}
                                 >
                                   <X size={14} />
                                 </button>

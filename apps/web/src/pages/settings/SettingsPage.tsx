@@ -13,26 +13,28 @@ import { RootState } from '../../store';
 import { useUserRole, UserTier } from '../../hooks/useUserRole';
 import api from '../../services/api';
 
-type Section = { to: string; icon: any; label: string; description: string };
+// Sections gated by tier. `labelKey` and `descKey` are i18n key stems
+// (settings.section*Label / settings.section*Desc) resolved at render time.
+type Section = { to: string; icon: any; labelKey: string; descKey: string };
 const SECTIONS_BY_TIER: Record<UserTier, Section[]> = {
   platform: [
-    { to: '/roles',              icon: Shield,         label: 'Roles',             description: 'Define roles and grant permissions' },
-    { to: '/languages',          icon: Languages,      label: 'Languages',         description: 'Enable supported platform languages' },
-    { to: '/integrations',       icon: Plug,           label: 'Integrations',      description: 'WhatsApp, SMS, Email and payment gateway providers' },
-    { to: '/template-approvals', icon: ClipboardCheck, label: 'Template Approvals', description: 'Review and approve templates from businesses & outlets' },
+    { to: '/roles',              icon: Shield,         labelKey: 'sectionRolesLabel',             descKey: 'sectionRolesDescPlatform' },
+    { to: '/languages',          icon: Languages,      labelKey: 'sectionLanguagesLabel',         descKey: 'sectionLanguagesDesc' },
+    { to: '/integrations',       icon: Plug,           labelKey: 'sectionIntegrationsLabel',      descKey: 'sectionIntegrationsDesc' },
+    { to: '/template-approvals', icon: ClipboardCheck, labelKey: 'sectionTemplateApprovalsLabel', descKey: 'sectionTemplateApprovalsDesc' },
   ],
   business: [
-    { to: '/roles',     icon: Shield,        label: 'Roles',     description: 'Roles for your business and outlets' },
-    { to: '/messaging', icon: MessageCircle, label: 'Messaging', description: 'WhatsApp, SMS and Email templates for customers' },
+    { to: '/roles',     icon: Shield,        labelKey: 'sectionRolesLabel',     descKey: 'sectionRolesDescBusiness' },
+    { to: '/messaging', icon: MessageCircle, labelKey: 'sectionMessagingLabel', descKey: 'sectionMessagingDesc' },
   ],
   outlet: [
-    { to: '/roles',       icon: Shield,     label: 'Roles',       description: 'Adjust permissions for outlet roles' },
-    { to: '/tags',        icon: Tag,        label: 'Tags',        description: 'Customer tags and tag-based pricing' },
-    { to: '/table-types', icon: LayoutGrid, label: 'Dine In Sections', description: 'Per-section pricing, menu availability and tables' },
-    { to: '/stations',    icon: Flame,      label: 'Stations',    description: 'Kitchen stations for item routing' },
-    { to: '/service-stations', icon: ConciergeBell, label: 'Service Stations', description: 'Floor staff grouped by dine-in section for table service' },
-    { to: '/toppings',    icon: Sandwich,   label: 'Toppings',    description: 'Topping groups and option pricing' },
-    { to: '/messaging',   icon: MessageCircle, label: 'Messaging', description: 'WhatsApp, SMS and Email templates for customers' },
+    { to: '/roles',       icon: Shield,     labelKey: 'sectionRolesLabel',       descKey: 'sectionRolesDescOutlet' },
+    { to: '/tags',        icon: Tag,        labelKey: 'sectionTagsLabel',        descKey: 'sectionTagsDesc' },
+    { to: '/table-types', icon: LayoutGrid, labelKey: 'sectionTableTypesLabel',  descKey: 'sectionTableTypesDesc' },
+    { to: '/stations',    icon: Flame,      labelKey: 'sectionStationsLabel',    descKey: 'sectionStationsDesc' },
+    { to: '/service-stations', icon: ConciergeBell, labelKey: 'sectionServiceStationsLabel', descKey: 'sectionServiceStationsDesc' },
+    { to: '/toppings',    icon: Sandwich,   labelKey: 'sectionToppingsLabel',    descKey: 'sectionToppingsDesc' },
+    { to: '/messaging',   icon: MessageCircle, labelKey: 'sectionMessagingLabel', descKey: 'sectionMessagingDesc' },
   ],
   kitchen: [],
   counter: [],
@@ -89,7 +91,7 @@ export default function SettingsPage() {
   const copyOutletCode = () => {
     if (!outletCode) return;
     navigator.clipboard?.writeText(outletCode);
-    toast.success(`Copied ${outletCode}`);
+    toast.success(t('settings.copiedTemplate', { code: outletCode }));
   };
 
   const saveLanguage = async (code: string) => {
@@ -98,9 +100,9 @@ export default function SettingsPage() {
       await api.patch('/users/me/language', { preferredLanguage: code });
       localStorage.setItem('preferredLanguage', code);
       await i18n.changeLanguage(code);
-      toast.success('Language updated');
+      toast.success(t('settings.languageUpdated'));
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to update language');
+      toast.error(e.response?.data?.message || t('settings.languageUpdateFailed'));
     }
   };
 
@@ -110,10 +112,10 @@ export default function SettingsPage() {
     setSaving(true);
     try {
       await api.patch(`/users/${user.id}`, { currentPassword: data.current, newPassword: data.next });
-      toast.success('Password updated');
+      toast.success(t('settings.passwordUpdated'));
       reset();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to update password');
+      toast.error(e.response?.data?.message || t('settings.passwordUpdateFailed'));
     } finally { setSaving(false); }
   };
 
@@ -131,14 +133,14 @@ export default function SettingsPage() {
           <div className="flex items-center gap-3 min-w-0">
             <div className="icon-wrap w-10 h-10 bg-brand-50 text-brand-600 shrink-0"><Building2 size={18} /></div>
             <div className="min-w-0">
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Outlet Reference Code</p>
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{t('settings.outletRefCode')}</p>
               <div className="flex items-center gap-2 mt-0.5">
                 <p className="font-mono font-black text-lg text-slate-900 tracking-wider">{outletCode}</p>
                 <button
                   type="button"
                   onClick={copyOutletCode}
                   className="btn-ghost p-1 text-slate-400 hover:text-brand-600"
-                  title="Copy code"
+                  title={t('settings.copyCode')}
                 >
                   <Copy size={14} />
                 </button>
@@ -152,13 +154,13 @@ export default function SettingsPage() {
       {/* Settings subsections — appears for tiers that have admin areas. */}
       {sections.length > 0 && (
         <div className="card p-5">
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Configuration</p>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">{t('settings.configuration')}</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {sections.map((s) => {
               const Icon = s.icon;
               return (
                 <Link
-                  key={s.to}
+                  key={s.to + s.labelKey}
                   to={s.to}
                   className="flex items-center gap-3 p-3 rounded-xl border border-slate-100 bg-white hover:bg-slate-50 hover:border-brand-200 transition-colors group"
                 >
@@ -166,8 +168,8 @@ export default function SettingsPage() {
                     <Icon size={16} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-slate-800">{s.label}</p>
-                    <p className="text-[11px] text-slate-500 truncate">{s.description}</p>
+                    <p className="text-sm font-semibold text-slate-800">{t(`settings.${s.labelKey}`)}</p>
+                    <p className="text-[11px] text-slate-500 truncate">{t(`settings.${s.descKey}`)}</p>
                   </div>
                   <ChevronRight size={14} className="text-slate-300 group-hover:text-brand-500 shrink-0" />
                 </Link>
@@ -190,10 +192,10 @@ export default function SettingsPage() {
           <p className="text-xl font-black text-slate-900">{user?.name}</p>
           {user?.role && <span className="badge badge-orange mt-1">{user.role.name}</span>}
           <div className="mt-4">
-            <InfoRow label="Phone"       value={user?.phone}      icon={Phone} />
-            <InfoRow label="Email"       value={user?.email}      icon={Mail} />
-            <InfoRow label="Role"        value={user?.role?.name} icon={Shield} />
-            {user?.businessId && <InfoRow label="Business ID" value={user.businessId} icon={Building2} />}
+            <InfoRow label={t('settings.phone')}       value={user?.phone}      icon={Phone} />
+            <InfoRow label={t('settings.email')}       value={user?.email}      icon={Mail} />
+            <InfoRow label={t('settings.role')}        value={user?.role?.name} icon={Shield} />
+            {user?.businessId && <InfoRow label={t('settings.businessId')} value={user.businessId} icon={Building2} />}
           </div>
         </div>
       </div>
@@ -223,7 +225,7 @@ export default function SettingsPage() {
         <div className="card p-6">
           <div className="flex items-center gap-2 mb-4">
             <Shield size={15} className="text-brand-500" />
-            <h2 className="text-sm font-bold text-slate-800">Permissions</h2>
+            <h2 className="text-sm font-bold text-slate-800">{t('settings.permissions')}</h2>
             <span className="badge badge-orange ml-auto">{user.role.responsibilities.length}</span>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -240,24 +242,28 @@ export default function SettingsPage() {
       <div className="card p-6">
         <div className="flex items-center gap-2 mb-5">
           <Lock size={15} className="text-slate-500" />
-          <h2 className="text-sm font-bold text-slate-800">Change Password</h2>
+          <h2 className="text-sm font-bold text-slate-800">{t('settings.changePassword')}</h2>
         </div>
         <form onSubmit={handleSubmit(changePassword)} className="space-y-4">
           {(['current', 'next', 'confirm'] as const).map(field => {
-            const labels = { current: 'Current Password', next: 'New Password', confirm: 'Confirm New Password' };
+            const labels = {
+              current: t('settings.currentPassword'),
+              next:    t('settings.newPassword'),
+              confirm: t('settings.confirmNewPassword'),
+            };
             return (
               <div key={field}>
                 <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">{labels[field]}</label>
                 <div className="relative">
                   <input
                     {...register(field, {
-                      required: 'Required',
-                      minLength: field !== 'current' ? { value: 6, message: 'Min 6 characters' } : undefined,
-                      validate: field === 'confirm' ? v => v === nextPw || 'Passwords do not match' : undefined,
+                      required: t('settings.pwRequired'),
+                      minLength: field !== 'current' ? { value: 6, message: t('settings.pwMin6') } : undefined,
+                      validate: field === 'confirm' ? v => v === nextPw || t('settings.pwMismatch') : undefined,
                     })}
                     type={showPw[field] ? 'text' : 'password'}
                     className="input pr-10"
-                    placeholder="••••••••"
+                    placeholder={t('settings.pwPlaceholder')}
                   />
                   <button type="button" onClick={() => togglePw(field)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                     {showPw[field] ? <EyeOff size={15} /> : <Eye size={15} />}
@@ -269,7 +275,7 @@ export default function SettingsPage() {
           })}
           <button type="submit" disabled={saving} className="btn-primary w-full mt-2">
             {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-            Update Password
+            {t('settings.updatePassword')}
           </button>
         </form>
       </div>
