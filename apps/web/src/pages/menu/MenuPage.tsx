@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useSelector } from 'react-redux';
+import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import {
@@ -77,6 +78,7 @@ async function resizeDataUrl(dataUrl: string, maxSize = 400, quality = 0.70): Pr
 
 /* ── main component ───────────────────────────────────────── */
 export default function MenuPage() {
+  const { t } = useTranslation();
   const user = useSelector((s: RootState) => s.auth.user);
   const { tier } = useUserRole();
   const isReadOnly = tier === 'counter';
@@ -399,19 +401,19 @@ export default function MenuPage() {
       }
       const num = price === '' ? Number(item.basePrice) : Number(price);
       if (!Number.isFinite(num) || num < 0) {
-        toast.error('Enter a valid non-negative price');
+        toast.error(t('menu.toastPriceInvalid'));
         return;
       }
       // Only persist gstRate if it actually differs from the inherited default,
       // otherwise null = inherit, so the item GST flows through later changes.
       const gstNum = !gstDiffersFromDefault || gst === '' ? null : Number(gst);
       if (gstNum != null && (!Number.isFinite(gstNum) || gstNum < 0 || gstNum > 100)) {
-        toast.error('GST must be between 0 and 100');
+        toast.error(t('menu.toastGstRange'));
         return;
       }
       await api.put(url, { price: num, gstRate: gstNum });
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed');
+      toast.error(e.response?.data?.message || t('menu.toastFailed'));
     }
   };
 
@@ -424,7 +426,7 @@ export default function MenuPage() {
           return savePriceCell(kind as 'tag' | 'tt', id, variantId, cell);
         }),
       );
-      toast.success('Price overrides updated');
+      toast.success(t('menu.toastPriceOverridesUpdated'));
       setTagPriceModal({ open: false });
       fetchMenu();
     } finally {
@@ -488,18 +490,18 @@ export default function MenuPage() {
     e.target.value = '';
     if (!file) return null;
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      toast.error('Only JPG, PNG or WebP images are allowed');
+      toast.error(t('menu.toastImagesOnly'));
       return null;
     }
     const limit = (opts.sizeLimitKB ?? 1024) * 1024;
     if (file.size > limit) {
-      toast.error(`Image is larger than ${(opts.sizeLimitKB ?? 1024)} KB`);
+      toast.error(t('menu.toastImageTooLarge', { kb: opts.sizeLimitKB ?? 1024 }));
       return null;
     }
     try {
       return await fileToDataUrl(file, opts.maxSize, opts.quality);
     } catch {
-      toast.error('Could not read that image');
+      toast.error(t('menu.toastImageReadFail'));
       return null;
     }
   };
@@ -543,14 +545,14 @@ export default function MenuPage() {
     try {
       if (catModal.editing) {
         await api.patch(`${menuBase}/categories/${catModal.editing.id}`, body);
-        toast.success('Category updated');
+        toast.success(t('menu.toastCategoryUpdated'));
       } else {
         await api.post(`${menuBase}/categories`, body);
-        toast.success('Category created');
+        toast.success(t('menu.toastCategoryCreated'));
       }
       setCatModal({ open: false });
       fetchMenu();
-    } catch (e: any) { toast.error(e.response?.data?.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.response?.data?.message || t('menu.toastFailed')); }
     finally { setSaving(false); }
   };
 
@@ -566,12 +568,12 @@ export default function MenuPage() {
       description: (form.get('description') as string || '').trim() || undefined,
       isActive: form.get('isActive') === 'on',
     };
-    if (!body.name) { toast.error('Menu name is required'); return; }
+    if (!body.name) { toast.error(t('menu.toastMenuNameRequired')); return; }
     setMenuBusy(true);
     try {
       if (menuModal.editing) {
         await api.patch(`/menus/${menuModal.editing.id}`, body);
-        toast.success('Menu updated');
+        toast.success(t('menu.toastMenuUpdated'));
       } else {
         const url = isTemplate
           ? `/businesses/${businessId}/menus`
@@ -580,23 +582,23 @@ export default function MenuPage() {
         if (!isTemplate && !outletId) return;
         const { data } = await api.post(url, body);
         setActiveMenuId(data.data.id);
-        toast.success('Menu created');
+        toast.success(t('menu.toastMenuCreated'));
       }
       setMenuModal({ open: false });
       fetchMenu();
-    } catch (e: any) { toast.error(e.response?.data?.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.response?.data?.message || t('menu.toastFailed')); }
     finally { setMenuBusy(false); }
   };
 
   const deleteMenu = async (menu: MenuRow) => {
-    if (menu.isDefault) { toast.error('Default menu cannot be deleted'); return; }
-    if (!confirm(`Delete menu "${menu.name}"? Categories must be moved or removed first.`)) return;
+    if (menu.isDefault) { toast.error(t('menu.toastDefaultCannotDelete')); return; }
+    if (!confirm(t('menu.confirmDeleteMenu', { name: menu.name }))) return;
     try {
       await api.delete(`/menus/${menu.id}`);
-      toast.success('Menu deleted');
+      toast.success(t('menu.toastMenuDeleted'));
       if (activeMenuId === menu.id) setActiveMenuId('');
       fetchMenu();
-    } catch (e: any) { toast.error(e.response?.data?.message || 'Failed to delete menu'); }
+    } catch (e: any) { toast.error(e.response?.data?.message || t('menu.toastFailedDeleteMenu')); }
   };
 
   // Persist the flag and refetch so tab visibility flips. Business tier
@@ -617,7 +619,7 @@ export default function MenuPage() {
       fetchMenu();
     } catch (e: any) {
       setMultipleMenusEnabled(!next);
-      toast.error(e.response?.data?.message || 'Failed to update setting');
+      toast.error(e.response?.data?.message || t('menu.toastFailedUpdateSetting'));
     }
   };
 
@@ -631,7 +633,7 @@ export default function MenuPage() {
     try {
       await api.patch(`/outlets/${outletId}/menus/${menu.id}`, { isEnabled: next });
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to update');
+      toast.error(e.response?.data?.message || t('menu.toastFailedUpdate'));
       fetchMenu();
     }
   };
@@ -649,14 +651,14 @@ export default function MenuPage() {
     try {
       if (subModal.editing) {
         await api.patch(`${menuBase}/subcategories/${subModal.editing.id}`, body);
-        toast.success('Subcategory updated');
+        toast.success(t('menu.toastSubcategoryUpdated'));
       } else {
         await api.post(`${menuBase}/categories/${subModal.categoryId}/subcategories`, body);
-        toast.success('Subcategory added');
+        toast.success(t('menu.toastSubcategoryAdded'));
       }
       setSubModal({ open: false });
       fetchMenu();
-    } catch (e: any) { toast.error(e.response?.data?.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.response?.data?.message || t('menu.toastFailed')); }
     finally { setSaving(false); }
   };
 
@@ -723,7 +725,7 @@ export default function MenuPage() {
     if (isBundleDraft && maxBundleSelectionsDraft > 0) {
       const componentCount = bundleChildrenDraft.filter((c) => c.childItemId).length;
       if (maxBundleSelectionsDraft > componentCount) {
-        toast.error(`"Customer picks N" can't exceed the ${componentCount} component${componentCount === 1 ? '' : 's'} you've added`);
+        toast.error(t('menu.toastBundleCap', { count: componentCount }));
         return;
       }
     }
@@ -733,11 +735,11 @@ export default function MenuPage() {
       if (itemModal.editing) {
         await api.patch(`${menuBase}/items/${itemModal.editing.id}`, body);
         itemId = itemModal.editing.id;
-        toast.success('Item updated');
+        toast.success(t('menu.toastItemUpdated'));
       } else {
         const { data } = await api.post(`${menuBase}/subcategories/${itemModal.subcategoryId}/items`, body);
         itemId = data.data.id;
-        toast.success('Item created');
+        toast.success(t('menu.toastItemCreated'));
       }
 
       // Sync gallery: delete removed, add new
@@ -814,7 +816,7 @@ export default function MenuPage() {
 
       setItemModal({ open: false });
       fetchMenu();
-    } catch (e: any) { toast.error(e.response?.data?.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.response?.data?.message || t('menu.toastFailed')); }
     finally { setSaving(false); }
   };
 
@@ -830,10 +832,10 @@ export default function MenuPage() {
     setSaving(true);
     try {
       await api.post(`${menuBase}/items/${varModal.itemId}/variants`, body);
-      toast.success('Variant added');
+      toast.success(t('menu.toastVariantAdded'));
       setVarModal({ open: false });
       fetchMenu();
-    } catch (e: any) { toast.error(e.response?.data?.message || 'Failed'); }
+    } catch (e: any) { toast.error(e.response?.data?.message || t('menu.toastFailed')); }
     finally { setSaving(false); }
   };
 
@@ -841,7 +843,7 @@ export default function MenuPage() {
   const toggleAvailability = async (itemId: string) => {
     await api.patch(`${menuBase}/items/${itemId}/availability`);
     fetchMenu();
-    toast.success('Availability updated');
+    toast.success(t('menu.toastAvailabilityUpdated'));
   };
 
   // ── Toggle visibility on customer menu ───────────────────
@@ -851,7 +853,7 @@ export default function MenuPage() {
   const toggleVisibility = async (itemId: string) => {
     await api.patch(`${menuBase}/items/${itemId}/visibility`);
     fetchMenu();
-    toast.success('Visibility updated');
+    toast.success(t('menu.toastVisibilityUpdated'));
   };
 
   // ── Add stock (limited-stock items only) ─────────────────
@@ -859,19 +861,19 @@ export default function MenuPage() {
   // stock by that amount. The backend auto-flips isAvailable back to true
   // once the count is > 0.
   const addStock = async (item: any) => {
-    const raw = window.prompt(`Add stock to "${item.name}". How many to add?`, '10');
+    const raw = window.prompt(t('menu.addStockPrompt', { name: item.name }), '10');
     if (raw == null) return;
     const qty = Math.floor(Number(raw));
     if (!Number.isFinite(qty) || qty <= 0) {
-      toast.error('Enter a whole number greater than 0');
+      toast.error(t('menu.toastStockPositive'));
       return;
     }
     try {
       await api.patch(`${menuBase}/items/${item.id}/stock`, { addQuantity: qty });
-      toast.success(`Added ${qty} to stock`);
+      toast.success(t('menu.toastStockAdded', { qty }));
       fetchMenu();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to add stock');
+      toast.error(e.response?.data?.message || t('menu.toastFailedAddStock'));
     }
   };
 
@@ -884,10 +886,10 @@ export default function MenuPage() {
       if (deleteTarget.type === 'subcategory') await api.delete(`${menuBase}/subcategories/${deleteTarget.id}`);
       if (deleteTarget.type === 'item')        await api.delete(`${menuBase}/items/${deleteTarget.id}`);
       if (deleteTarget.type === 'variant')     await api.delete(`${menuBase}/variants/${deleteTarget.id}`);
-      toast.success('Deleted');
+      toast.success(t('menu.toastDeleted'));
       setDeleteTarget(null);
       fetchMenu();
-    } catch (e: any) { toast.error(e.response?.data?.message || 'Delete failed'); }
+    } catch (e: any) { toast.error(e.response?.data?.message || t('menu.toastDeleteFailed')); }
     finally { setSaving(false); }
   };
 
@@ -917,7 +919,7 @@ export default function MenuPage() {
       await api.patch(`${menusBase}/reorder`, { orderedIds: reordered.map((m) => m.id) });
     } catch (e: any) {
       setMenus(menus); // rollback
-      toast.error(e?.response?.data?.message || 'Reorder failed');
+      toast.error(e?.response?.data?.message || t('menu.toastReorderFailed'));
     }
   };
 
@@ -946,7 +948,7 @@ export default function MenuPage() {
       });
     } catch (e: any) {
       setCategories(prev);
-      toast.error(e?.response?.data?.message || 'Reorder failed');
+      toast.error(e?.response?.data?.message || t('menu.toastReorderFailed'));
     }
   };
 
@@ -966,7 +968,7 @@ export default function MenuPage() {
       });
     } catch (e: any) {
       setCategories(prev);
-      toast.error(e?.response?.data?.message || 'Reorder failed');
+      toast.error(e?.response?.data?.message || t('menu.toastReorderFailed'));
     }
   };
 
@@ -989,7 +991,7 @@ export default function MenuPage() {
       });
     } catch (e: any) {
       setCategories(prev);
-      toast.error(e?.response?.data?.message || 'Reorder failed');
+      toast.error(e?.response?.data?.message || t('menu.toastReorderFailed'));
     }
   };
 
@@ -1030,10 +1032,10 @@ export default function MenuPage() {
       }
     }
     if (candidates.length === 0) {
-      toast.success('All images are already optimized — nothing to do');
+      toast.success(t('menu.toastImagesAllOptimized'));
       return;
     }
-    if (!confirm(`Re-compress ${candidates.length} item image${candidates.length === 1 ? '' : 's'} to 400px / 70% quality? Existing photos are reused, no re-upload needed.`)) {
+    if (!confirm(t('menu.confirmOptimize', { count: candidates.length }))) {
       return;
     }
     setOptimizing({ total: candidates.length, done: 0, saved: 0 });
@@ -1070,7 +1072,7 @@ export default function MenuPage() {
       setOptimizing({ total: candidates.length, done, saved: Math.round(totalSavedBytes / 1024) });
     }
     setOptimizing(null);
-    toast.success(`Optimized ${done} item${done === 1 ? '' : 's'} — freed ${(totalSavedBytes / 1024 / 1024).toFixed(1)} MB`);
+    toast.success(t('menu.toastOptimizedResult', { count: done, mb: (totalSavedBytes / 1024 / 1024).toFixed(1) }));
     fetchMenu();
   };
 
@@ -1127,7 +1129,7 @@ export default function MenuPage() {
       setBusinessTemplate(tree);
       setBusinessMenuList((bizMenus?.data?.data || []) as any[]);
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Could not load business menu');
+      toast.error(e.response?.data?.message || t('menu.toastLoadBusinessMenuFail'));
       setBusinessTemplate([]);
       setBusinessMenuList([]);
     } finally {
@@ -1280,7 +1282,7 @@ export default function MenuPage() {
   const runImportFromBusiness = async () => {
     if (!businessId || !outletId) return;
     if (importPickCats.size + importPickSubs.size + importPickItems.size === 0) {
-      toast.error('Pick at least one category, subcategory or item');
+      toast.error(t('menu.toastPickSomething'));
       return;
     }
     setImportBusinessBusy(true);
@@ -1299,14 +1301,14 @@ export default function MenuPage() {
       const totalCreated = (r.categories ?? 0) + (r.subcategories ?? 0) + (r.items ?? 0);
       toast.success(
         totalCreated === 0
-          ? 'Nothing new was imported — everything is already at this outlet'
-          : `Imported ${r.categories} categor${r.categories === 1 ? 'y' : 'ies'}, ${r.subcategories} subcategor${r.subcategories === 1 ? 'y' : 'ies'}, ${r.items} item${r.items === 1 ? '' : 's'}`,
+          ? t('menu.toastImportedNone')
+          : t('menu.toastImportedSummary', { cats: r.categories, subs: r.subcategories, items: r.items }),
       );
       await fetchMenu();
       // Refresh the tree so just-imported rows reflect in the alreadyImported flag.
       openImportFromBusiness();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Import failed');
+      toast.error(e.response?.data?.message || t('menu.toastImportFailed'));
     } finally {
       setImportBusinessBusy(false);
     }
@@ -1316,8 +1318,8 @@ export default function MenuPage() {
     return (
       <div className="card flex flex-col items-center py-20 text-center">
         <Store size={40} className="text-slate-200 mb-3" />
-        <p className="text-slate-500 font-medium">No outlet selected</p>
-        <p className="text-xs text-slate-400 mt-1">Create an outlet first to manage its menu.</p>
+        <p className="text-slate-500 font-medium">{t('menu.noOutletSelected')}</p>
+        <p className="text-xs text-slate-400 mt-1">{t('menu.noOutletHint')}</p>
       </div>
     );
   }
@@ -1325,7 +1327,7 @@ export default function MenuPage() {
     return (
       <div className="card flex flex-col items-center py-20 text-center">
         <Store size={40} className="text-slate-200 mb-3" />
-        <p className="text-slate-500 font-medium">No business attached to your account</p>
+        <p className="text-slate-500 font-medium">{t('menu.noBusinessAttached')}</p>
       </div>
     );
   }
@@ -1339,8 +1341,8 @@ export default function MenuPage() {
         <div className="flex items-center gap-3 min-w-0">
           {(() => {
             const brandName = isTemplate
-              ? (business?.name || 'Business Menu')
-              : (currentOutlet?.name || 'Menu');
+              ? (business?.name || t('menu.titleBusinessMenu'))
+              : (currentOutlet?.name || t('menu.titleMenu'));
             const brandLogo = isTemplate ? business?.logoUrl : currentOutlet?.logoUrl;
             const initial = (brandName || '?').charAt(0).toUpperCase();
             return brandLogo ? (
@@ -1358,13 +1360,13 @@ export default function MenuPage() {
           <div className="min-w-0">
             <h1 className="page-title truncate">
               {isTemplate
-                ? (business?.name || 'Business Menu (Template)')
-                : (currentOutlet?.name || 'Menu Management')}
+                ? (business?.name || t('menu.titleBusinessTemplate'))
+                : (currentOutlet?.name || t('menu.titleMenuManagement'))}
             </h1>
             <p className="page-subtitle">
               {isTemplate
-                ? `Master template · ${categories.length} categories · ${totalItems} items — outlets import from here`
-                : `Menu management · ${categories.length} categories · ${totalItems} items`}
+                ? t('menu.subtitleTemplate', { cats: categories.length, items: totalItems })
+                : t('menu.subtitleOutlet', { cats: categories.length, items: totalItems })}
             </p>
           </div>
         </div>
@@ -1381,7 +1383,7 @@ export default function MenuPage() {
             </select>
           )}
           {!isTemplate && !canSwitchOutlet && currentOutletName && (
-            <span className="badge badge-slate" title="Imports and edits land on this outlet">
+            <span className="badge badge-slate" title={t('menu.outletBadgeTitle')}>
               <Store size={11} /> {currentOutletName}
             </span>
           )}
@@ -1389,9 +1391,9 @@ export default function MenuPage() {
             <button
               className="btn-secondary"
               onClick={openImportFromBusiness}
-              title="Pick items from the business master menu"
+              title={t('menu.importFromBusinessTitle')}
             >
-              <Download size={15} /> Import from Business
+              <Download size={15} /> {t('menu.importFromBusiness')}
             </button>
           )}
           {!isReadOnly && totalItems > 0 && (
@@ -1399,20 +1401,20 @@ export default function MenuPage() {
               className="btn-ghost text-xs"
               onClick={optimizeAllImages}
               disabled={!!optimizing}
-              title="Re-compress old item images to the current size cap. Safe to run anytime."
+              title={t('menu.optimizeImagesTitle')}
             >
               {optimizing
-                ? `Optimizing ${optimizing.done}/${optimizing.total}…`
-                : 'Optimize images'}
+                ? t('menu.optimizing', { done: optimizing.done, total: optimizing.total })
+                : t('menu.optimizeImages')}
             </button>
           )}
           {!isReadOnly && (
             <button className="btn-primary" onClick={() => setCatModal({ open: true })}>
-              <Plus size={15} /> Add Category
+              <Plus size={15} /> {t('menu.addCategory')}
             </button>
           )}
           {isReadOnly && (
-            <span className="badge badge-slate"><Eye size={11} /> View only</span>
+            <span className="badge badge-slate"><Eye size={11} /> {t('menu.viewOnly')}</span>
           )}
         </div>
       </div>
@@ -1427,11 +1429,11 @@ export default function MenuPage() {
           <div className="flex items-center gap-2">
             <Layers size={16} className="text-brand-500" />
             <div>
-              <p className="text-sm font-semibold text-slate-800">Multiple Menus</p>
+              <p className="text-sm font-semibold text-slate-800">{t('menu.multipleMenusTitle')}</p>
               <p className="text-xs text-slate-500">
                 {isTemplate
-                  ? 'Run separate menus (e.g. Breakfast / Lunch) with their own categories and timings.'
-                  : 'Show multiple menus to customers and staff at this outlet. When off, only the default menu is visible.'}
+                  ? t('menu.multipleMenusDescTemplate')
+                  : t('menu.multipleMenusDescOutlet')}
               </p>
             </div>
           </div>
@@ -1483,7 +1485,7 @@ export default function MenuPage() {
                   )}
                 >
                   {m.name}
-                  {m.isDefault && <span className="text-[9px] uppercase tracking-wide opacity-70">default</span>}
+                  {m.isDefault && <span className="text-[9px] uppercase tracking-wide opacity-70">{t('menu.defaultBadge')}</span>}
                   {!m.isActive && <EyeOff size={11} />}
                 </button>
                 {isActive && !isReadOnly && (
@@ -1492,7 +1494,7 @@ export default function MenuPage() {
                       onClick={() => moveMenu(m.id, -1)}
                       disabled={mIdx === 0}
                       className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
-                      title="Move menu earlier"
+                      title={t('menu.moveMenuEarlier')}
                     >
                       <ChevronLeft size={13} />
                     </button>
@@ -1500,7 +1502,7 @@ export default function MenuPage() {
                       onClick={() => moveMenu(m.id, 1)}
                       disabled={mIdx === visibleMenus.length - 1}
                       className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
-                      title="Move menu later"
+                      title={t('menu.moveMenuLater')}
                     >
                       <ChevronRight size={13} />
                     </button>
@@ -1511,14 +1513,14 @@ export default function MenuPage() {
                     <button
                       onClick={() => setTimingsModal({ open: true, menu: m })}
                       className="btn-ghost p-1.5 ml-0.5"
-                      title="Edit timings"
+                      title={t('menu.editTimings')}
                     >
                       <Clock size={13} />
                     </button>
                     <button
                       onClick={() => setMenuModal({ open: true, editing: m })}
                       className="btn-ghost p-1.5"
-                      title="Edit menu"
+                      title={t('menu.editMenuTitle')}
                     >
                       <Edit2 size={13} />
                     </button>
@@ -1526,7 +1528,7 @@ export default function MenuPage() {
                       <button
                         onClick={() => deleteMenu(m)}
                         className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"
-                        title="Delete menu"
+                        title={t('menu.deleteMenuTitle')}
                       >
                         <Trash2 size={13} />
                       </button>
@@ -1545,7 +1547,7 @@ export default function MenuPage() {
                           'btn-ghost p-1.5 ml-0.5',
                           m.outletMenu?.isEnabled !== false ? 'text-emerald-600' : 'text-slate-400',
                         )}
-                        title={m.outletMenu?.isEnabled !== false ? 'Disable this menu at this outlet' : 'Enable this menu at this outlet'}
+                        title={m.outletMenu?.isEnabled !== false ? t('menu.disableMenuAtOutlet') : t('menu.enableMenuAtOutlet')}
                       >
                         {m.outletMenu?.isEnabled !== false ? <Eye size={13} /> : <EyeOff size={13} />}
                       </button>
@@ -1553,14 +1555,14 @@ export default function MenuPage() {
                     <button
                       onClick={() => setMenuModal({ open: true, editing: m })}
                       className="btn-ghost p-1.5"
-                      title="Rename menu"
+                      title={t('menu.renameMenu')}
                     >
                       <Edit2 size={13} />
                     </button>
                     <button
                       onClick={() => setTimingsModal({ open: true, menu: m })}
                       className="btn-ghost p-1.5"
-                      title="Outlet-level timing override"
+                      title={t('menu.outletTimingOverride')}
                     >
                       <Clock size={13} />
                     </button>
@@ -1574,7 +1576,7 @@ export default function MenuPage() {
               onClick={() => setMenuModal({ open: true })}
               className="ml-1 px-3 py-1.5 rounded-lg text-xs font-bold text-brand-600 hover:bg-brand-50 inline-flex items-center gap-1 shrink-0"
             >
-              <Plus size={13} /> New menu
+              <Plus size={13} /> {t('menu.newMenu')}
             </button>
           )}
         </div>
@@ -1586,18 +1588,18 @@ export default function MenuPage() {
       ) : categories.length === 0 ? (
         <div className="card flex flex-col items-center py-20 text-center">
           <UtensilsCrossed size={40} className="text-slate-200 mb-3" />
-          <p className="text-slate-500 font-medium">No menu yet</p>
+          <p className="text-slate-500 font-medium">{t('menu.noMenuYet')}</p>
           {!isReadOnly && (
             <>
               <p className="text-xs text-slate-400 mt-1">
                 {canImportFromBusiness
-                  ? 'Start from scratch or pick items from the business master menu.'
-                  : 'Start from scratch.'}
+                  ? t('menu.noMenuHintImport')
+                  : t('menu.noMenuHintScratch')}
               </p>
               <div className="flex items-center gap-2 mt-4">
-                <button className="btn-primary" onClick={() => setCatModal({ open: true })}><Plus size={14} /> Add first category</button>
+                <button className="btn-primary" onClick={() => setCatModal({ open: true })}><Plus size={14} /> {t('menu.addFirstCategory')}</button>
                 {canImportFromBusiness && (
-                  <button className="btn-secondary" onClick={openImportFromBusiness}><Download size={14} /> Import from Business</button>
+                  <button className="btn-secondary" onClick={openImportFromBusiness}><Download size={14} /> {t('menu.importFromBusiness')}</button>
                 )}
               </div>
             </>
@@ -1620,7 +1622,7 @@ export default function MenuPage() {
                     </div>
                     <div>
                       <p className="font-semibold text-slate-800">{cat.name}</p>
-                      <p className="text-xs text-slate-400">{catItems} item{catItems !== 1 ? 's' : ''}</p>
+                      <p className="text-xs text-slate-400">{t('menu.itemCount', { count: catItems })}</p>
                     </div>
                     {isOpen ? <ChevronDown size={15} className="text-slate-400 ml-2" /> : <ChevronRight size={15} className="text-slate-400 ml-2" />}
                   </button>
@@ -1630,7 +1632,7 @@ export default function MenuPage() {
                         onClick={() => moveCategory(cat.id, -1)}
                         disabled={catIdx === 0}
                         className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
-                        title="Move category up"
+                        title={t('menu.moveCategoryUp')}
                       >
                         <ChevronUp size={13} />
                       </button>
@@ -1638,7 +1640,7 @@ export default function MenuPage() {
                         onClick={() => moveCategory(cat.id, 1)}
                         disabled={catIdx === visibleCats.length - 1}
                         className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
-                        title="Move category down"
+                        title={t('menu.moveCategoryDown')}
                       >
                         <ChevronDown size={13} />
                       </button>
@@ -1646,19 +1648,19 @@ export default function MenuPage() {
                         onClick={() => setSubModal({ open: true, categoryId: cat.id })}
                         className="btn-ghost text-xs py-1.5 px-2 text-brand-600 hover:bg-brand-50"
                       >
-                        <Plus size={13} /> Sub
+                        <Plus size={13} /> {t('menu.subBtn')}
                       </button>
                       <button onClick={() => setCatModal({ open: true, editing: cat })} className="btn-ghost p-1.5"><Edit2 size={13} /></button>
                       <button
                         onClick={() => openNodeTimings('category', cat)}
                         className={clsx('btn-ghost p-1.5', (cat.timingSlots?.length ?? 0) > 0 ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:text-brand-600')}
                         title={(cat.timingSlots?.length ?? 0) > 0
-                          ? `${cat.timingSlots.length} timing slot${cat.timingSlots.length === 1 ? '' : 's'} — click to edit`
-                          : 'Set availability hours (overrides outlet default)'}
+                          ? t('menu.timingSlotsSet', { count: cat.timingSlots.length })
+                          : t('menu.setAvailabilityHours')}
                       >
                         <Clock size={13} />
                       </button>
-                      <button onClick={() => downloadMenuQr('category', cat.id, cat.name)} className="btn-ghost p-1.5 text-indigo-500 hover:bg-indigo-50" title="Download QR for this category"><QrCode size={13} /></button>
+                      <button onClick={() => downloadMenuQr('category', cat.id, cat.name)} className="btn-ghost p-1.5 text-indigo-500 hover:bg-indigo-50" title={t('menu.downloadQrCategoryTitle')}><QrCode size={13} /></button>
                       <button onClick={() => setDeleteTarget({ type: 'category', id: cat.id, name: cat.name })} className="btn-ghost p-1.5 text-red-400 hover:bg-red-50"><Trash2 size={13} /></button>
                     </div>
                   )}
@@ -1684,7 +1686,7 @@ export default function MenuPage() {
                                 onClick={() => moveSubcategory(cat.id, sub.id, -1)}
                                 disabled={subIdx === 0}
                                 className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
-                                title="Move subcategory up"
+                                title={t('menu.moveSubUp')}
                               >
                                 <ChevronUp size={12} />
                               </button>
@@ -1692,14 +1694,14 @@ export default function MenuPage() {
                                 onClick={() => moveSubcategory(cat.id, sub.id, 1)}
                                 disabled={subIdx === (cat.subcategories?.length || 0) - 1}
                                 className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
-                                title="Move subcategory down"
+                                title={t('menu.moveSubDown')}
                               >
                                 <ChevronDown size={12} />
                               </button>
                               <button
                                 onClick={() => setSubModal({ open: true, categoryId: cat.id, editing: sub })}
                                 className="btn-ghost p-1.5 text-slate-500 hover:text-brand-600"
-                                title="Edit subcategory"
+                                title={t('menu.editSubTitle')}
                               >
                                 <Edit2 size={12} />
                               </button>
@@ -1707,22 +1709,22 @@ export default function MenuPage() {
                                 onClick={() => openNodeTimings('subcategory', sub)}
                                 className={clsx('btn-ghost p-1.5', (sub.timingSlots?.length ?? 0) > 0 ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:text-brand-600')}
                                 title={(sub.timingSlots?.length ?? 0) > 0
-                                  ? `${sub.timingSlots.length} timing slot${sub.timingSlots.length === 1 ? '' : 's'} — click to edit`
-                                  : 'Set availability hours for this subcategory'}
+                                  ? t('menu.timingSlotsSet', { count: sub.timingSlots.length })
+                                  : t('menu.setAvailabilityHoursSub')}
                               >
                                 <Clock size={12} />
                               </button>
                               <button
                                 onClick={() => downloadMenuQr('subcategory', sub.id, sub.name)}
                                 className="btn-ghost p-1.5 text-indigo-500 hover:bg-indigo-50"
-                                title="Download QR for this subcategory"
+                                title={t('menu.downloadQrSubTitle')}
                               >
                                 <QrCode size={12} />
                               </button>
                               <button
                                 onClick={() => setDeleteTarget({ type: 'subcategory', id: sub.id, name: sub.name })}
                                 className="btn-ghost p-1.5 text-red-400 hover:bg-red-50"
-                                title="Delete subcategory"
+                                title={t('menu.deleteSubTitle')}
                               >
                                 <Trash2 size={12} />
                               </button>
@@ -1730,7 +1732,7 @@ export default function MenuPage() {
                                 onClick={() => setItemModal({ open: true, subcategoryId: sub.id })}
                                 className="btn-ghost text-xs py-1 px-2 text-brand-600 hover:bg-brand-50"
                               >
-                                <Plus size={12} /> Item
+                                <Plus size={12} /> {t('menu.itemBtn')}
                               </button>
                             </div>
                           )}
@@ -1755,18 +1757,26 @@ export default function MenuPage() {
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <FoodGradeDot grade={item.foodGrade} />
                                   <p className="text-sm font-semibold text-slate-800">{item.name}</p>
-                                  {item.isPopular && <span className="badge badge-orange text-[10px]"><Star size={8} fill="currentColor" /> Popular</span>}
-                                  {!item.isAvailable && <span className="badge badge-red text-[10px]">Unavailable</span>}
-                                  {!item.isDisplayed && <span className="badge badge-slate text-[10px] flex items-center gap-0.5"><EyeOff size={9} /> Hidden</span>}
-                                  {item.isBundle && <span className="badge text-[10px] bg-brand-50 text-brand-900 border border-brand-200">Bundle · {item.maxBundleSelections ? `pick ${item.maxBundleSelections}/${(item.bundleChildren || []).length}` : (item.bundleChildren || []).length}</span>}
+                                  {item.isPopular && <span className="badge badge-orange text-[10px]"><Star size={8} fill="currentColor" /> {t('menu.popular')}</span>}
+                                  {!item.isAvailable && <span className="badge badge-red text-[10px]">{t('menu.unavailable')}</span>}
+                                  {!item.isDisplayed && <span className="badge badge-slate text-[10px] flex items-center gap-0.5"><EyeOff size={9} /> {t('menu.hidden')}</span>}
+                                  {item.isBundle && (
+                                    <span className="badge text-[10px] bg-brand-50 text-brand-900 border border-brand-200">
+                                      {t('menu.bundleBadge', {
+                                        content: item.maxBundleSelections
+                                          ? t('menu.bundlePickOfTotal', { picks: item.maxBundleSelections, total: (item.bundleChildren || []).length })
+                                          : String((item.bundleChildren || []).length),
+                                      })}
+                                    </span>
+                                  )}
                                   {item.hasLimitedStock && (
                                     <span className={clsx(
                                       'badge text-[10px] flex items-center gap-1',
                                       item.availableQuantity > 0 ? 'badge-emerald' : 'badge-red',
                                     )}>
                                       {item.availableQuantity > 0
-                                        ? `${item.availableQuantity} left`
-                                        : 'Out of stock'}
+                                        ? t('menu.leftBadge', { count: item.availableQuantity })
+                                        : t('menu.outOfStock')}
                                     </span>
                                   )}
                                 </div>
@@ -1775,23 +1785,23 @@ export default function MenuPage() {
                                 )}
                                 <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                                   <span className="text-sm font-bold text-brand-600">₹{Number(item.basePrice).toFixed(0)}</span>
-                                  {item.preparationTime && <span className="text-xs text-slate-400">{item.preparationTime}m prep</span>}
+                                  {item.preparationTime && <span className="text-xs text-slate-400">{t('menu.prepMins', { mins: item.preparationTime })}</span>}
                                   {item.variants?.length > 0 && !isReadOnly && (
                                     <button
                                       onClick={() => setVarModal({ open: true, itemId: item.id })}
                                       className="text-xs text-indigo-600 hover:underline flex items-center gap-0.5"
                                     >
-                                      <Tag size={10} /> {item.variants.length} variant{item.variants.length > 1 ? 's' : ''} · + add
+                                      <Tag size={10} /> {item.variants.length === 1 ? t('menu.variantsAddBtn', { count: 1 }) : t('menu.variantsAddBtn_plural', { count: item.variants.length })}
                                     </button>
                                   )}
                                   {item.variants?.length > 0 && isReadOnly && (
                                     <span className="text-xs text-indigo-600 flex items-center gap-0.5">
-                                      <Tag size={10} /> {item.variants.length} variant{item.variants.length > 1 ? 's' : ''}
+                                      <Tag size={10} /> {t('menu.variantsReadOnly', { count: item.variants.length })}
                                     </span>
                                   )}
                                   {item.variants?.length === 0 && !isReadOnly && (
                                     <button onClick={() => setVarModal({ open: true, itemId: item.id })} className="text-xs text-indigo-500 hover:underline">
-                                      + add variant
+                                      {t('menu.addVariantInline')}
                                     </button>
                                   )}
                                 </div>
@@ -1813,7 +1823,7 @@ export default function MenuPage() {
                                         key={p.id}
                                         className="text-[11px] font-semibold text-white px-2 py-0.5 rounded-full flex items-center gap-1"
                                         style={{ background: p.customerTag.color }}
-                                        title={`${p.customerTag.name} price`}
+                                        title={t('menu.tagPriceTitle', { name: p.customerTag.name })}
                                       >
                                         <Tag size={9} /> {p.customerTag.name} · ₹{Number(p.price).toFixed(0)}
                                       </span>
@@ -1827,7 +1837,7 @@ export default function MenuPage() {
                                     onClick={() => moveItem(cat.id, sub.id, item.id, -1)}
                                     disabled={itemIdx === 0}
                                     className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
-                                    title="Move item up"
+                                    title={t('menu.moveItemUp')}
                                   >
                                     <ChevronUp size={13} />
                                   </button>
@@ -1835,7 +1845,7 @@ export default function MenuPage() {
                                     onClick={() => moveItem(cat.id, sub.id, item.id, 1)}
                                     disabled={itemIdx === (sub.items?.length || 0) - 1}
                                     className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
-                                    title="Move item down"
+                                    title={t('menu.moveItemDown')}
                                   >
                                     <ChevronDown size={13} />
                                   </button>
@@ -1843,7 +1853,7 @@ export default function MenuPage() {
                                     <button
                                       onClick={() => openTagPrices(item)}
                                       className="btn-ghost p-1.5 text-violet-500 hover:bg-violet-50"
-                                      title="Per-tag / section / variant pricing"
+                                      title={t('menu.perTagSectionVariantPricing')}
                                     >
                                       <IndianRupee size={13} />
                                     </button>
@@ -1851,7 +1861,7 @@ export default function MenuPage() {
                                   {item.hasLimitedStock && (
                                     <button
                                       onClick={() => addStock(item)}
-                                      title={`Add stock (currently ${item.availableQuantity} left)`}
+                                      title={t('menu.addStockTitle', { count: item.availableQuantity })}
                                       className="p-2 rounded-lg text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition-colors"
                                     >
                                       <PackagePlus size={14} />
@@ -1859,7 +1869,7 @@ export default function MenuPage() {
                                   )}
                                   <button
                                     onClick={() => toggleAvailability(item.id)}
-                                    title={item.isAvailable ? 'Available — tap to mark unavailable' : 'Unavailable — tap to mark available'}
+                                    title={item.isAvailable ? t('menu.availableTitle') : t('menu.unavailableTitle')}
                                     className={clsx('p-2 rounded-lg transition-colors', item.isAvailable ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-red-400 bg-red-50 hover:bg-red-100')}
                                   >
                                     {item.isAvailable ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
@@ -1867,8 +1877,8 @@ export default function MenuPage() {
                                   <button
                                     onClick={() => toggleVisibility(item.id)}
                                     title={item.isDisplayed
-                                      ? 'Visible on customer menu — tap to hide (item still usable inside bundles)'
-                                      : 'Hidden from customer menu — tap to show'}
+                                      ? t('menu.visibleTitle')
+                                      : t('menu.hiddenTitle')}
                                     className={clsx('p-2 rounded-lg transition-colors', item.isDisplayed ? 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100' : 'text-slate-400 bg-slate-100 hover:bg-slate-200')}
                                   >
                                     {item.isDisplayed ? <Eye size={14} /> : <EyeOff size={14} />}
@@ -1878,12 +1888,12 @@ export default function MenuPage() {
                                     onClick={() => openNodeTimings('item', item)}
                                     className={clsx('btn-ghost p-1.5', (item.timingSlots?.length ?? 0) > 0 ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:text-brand-600')}
                                     title={(item.timingSlots?.length ?? 0) > 0
-                                      ? `${item.timingSlots.length} timing slot${item.timingSlots.length === 1 ? '' : 's'} — click to edit`
-                                      : 'Set availability hours for this item'}
+                                      ? t('menu.timingSlotsSet', { count: item.timingSlots.length })
+                                      : t('menu.setAvailabilityHoursItem')}
                                   >
                                     <Clock size={13} />
                                   </button>
-                                  <button onClick={() => downloadMenuQr('item', item.id, item.name)} className="btn-ghost p-1.5 text-indigo-500 hover:bg-indigo-50" title="Download QR for this item"><QrCode size={13} /></button>
+                                  <button onClick={() => downloadMenuQr('item', item.id, item.name)} className="btn-ghost p-1.5 text-indigo-500 hover:bg-indigo-50" title={t('menu.downloadQrItemTitle')}><QrCode size={13} /></button>
                                   <button onClick={() => setDeleteTarget({ type: 'item', id: item.id, name: item.name })} className="btn-ghost p-1.5 text-red-400 hover:bg-red-50"><Trash2 size={13} /></button>
                                 </div>
                               )}
@@ -1894,8 +1904,8 @@ export default function MenuPage() {
                     ))}
                     {!cat.subcategories?.length && (
                       <p className="px-5 py-4 text-sm text-slate-400 italic">
-                        No subcategories{!isReadOnly && (
-                          <> — <button className="text-brand-500 hover:underline" onClick={() => setSubModal({ open: true, categoryId: cat.id })}>add one</button></>
+                        {t('menu.noSubcategories')}{!isReadOnly && (
+                          <> — <button className="text-brand-500 hover:underline" onClick={() => setSubModal({ open: true, categoryId: cat.id })}>{t('menu.addOne')}</button></>
                         )}
                       </p>
                     )}
@@ -1912,20 +1922,20 @@ export default function MenuPage() {
       <Modal
         open={catModal.open}
         onClose={() => setCatModal({ open: false })}
-        title={catModal.editing ? 'Edit Category' : 'New Category'}
+        title={catModal.editing ? t('menu.modalEditCategory') : t('menu.modalNewCategory')}
         footer={
           <>
-            <button className="btn-secondary" onClick={() => setCatModal({ open: false })}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setCatModal({ open: false })}>{t('menu.modalCancel')}</button>
             <button form="cat-form" type="submit" className="btn-primary" disabled={saving}>
               {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-              {catModal.editing ? 'Save Changes' : 'Create'}
+              {catModal.editing ? t('menu.modalSaveChanges') : t('menu.modalCreate')}
             </button>
           </>
         }
       >
         <form id="cat-form" onSubmit={saveCategory} className="space-y-4">
-          <Field label="Category Name">
-            <input name="name" defaultValue={catModal.editing?.name} required className="input" placeholder="e.g. Breakfast" />
+          <Field label={t('menu.fieldCategoryName')}>
+            <input name="name" defaultValue={catModal.editing?.name} required className="input" placeholder={t('menu.placeholderCatName')} />
           </Field>
         </form>
       </Modal>
@@ -1934,22 +1944,22 @@ export default function MenuPage() {
       <Modal
         open={subModal.open}
         onClose={() => setSubModal({ open: false })}
-        title={subModal.editing ? 'Edit Subcategory' : 'New Subcategory'}
+        title={subModal.editing ? t('menu.modalEditSubcategory') : t('menu.modalNewSubcategory')}
         footer={
           <>
-            <button className="btn-secondary" onClick={() => setSubModal({ open: false })}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setSubModal({ open: false })}>{t('menu.modalCancel')}</button>
             <button form="sub-form" type="submit" className="btn-primary" disabled={saving}>
               {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-              {subModal.editing ? 'Save' : 'Create'}
+              {subModal.editing ? t('menu.modalSave') : t('menu.modalCreate')}
             </button>
           </>
         }
       >
         <form id="sub-form" onSubmit={saveSubcategory} className="space-y-4">
-          <Field label="Subcategory Name">
-            <input name="name" defaultValue={subModal.editing?.name} required className="input" placeholder="e.g. South Indian" />
+          <Field label={t('menu.fieldSubcategoryName')}>
+            <input name="name" defaultValue={subModal.editing?.name} required className="input" placeholder={t('menu.placeholderSubName')} />
           </Field>
-          <Field label="Thumbnail">
+          <Field label={t('menu.fieldThumbnail')}>
             <input
               ref={subImageRef}
               type="file"
@@ -1966,13 +1976,13 @@ export default function MenuPage() {
                     onClick={() => subImageRef.current?.click()}
                     className="bg-white/90 text-slate-900 text-[10px] font-bold px-2 py-1 rounded-md"
                   >
-                    Change
+                    {t('menu.changeBtn')}
                   </button>
                   <button
                     type="button"
                     onClick={() => setSubImage(null)}
                     className="bg-red-500 text-white p-1 rounded-md"
-                    title="Remove"
+                    title={t('menu.removeBtn')}
                   >
                     <XIcon size={11} />
                   </button>
@@ -1985,10 +1995,10 @@ export default function MenuPage() {
                 className="w-28 h-28 rounded-xl border-2 border-dashed border-slate-300 hover:border-brand-400 hover:bg-brand-50/30 flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-brand-600 transition-colors"
               >
                 <ImagePlus size={20} />
-                <span className="text-[10px] font-semibold">Thumbnail</span>
+                <span className="text-[10px] font-semibold">{t('menu.thumbnailLabel')}</span>
               </button>
             )}
-            <p className="text-[11px] text-slate-400 mt-1.5">JPG / PNG / WebP. ≤300 KB. Shown on the customer Place Order screen.</p>
+            <p className="text-[11px] text-slate-400 mt-1.5">{t('menu.subImageHint')}</p>
           </Field>
         </form>
       </Modal>
@@ -1997,20 +2007,20 @@ export default function MenuPage() {
       <Modal
         open={itemModal.open}
         onClose={() => setItemModal({ open: false })}
-        title={itemModal.editing ? 'Edit Item' : 'New Menu Item'}
+        title={itemModal.editing ? t('menu.modalEditItem') : t('menu.modalNewItem')}
         size="lg"
         footer={
           <>
-            <button className="btn-secondary" onClick={() => setItemModal({ open: false })}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setItemModal({ open: false })}>{t('menu.modalCancel')}</button>
             <button form="item-form" type="submit" className="btn-primary" disabled={saving}>
               {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-              {itemModal.editing ? 'Save Changes' : 'Create Item'}
+              {itemModal.editing ? t('menu.modalSaveChanges') : t('menu.modalCreateItem')}
             </button>
           </>
         }
       >
         <form id="item-form" onSubmit={saveItem} className="space-y-4">
-          <Field label="Primary photo">
+          <Field label={t('menu.fieldPrimaryPhoto')}>
             <input
               ref={fileInputRef}
               type="file"
@@ -2027,13 +2037,13 @@ export default function MenuPage() {
                     onClick={() => fileInputRef.current?.click()}
                     className="bg-white/90 text-slate-900 text-[10px] font-bold px-2 py-1 rounded-md"
                   >
-                    Change
+                    {t('menu.changeBtn')}
                   </button>
                   <button
                     type="button"
                     onClick={() => setItemImage(null)}
                     className="bg-red-500 text-white p-1 rounded-md"
-                    title="Remove"
+                    title={t('menu.removeBtn')}
                   >
                     <XIcon size={11} />
                   </button>
@@ -2046,22 +2056,22 @@ export default function MenuPage() {
                 className="w-32 h-32 rounded-xl border-2 border-dashed border-slate-300 hover:border-brand-400 hover:bg-brand-50/30 flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-brand-600 transition-colors"
               >
                 <ImagePlus size={20} />
-                <span className="text-[10px] font-semibold">Primary photo</span>
+                <span className="text-[10px] font-semibold">{t('menu.primaryPhotoLabel')}</span>
               </button>
             )}
             <p className="text-[11px] text-slate-400 mt-1.5">
-              JPG, PNG or WebP, up to 4&nbsp;MB. The image will be auto-adjusted as needed to fit the platform's display specifications.
+              {t('menu.imageHint')}
             </p>
           </Field>
-          <Field label="Item Name">
-            <input name="name" defaultValue={itemModal.editing?.name} required className="input" placeholder="e.g. Masala Dosa" />
+          <Field label={t('menu.fieldItemName')}>
+            <input name="name" defaultValue={itemModal.editing?.name} required className="input" placeholder={t('menu.placeholderItemName')} />
           </Field>
-          <Field label="Food Grade">
+          <Field label={t('menu.fieldFoodGrade')}>
             <div className="flex gap-2">
               {[
-                { v: 'VEG',     l: 'Veg',     d: '#16a34a' },
-                { v: 'NON_VEG', l: 'Non-Veg', d: '#dc2626' },
-                { v: 'VEGAN',   l: 'Vegan',   d: '#0d9488' },
+                { v: 'VEG',     l: t('menu.foodGradeVeg'),    d: '#16a34a' },
+                { v: 'NON_VEG', l: t('menu.foodGradeNonVeg'), d: '#dc2626' },
+                { v: 'VEGAN',   l: t('menu.foodGradeVegan'),  d: '#0d9488' },
               ].map(g => (
                 <label key={g.v} className="flex items-center gap-2 px-3 py-2 border rounded-xl cursor-pointer hover:bg-slate-50 has-[:checked]:bg-brand-50 has-[:checked]:border-brand-300 flex-1">
                   <input
@@ -2077,31 +2087,31 @@ export default function MenuPage() {
               ))}
             </div>
           </Field>
-          <Field label="Short Description (≤ 50 chars)">
+          <Field label={t('menu.fieldShortDesc')}>
             <input
               name="shortDescription"
               maxLength={50}
               defaultValue={itemModal.editing?.shortDescription || ''}
               className="input"
-              placeholder="One-line teaser — shown in listings"
+              placeholder={t('menu.placeholderShortDesc')}
             />
-            <p className="text-[11px] text-slate-400 mt-1">Shown on the menu card.</p>
+            <p className="text-[11px] text-slate-400 mt-1">{t('menu.shortDescHint')}</p>
           </Field>
-          <Field label="Long Description (≤ 250 chars)">
+          <Field label={t('menu.fieldLongDesc')}>
             <textarea
               name="longDescription"
               maxLength={250}
               defaultValue={itemModal.editing?.longDescription || ''}
               rows={3}
               className="input resize-none"
-              placeholder="Detail view — ingredients, serving info, etc."
+              placeholder={t('menu.placeholderLongDesc')}
             />
-            <p className="text-[11px] text-slate-400 mt-1">Shown in the item detail view.</p>
+            <p className="text-[11px] text-slate-400 mt-1">{t('menu.longDescHint')}</p>
           </Field>
-          <Field label="Base Price (₹)">
-            <input name="basePrice" type="number" min="0" step="0.50" defaultValue={itemModal.editing?.basePrice} required className="input" placeholder="0.00" />
+          <Field label={t('menu.fieldBasePrice')}>
+            <input name="basePrice" type="number" min="0" step="0.50" defaultValue={itemModal.editing?.basePrice} required className="input" placeholder={t('menu.placeholderZeroDecimal')} />
           </Field>
-          <Field label="Default GST %">
+          <Field label={t('menu.fieldDefaultGst')}>
             <input
               key={`gst-${itemModal.editing?.id || 'new'}-${currentOutlet?.id || ''}`}
               name="gstRate"
@@ -2117,14 +2127,14 @@ export default function MenuPage() {
                     : ''
               }
               className="input"
-              placeholder="0"
+              placeholder={t('menu.placeholderZero')}
             />
             <p className="text-[11px] text-slate-400 mt-1">
-              Applied to this item by default. Customer tag / dine-in section can override below. SGST and CGST are auto-split 50/50 on the bill.
+              {t('menu.gstHint')}
             </p>
           </Field>
 
-          <Field label="Parcel">
+          <Field label={t('menu.fieldParcel')}>
             <label className="flex items-center gap-2 cursor-pointer mb-2">
               <input
                 type="checkbox"
@@ -2132,7 +2142,7 @@ export default function MenuPage() {
                 defaultChecked={itemModal.editing ? !!itemModal.editing.parcelAvailable : true}
                 className="w-4 h-4 accent-brand-500 rounded"
               />
-              <span className="text-sm font-medium text-slate-700">Available for parcel / takeaway</span>
+              <span className="text-sm font-medium text-slate-700">{t('menu.parcelAvailable')}</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer mb-2">
               <input
@@ -2141,7 +2151,7 @@ export default function MenuPage() {
                 defaultChecked={!!itemModal.editing?.useCustomParcelCharge}
                 className="w-4 h-4 accent-brand-500 rounded"
               />
-              <span className="text-xs text-slate-600">Use a custom parcel charge for this item (otherwise outlet default applies)</span>
+              <span className="text-xs text-slate-600">{t('menu.parcelCustomCharge')}</span>
             </label>
             <input
               name="parcelCharge"
@@ -2150,38 +2160,38 @@ export default function MenuPage() {
               step="0.50"
               defaultValue={itemModal.editing?.parcelCharge}
               className="input"
-              placeholder="Custom parcel charge (₹)"
+              placeholder={t('menu.placeholderCustomParcel')}
             />
           </Field>
 
-          <Field label="Preparation Time (minutes)">
-            <input name="preparationTime" type="number" min="1" defaultValue={itemModal.editing?.preparationTime} className="input" placeholder="e.g. 10" />
+          <Field label={t('menu.fieldPrepTime')}>
+            <input name="preparationTime" type="number" min="1" defaultValue={itemModal.editing?.preparationTime} className="input" placeholder={t('menu.placeholderPrepMins')} />
           </Field>
 
-          <Field label="Quantity unit">
+          <Field label={t('menu.fieldQuantityUnit')}>
             <select
               value={itemQuantityUnit}
               onChange={(e) => setItemQuantityUnit(e.target.value as any)}
               className="input"
             >
-              <option value="NUMBER">Number (count) — e.g. 1 dish, 2 dishes</option>
-              <option value="GRAMS">Weight — grams (g)</option>
-              <option value="MILLILITERS">Volume — millilitres (ml)</option>
+              <option value="NUMBER">{t('menu.quantityUnitNumber')}</option>
+              <option value="GRAMS">{t('menu.quantityUnitGrams')}</option>
+              <option value="MILLILITERS">{t('menu.quantityUnitMillilitres')}</option>
             </select>
             <p className="text-[11px] text-slate-400 mt-1">
               {itemQuantityUnit === 'NUMBER'
-                ? 'Default — customer picks how many.'
-                : 'Customer picks a portion size from the predefined list below.'}
+                ? t('menu.quantityUnitHintNumber')
+                : t('menu.quantityUnitHintPortion')}
             </p>
           </Field>
 
-          <Field label={itemQuantityUnit === 'NUMBER' ? 'Variants' : 'Available sizes'}>
+          <Field label={itemQuantityUnit === 'NUMBER' ? t('menu.fieldVariants') : t('menu.fieldAvailableSizes')}>
             <p className="text-[11px] text-slate-400 mb-2">
               {itemQuantityUnit === 'NUMBER'
-                ? 'Add sizes like Half / Full / Family. Each variant has its own price; short description is optional.'
+                ? t('menu.variantsHintNumber')
                 : itemQuantityUnit === 'GRAMS'
-                  ? 'Add portion sizes in grams (e.g. 100, 250, 500). The customer picks one.'
-                  : 'Add portion sizes in millilitres (e.g. 200, 400, 750). The customer picks one.'}
+                  ? t('menu.variantsHintGrams')
+                  : t('menu.variantsHintMillilitres')}
             </p>
             <div className="space-y-2">
               {variantsDraft.map((v, idx) => itemQuantityUnit !== 'NUMBER' ? (
@@ -2192,7 +2202,7 @@ export default function MenuPage() {
                         type="number"
                         min="1"
                         step="1"
-                        placeholder="Size"
+                        placeholder={t('menu.placeholderVariantSize')}
                         value={v.unitQuantity || ''}
                         onChange={(e) => setVariantsDraft((prev) => prev.map((x, i) => i === idx ? { ...x, unitQuantity: e.target.value } : x))}
                         className="input pr-10 text-sm py-1.5"
@@ -2205,7 +2215,7 @@ export default function MenuPage() {
                       type="number"
                       min="0"
                       step="0.50"
-                      placeholder="Price ₹"
+                      placeholder={t('menu.placeholderPriceRupees')}
                       value={v.price}
                       onChange={(e) => setVariantsDraft((prev) => prev.map((x, i) => i === idx ? { ...x, price: e.target.value } : x))}
                       className="input w-28 text-sm py-1.5"
@@ -2214,7 +2224,7 @@ export default function MenuPage() {
                       type="button"
                       onClick={() => setVariantsDraft((prev) => prev.filter((_, i) => i !== idx))}
                       className="btn-ghost p-1.5 text-slate-400 hover:text-red-500"
-                      title="Remove size"
+                      title={t('menu.removeSize')}
                     >
                       <Trash2 size={13} />
                     </button>
@@ -2224,7 +2234,7 @@ export default function MenuPage() {
                 <div key={v.id || `new-${idx}`} className="bg-slate-50 rounded-xl p-2.5 space-y-1.5">
                   <div className="flex items-center gap-2">
                     <input
-                      placeholder="Variant name (e.g. Large)"
+                      placeholder={t('menu.placeholderVariantNameSample')}
                       value={v.name}
                       onChange={e => setVariantsDraft(prev => prev.map((x, i) => i === idx ? { ...x, name: e.target.value } : x))}
                       className="input flex-1 text-sm py-1.5"
@@ -2233,7 +2243,7 @@ export default function MenuPage() {
                       type="number"
                       min="0"
                       step="0.50"
-                      placeholder="Price ₹"
+                      placeholder={t('menu.placeholderPriceRupees')}
                       value={v.price}
                       onChange={e => setVariantsDraft(prev => prev.map((x, i) => i === idx ? { ...x, price: e.target.value } : x))}
                       className="input w-28 text-sm py-1.5"
@@ -2242,13 +2252,13 @@ export default function MenuPage() {
                       type="button"
                       onClick={() => setVariantsDraft(prev => prev.filter((_, i) => i !== idx))}
                       className="btn-ghost p-1.5 text-slate-400 hover:text-red-500"
-                      title="Remove variant"
+                      title={t('menu.removeVariant')}
                     >
                       <Trash2 size={13} />
                     </button>
                   </div>
                   <input
-                    placeholder="Short description (optional, ≤ 80 chars)"
+                    placeholder={t('menu.placeholderVariantShortDescOptional')}
                     maxLength={80}
                     value={v.shortDescription}
                     onChange={e => setVariantsDraft(prev => prev.map((x, i) => i === idx ? { ...x, shortDescription: e.target.value } : x))}
@@ -2261,13 +2271,13 @@ export default function MenuPage() {
                 onClick={() => setVariantsDraft(prev => [...prev, { name: '', shortDescription: '', price: '', unitQuantity: '' }])}
                 className="text-xs font-semibold text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"
               >
-                <Plus size={12} /> {itemQuantityUnit === 'NUMBER' ? 'Add variant' : 'Add size'}
+                <Plus size={12} /> {itemQuantityUnit === 'NUMBER' ? t('menu.addVariant') : t('menu.addSize')}
               </button>
               {variantsDraft.length === 0 && (
                 <p className="text-xs text-slate-400 italic">
                   {itemQuantityUnit === 'NUMBER'
-                    ? 'No variants — item is sold at the base price.'
-                    : 'No sizes yet — add at least one portion size for the customer to pick from.'}
+                    ? t('menu.noVariants')
+                    : t('menu.noSizesYet')}
                 </p>
               )}
             </div>
@@ -2277,27 +2287,29 @@ export default function MenuPage() {
               can't be attached to a Business Menu (Template) item — the
               template gets copied into an outlet, and toppings are wired up
               there instead. */}
-          {!isTemplate && <Field label="Toppings">
+          {!isTemplate && <Field label={t('menu.fieldToppings')}>
             {outletToppings.length === 0 ? (
-              <p className="text-xs text-slate-400 italic">No toppings defined yet — create some in the Toppings page.</p>
+              <p className="text-xs text-slate-400 italic">{t('menu.noToppings')}</p>
             ) : (
               <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                {outletToppings.map((t: any) => {
-                  const d = itemToppingDraft[t.id] || { selected: false, priceAdd: '', isRequired: false };
+                {outletToppings.map((top: any) => {
+                  const d = itemToppingDraft[top.id] || { selected: false, priceAdd: '', isRequired: false };
                   return (
-                    <div key={t.id} className="flex items-center gap-2 bg-slate-50 rounded-lg px-2.5 py-2 border border-slate-100">
+                    <div key={top.id} className="flex items-center gap-2 bg-slate-50 rounded-lg px-2.5 py-2 border border-slate-100">
                       <input
                         type="checkbox"
                         checked={d.selected}
                         onChange={e =>
-                          setItemToppingDraft(p => ({ ...p, [t.id]: { ...d, selected: e.target.checked } }))
+                          setItemToppingDraft(p => ({ ...p, [top.id]: { ...d, selected: e.target.checked } }))
                         }
                         className="w-4 h-4 accent-brand-500 rounded"
                       />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-slate-700 truncate">{t.name}</p>
+                        <p className="text-sm font-medium text-slate-700 truncate">{top.name}</p>
                         <p className="text-[10px] text-slate-400">
-                          Base +₹{Number(t.basePriceAdd).toFixed(0)}{t.options.length ? ` · ${t.options.length} radio options` : ''}
+                          {top.options.length
+                            ? t('menu.toppingBaseWithOptions', { base: Number(top.basePriceAdd).toFixed(0), count: top.options.length })
+                            : t('menu.toppingBase', { base: Number(top.basePriceAdd).toFixed(0) })}
                         </p>
                       </div>
                       {d.selected && (
@@ -2306,24 +2318,24 @@ export default function MenuPage() {
                             type="number"
                             min="0"
                             step="0.50"
-                            placeholder={`+₹${Number(t.basePriceAdd).toFixed(0)}`}
+                            placeholder={`+₹${Number(top.basePriceAdd).toFixed(0)}`}
                             value={d.priceAdd}
                             onChange={e =>
-                              setItemToppingDraft(p => ({ ...p, [t.id]: { ...d, priceAdd: e.target.value } }))
+                              setItemToppingDraft(p => ({ ...p, [top.id]: { ...d, priceAdd: e.target.value } }))
                             }
                             className="input w-20 text-xs"
-                            title="Override the base price for this item (leave blank to use base)"
+                            title={t('menu.toppingOverrideTitle')}
                           />
                           <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer">
                             <input
                               type="checkbox"
                               checked={d.isRequired}
                               onChange={e =>
-                                setItemToppingDraft(p => ({ ...p, [t.id]: { ...d, isRequired: e.target.checked } }))
+                                setItemToppingDraft(p => ({ ...p, [top.id]: { ...d, isRequired: e.target.checked } }))
                               }
                               className="w-3 h-3 accent-brand-500 rounded"
                             />
-                            Required
+                            {t('menu.toppingRequired')}
                           </label>
                         </>
                       )}
@@ -2337,13 +2349,13 @@ export default function MenuPage() {
           <div className="flex flex-col gap-2">
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" name="isPopular" defaultChecked={itemModal.editing?.isPopular} className="w-4 h-4 accent-brand-500 rounded" />
-              <span className="text-sm font-medium text-slate-700">Manually mark as Popular</span>
-              <span className="text-[10px] text-slate-400">(auto: top-5 ordered are also marked)</span>
+              <span className="text-sm font-medium text-slate-700">{t('menu.markPopular')}</span>
+              <span className="text-[10px] text-slate-400">{t('menu.markPopularHint')}</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" name="isSpecial" defaultChecked={itemModal.editing?.isSpecial} className="w-4 h-4 accent-amber-500 rounded" />
-              <span className="text-sm font-medium text-slate-700">Mark as <span className="font-bold text-amber-600">Special</span></span>
-              <span className="text-[10px] text-slate-400">(shown under "Special" tab)</span>
+              <span className="text-sm font-medium text-slate-700">{t('menu.markSpecialPrefix')}<span className="font-bold text-amber-600">{t('menu.markSpecial')}</span></span>
+              <span className="text-[10px] text-slate-400">{t('menu.markSpecialHint')}</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -2352,8 +2364,8 @@ export default function MenuPage() {
                 defaultChecked={itemModal.editing ? itemModal.editing.isDisplayed !== false : true}
                 className="w-4 h-4 accent-indigo-500 rounded"
               />
-              <span className="text-sm font-medium text-slate-700">Visible on customer menu</span>
-              <span className="text-[10px] text-slate-400">(uncheck for bundle-only items, e.g. mini dosa)</span>
+              <span className="text-sm font-medium text-slate-700">{t('menu.visibleOnMenu')}</span>
+              <span className="text-[10px] text-slate-400">{t('menu.visibleOnMenuHint')}</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -2362,8 +2374,8 @@ export default function MenuPage() {
                 defaultChecked={!!itemModal.editing?.printSeparately}
                 className="w-4 h-4 accent-emerald-500 rounded"
               />
-              <span className="text-sm font-medium text-slate-700">Print as separate kitchen slip</span>
-              <span className="text-[10px] text-slate-400">(token + just this line — helps service identify items with custom toppings/variants)</span>
+              <span className="text-sm font-medium text-slate-700">{t('menu.printSeparately')}</span>
+              <span className="text-[10px] text-slate-400">{t('menu.printSeparatelyHint')}</span>
             </label>
           </div>
 
@@ -2388,29 +2400,29 @@ export default function MenuPage() {
       <Modal
         open={varModal.open}
         onClose={() => setVarModal({ open: false })}
-        title="Add Variant"
-        subtitle="e.g. Small / Medium / Large"
+        title={t('menu.modalAddVariantTitle')}
+        subtitle={t('menu.modalAddVariantSubtitle')}
         footer={
           <>
-            <button className="btn-secondary" onClick={() => setVarModal({ open: false })}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setVarModal({ open: false })}>{t('menu.modalCancel')}</button>
             <button form="var-form" type="submit" className="btn-primary" disabled={saving}>
               {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-              Add Variant
+              {t('menu.modalAddVariantBtn')}
             </button>
           </>
         }
       >
         <form id="var-form" onSubmit={saveVariant} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Variant Name">
-              <input name="name" required className="input" placeholder="e.g. Large" />
+            <Field label={t('menu.fieldVariantName')}>
+              <input name="name" required className="input" placeholder={t('menu.placeholderVariantName')} />
             </Field>
-            <Field label="Price (₹)">
-              <input name="price" type="number" min="0" step="0.50" required className="input" placeholder="0.00" />
+            <Field label={t('menu.fieldPrice')}>
+              <input name="price" type="number" min="0" step="0.50" required className="input" placeholder={t('menu.placeholderZeroDecimal')} />
             </Field>
           </div>
-          <Field label="Short Description (≤ 80 chars)">
-            <input name="shortDescription" maxLength={80} className="input" placeholder="e.g. Serves 2 — comes with chutney" />
+          <Field label={t('menu.fieldShortDesc')}>
+            <input name="shortDescription" maxLength={80} className="input" placeholder={t('menu.placeholderVariantShortDesc')} />
           </Field>
         </form>
       </Modal>
@@ -2419,26 +2431,28 @@ export default function MenuPage() {
       <Modal
         open={tagPriceModal.open}
         onClose={() => !saving && setTagPriceModal({ open: false })}
-        title={`Price & GST overrides — ${tagPriceModal.item?.name || ''}`}
-        subtitle={`Base ₹${Number(tagPriceModal.item?.basePrice || 0).toFixed(2)}${tagPriceModal.item?.gstRate != null ? ` · default GST ${Number(tagPriceModal.item.gstRate)}%` : ''}. Leave a cell blank to inherit the item default.`}
+        title={t('menu.priceModalTitleTemplate', { name: tagPriceModal.item?.name || '' })}
+        subtitle={tagPriceModal.item?.gstRate != null
+          ? t('menu.priceModalSubtitleWithGst', { price: Number(tagPriceModal.item?.basePrice || 0).toFixed(2), gst: Number(tagPriceModal.item.gstRate) })
+          : t('menu.priceModalSubtitle', { price: Number(tagPriceModal.item?.basePrice || 0).toFixed(2) })}
         size="md"
         footer={
           <>
-            <button className="btn-secondary" onClick={() => setTagPriceModal({ open: false })} disabled={saving}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setTagPriceModal({ open: false })} disabled={saving}>{t('menu.modalCancel')}</button>
             <button className="btn-primary" onClick={saveAllTagPrices} disabled={saving}>
               {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-              Save
+              {t('menu.modalSave')}
             </button>
           </>
         }
       >
         {customerTags.length === 0 && tableTypesList.length === 0 ? (
-          <p className="text-sm text-slate-500 py-6 text-center">No customer tags or dine-in sections defined for this outlet yet.</p>
+          <p className="text-sm text-slate-500 py-6 text-center">{t('menu.priceModalNoTags')}</p>
         ) : (
           <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
             {(() => {
               const rows: { variantId: string; label: string; basePrice: number }[] = [
-                { variantId: '', label: 'Base item', basePrice: Number(tagPriceModal.item?.basePrice || 0) },
+                { variantId: '', label: t('menu.priceBaseItem'), basePrice: Number(tagPriceModal.item?.basePrice || 0) },
                 ...((tagPriceModal.item?.variants || []) as any[]).map(v => ({
                   variantId: v.id,
                   label: v.name,
@@ -2448,20 +2462,20 @@ export default function MenuPage() {
               return rows.map(row => (
                 <div key={row.variantId || 'base'} className="bg-slate-50 rounded-xl p-3 space-y-2">
                   <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
-                    {row.label} <span className="text-slate-400 font-medium">· base ₹{row.basePrice.toFixed(2)}</span>
+                    {row.label} <span className="text-slate-400 font-medium">{t('menu.priceBasePrefix', { price: row.basePrice.toFixed(2) })}</span>
                   </p>
-                  {customerTags.map(t => {
-                    const key = `tag:${t.id}:${row.variantId}`;
+                  {customerTags.map(tag => {
+                    const key = `tag:${tag.id}:${row.variantId}`;
                     const cell = tagPriceDraft[key] || { price: '', gstRate: '' };
                     const setCell = (patch: Partial<PriceCellDraft>) =>
                       setTagPriceDraft(prev => ({ ...prev, [key]: { ...(prev[key] || { price: '', gstRate: '', inheritedGst: '' }), ...patch } }));
                     return (
-                      <div key={`tag-${t.id}`} className="flex items-center gap-2">
+                      <div key={`tag-${tag.id}`} className="flex items-center gap-2">
                         <span
                           className="inline-flex items-center gap-1 text-[11px] font-bold text-white px-2.5 py-1 rounded-full min-w-[110px] justify-center"
-                          style={{ background: t.color }}
+                          style={{ background: tag.color }}
                         >
-                          <Tag size={10} /> {t.name}
+                          <Tag size={10} /> {tag.name}
                         </span>
                         <div className="relative flex-1">
                           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">₹</span>
@@ -2469,7 +2483,7 @@ export default function MenuPage() {
                             type="number" min="0" step="0.50"
                             value={cell.price}
                             onChange={e => setCell({ price: e.target.value })}
-                            placeholder={`Base ₹${row.basePrice.toFixed(2)}`}
+                            placeholder={t('menu.priceBasePlaceholder', { price: row.basePrice.toFixed(2) })}
                             className="input pl-7"
                           />
                         </div>
@@ -2478,14 +2492,14 @@ export default function MenuPage() {
                             type="number" min="0" max="100" step="0.01"
                             value={cell.gstRate}
                             onChange={e => setCell({ gstRate: e.target.value })}
-                            placeholder="GST %"
+                            placeholder={t('menu.gstPercentPlaceholder')}
                             className="input pr-6 text-sm"
-                            title="Optional GST % for this tag — overrides item default"
+                            title={t('menu.gstTagTitle')}
                           />
                           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">%</span>
                         </div>
                         {(cell.price || cell.gstRate) && (
-                          <button type="button" onClick={() => setCell({ price: '', gstRate: cell.inheritedGst })} className="btn-ghost p-1.5 text-slate-400 hover:text-red-500" title="Clear override — inherit item default"><XIcon size={14} /></button>
+                          <button type="button" onClick={() => setCell({ price: '', gstRate: cell.inheritedGst })} className="btn-ghost p-1.5 text-slate-400 hover:text-red-500" title={t('menu.clearOverrideTitle')}><XIcon size={14} /></button>
                         )}
                       </div>
                     );
@@ -2509,9 +2523,9 @@ export default function MenuPage() {
                         <span
                           className="inline-flex items-center gap-1 text-[11px] font-bold text-white px-2.5 py-1 rounded-full min-w-[110px] justify-center"
                           style={{ background: tt.color }}
-                          title="Dine-in section"
+                          title={t('menu.dineInSectionTitle')}
                         >
-                          🪑 {tt.name}
+                          {t('menu.sectionChair', { name: tt.name })}
                         </span>
                         <div className="relative flex-1">
                           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">₹</span>
@@ -2519,7 +2533,7 @@ export default function MenuPage() {
                             type="number" min="0" step="0.50"
                             value={cell.price}
                             onChange={e => setCell({ price: e.target.value })}
-                            placeholder={`Base ₹${row.basePrice.toFixed(2)}`}
+                            placeholder={t('menu.priceBasePlaceholder', { price: row.basePrice.toFixed(2) })}
                             className="input pl-7"
                           />
                         </div>
@@ -2528,14 +2542,14 @@ export default function MenuPage() {
                             type="number" min="0" max="100" step="0.01"
                             value={cell.gstRate}
                             onChange={e => setCell({ gstRate: e.target.value })}
-                            placeholder="GST %"
+                            placeholder={t('menu.gstPercentPlaceholder')}
                             className="input pr-6 text-sm"
-                            title="Optional GST % for this dine-in section — overrides item default"
+                            title={t('menu.gstSectionTitle')}
                           />
                           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">%</span>
                         </div>
                         {(cell.price || cell.gstRate) && (
-                          <button type="button" onClick={() => setCell({ price: '', gstRate: cell.inheritedGst })} className="btn-ghost p-1.5 text-slate-400 hover:text-red-500" title="Clear override — inherit item default"><XIcon size={14} /></button>
+                          <button type="button" onClick={() => setCell({ price: '', gstRate: cell.inheritedGst })} className="btn-ghost p-1.5 text-slate-400 hover:text-red-500" title={t('menu.clearOverrideTitle')}><XIcon size={14} /></button>
                         )}
                       </div>
                     );
@@ -2552,9 +2566,9 @@ export default function MenuPage() {
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={confirmDelete}
-        title={`Delete ${deleteTarget?.type}`}
-        message={`Delete "${deleteTarget?.name}"? This cannot be undone.`}
-        confirmLabel="Delete"
+        title={t('menu.deleteConfirmTitle', { type: deleteTarget?.type ?? '' })}
+        message={t('menu.deleteConfirmMessage', { name: deleteTarget?.name ?? '' })}
+        confirmLabel={t('menu.deleteConfirmBtn')}
         danger
         loading={saving}
       />
@@ -2563,16 +2577,23 @@ export default function MenuPage() {
       <Modal
         open={importBusinessOpen}
         onClose={closeImportFromBusiness}
-        title={`Import from Business menu → ${currentOutletName || 'this outlet'}`}
-        subtitle="Pick a category, subcategory, or individual items. Picking a category brings its whole tree across (including empty subs). Imported rows are independent copies at this outlet — the business template is untouched."
+        title={currentOutletName
+          ? t('menu.importDialogTitle', { outlet: currentOutletName })
+          : t('menu.importDialogTitleFallback')}
+        subtitle={t('menu.importDialogSubtitle')}
         size="lg"
       >
         <div className="space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="text-xs text-slate-500">
               {importPickCats.size + importPickSubs.size + importPickItems.size === 0
-                ? 'Nothing picked yet. Use the checkboxes to select what to bring across.'
-                : `${importSelectionCount} new item${importSelectionCount === 1 ? '' : 's'} will be created. ${importPickCats.size} categor${importPickCats.size === 1 ? 'y' : 'ies'}, ${importPickSubs.size} subcategor${importPickSubs.size === 1 ? 'y' : 'ies'}, ${importPickItems.size} item-only pick${importPickItems.size === 1 ? '' : 's'}.`}
+                ? t('menu.importNothingPicked')
+                : t('menu.importSummaryLine', {
+                    n: importSelectionCount,
+                    cats: importPickCats.size,
+                    subs: importPickSubs.size,
+                    items: importPickItems.size,
+                  })}
             </p>
             <div className="flex items-center gap-1.5">
               <button
@@ -2581,22 +2602,26 @@ export default function MenuPage() {
                 onClick={clearImportSelection}
                 disabled={importPickCats.size + importPickSubs.size + importPickItems.size === 0}
               >
-                Clear selection
+                {t('menu.importClearSelection')}
               </button>
             </div>
           </div>
 
           {importBusinessSummary && (
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 text-xs text-emerald-700">
-              Imported {importBusinessSummary.categories} categor{importBusinessSummary.categories === 1 ? 'y' : 'ies'}, {importBusinessSummary.subcategories} subcategor{importBusinessSummary.subcategories === 1 ? 'y' : 'ies'}, {importBusinessSummary.items} item{importBusinessSummary.items === 1 ? '' : 's'} into your outlet.
+              {t('menu.importSummaryBanner', {
+                cats: importBusinessSummary.categories,
+                subs: importBusinessSummary.subcategories,
+                items: importBusinessSummary.items,
+              })}
             </div>
           )}
 
           {importTreeLoading ? (
-            <div className="py-6 text-center text-xs text-slate-500">Loading business menu…</div>
+            <div className="py-6 text-center text-xs text-slate-500">{t('menu.importLoadingBusiness')}</div>
           ) : !businessTemplate || businessTemplate.length === 0 ? (
             <div className="py-6 text-center text-xs text-slate-500">
-              The business hasn't published any categories yet.
+              {t('menu.importEmptyBusiness')}
             </div>
           ) : (() => {
             // Group categories by menuId so the dialog mirrors the same
@@ -2615,7 +2640,7 @@ export default function MenuPage() {
                 .sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0))
                 .map((m) => ({ id: m.id, name: m.name, isDefault: !!m.isDefault })),
               ...(catsByMenu.has('__unassigned__')
-                ? [{ id: '__unassigned__', name: 'Unassigned', isDefault: false }]
+                ? [{ id: '__unassigned__', name: t('menu.importUnassigned'), isDefault: false }]
                 : []),
             ];
             // Skip menus that have no categories — empty menus aren't
@@ -2650,10 +2675,10 @@ export default function MenuPage() {
                         <Layers size={14} className="text-brand-600 shrink-0" />
                         <p className="text-sm font-black text-slate-900 flex-1 tracking-tight">
                           {menu.name}
-                          {menu.isDefault && <span className="ml-1.5 text-[9px] uppercase tracking-wide opacity-60">default</span>}
+                          {menu.isDefault && <span className="ml-1.5 text-[9px] uppercase tracking-wide opacity-60">{t('menu.defaultBadge')}</span>}
                         </p>
                         <span className="text-[10px] font-semibold text-slate-500">
-                          {catsInMenu.length} categor{catsInMenu.length === 1 ? 'y' : 'ies'} · {totalItemsInMenu} item{totalItemsInMenu === 1 ? '' : 's'}
+                          {t('menu.importMenuMetrics', { cats: catsInMenu.length, items: totalItemsInMenu, count: catsInMenu.length })}
                         </span>
                       </label>
                       <div className="p-2 space-y-2">
@@ -2678,7 +2703,7 @@ export default function MenuPage() {
                                 />
                                 <p className="text-sm font-bold text-slate-800 flex-1">{cat.name}</p>
                                 <span className="text-[10px] font-semibold text-slate-400">
-                                  {itemCount} item{itemCount === 1 ? '' : 's'}
+                                  {t('menu.importItemsCount', { count: itemCount })}
                                 </span>
                               </label>
                               <div className="divide-y divide-slate-50">
@@ -2698,12 +2723,12 @@ export default function MenuPage() {
                                         />
                                         <p className="text-xs font-semibold text-slate-600 flex-1">{sub.name}</p>
                                         <span className="text-[10px] text-slate-400">
-                                          {subItems.length} item{subItems.length === 1 ? '' : 's'}
+                                          {t('menu.importItemsCount', { count: subItems.length })}
                                         </span>
                                       </label>
                                       {subItems.length === 0 ? (
                                         <p className="text-[11px] text-slate-400 italic px-10 py-1.5">
-                                          No items in this subcategory{subChecked ? ' — the empty sub will still be copied' : ''}
+                                          {subChecked ? t('menu.importNoItemsInSubKept') : t('menu.importNoItemsInSub')}
                                         </p>
                                       ) : (
                                         <div className="divide-y divide-slate-50">
@@ -2725,7 +2750,7 @@ export default function MenuPage() {
                                                 <span className="flex-1 font-medium text-slate-700">{it.name}</span>
                                                 <span className="font-mono text-slate-500">₹{Number(it.basePrice).toFixed(0)}</span>
                                                 {it.alreadyImported && (
-                                                  <span className="badge badge-slate text-[10px]">Already imported</span>
+                                                  <span className="badge badge-slate text-[10px]">{t('menu.importAlreadyImported')}</span>
                                                 )}
                                               </label>
                                             );
@@ -2737,7 +2762,7 @@ export default function MenuPage() {
                                 })}
                                 {(cat.subcategories || []).length === 0 && (
                                   <p className="text-[11px] text-slate-400 italic px-4 py-2">
-                                    No subcategories yet{catChecked ? ' — the empty category will still be copied' : ''}
+                                    {catChecked ? t('menu.importNoSubsKept') : t('menu.importNoSubs')}
                                   </p>
                                 )}
                               </div>
@@ -2758,7 +2783,7 @@ export default function MenuPage() {
               onClick={closeImportFromBusiness}
               disabled={importBusinessBusy}
             >
-              Cancel
+              {t('menu.modalCancel')}
             </button>
             <button
               className="btn-primary"
@@ -2766,7 +2791,7 @@ export default function MenuPage() {
               disabled={importBusinessBusy || (importPickCats.size + importPickSubs.size + importPickItems.size === 0)}
             >
               {importBusinessBusy && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-              <Download size={14} /> Import
+              <Download size={14} /> {t('menu.importSubmit')}
             </button>
           </div>
         </div>
@@ -2776,35 +2801,37 @@ export default function MenuPage() {
       <Modal
         open={menuModal.open}
         onClose={() => setMenuModal({ open: false })}
-        title={menuModal.editing ? `Edit menu: ${menuModal.editing.name}` : 'New menu'}
+        title={menuModal.editing
+          ? t('menu.menuModalEditTemplate', { name: menuModal.editing.name })
+          : t('menu.menuModalNew')}
         footer={
           <div className="flex justify-end gap-2 w-full">
-            <button className="btn-secondary" onClick={() => setMenuModal({ open: false })}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setMenuModal({ open: false })}>{t('menu.modalCancel')}</button>
             <button type="submit" form="menu-form" className="btn-primary" disabled={menuBusy}>
-              {menuBusy ? 'Saving…' : (menuModal.editing ? 'Save' : 'Create')}
+              {menuBusy ? t('menu.menuModalSaving') : (menuModal.editing ? t('menu.modalSave') : t('menu.modalCreate'))}
             </button>
           </div>
         }
       >
         <form id="menu-form" onSubmit={saveMenu} className="space-y-3">
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Name</label>
+            <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">{t('menu.menuModalName')}</label>
             <input
               name="name"
               defaultValue={menuModal.editing?.name || ''}
               autoFocus
               className="input w-full"
-              placeholder="e.g. Breakfast"
+              placeholder={t('menu.placeholderMenuName')}
               required
             />
           </div>
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Description (optional)</label>
+            <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">{t('menu.menuModalDescription')}</label>
             <input
               name="description"
               defaultValue={(menuModal.editing as any)?.description || ''}
               className="input w-full"
-              placeholder="Morning specials, 7–11 am"
+              placeholder={t('menu.placeholderMenuDesc')}
             />
           </div>
           <label className="inline-flex items-center gap-2 text-sm">
@@ -2813,7 +2840,7 @@ export default function MenuPage() {
               name="isActive"
               defaultChecked={menuModal.editing?.isActive !== false}
             />
-            Active (off = hide from customers)
+            {t('menu.menuModalActive')}
           </label>
         </form>
       </Modal>
@@ -2863,6 +2890,7 @@ function TimingsEditorModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useTranslation();
   type Slot = { dayOfWeek: number; startMinute: number; endMinute: number };
   const [slots, setSlots] = useState<Slot[]>([]);
   const [busy, setBusy] = useState(false);
@@ -2879,7 +2907,7 @@ function TimingsEditorModal({
     })));
   }, [menu, mode]);
 
-  const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const dayNames = ['', t('menu.dayMon'), t('menu.dayTue'), t('menu.dayWed'), t('menu.dayThu'), t('menu.dayFri'), t('menu.daySat'), t('menu.daySun')];
 
   const toMinutes = (t: string) => {
     const [h, m] = (t || '00:00').split(':').map(Number);
@@ -2895,14 +2923,14 @@ function TimingsEditorModal({
     if (!menu) return;
     for (const s of slots) {
       if (s.endMinute <= s.startMinute) {
-        toast.error('Each slot must end after it starts');
+        toast.error(t('menu.toastSlotEndAfterStart'));
         return;
       }
     }
     setBusy(true);
     try {
       if (mode === 'outlet') {
-        if (!outletId) { toast.error('Missing outlet context'); return; }
+        if (!outletId) { toast.error(t('menu.toastMissingOutletCtx')); return; }
         // PUT creates the OutletMenu link if needed; flipping overrideTimings
         // tells the API to use these slots in customer queries.
         await api.put(`/outlets/${outletId}/menus/${menu.id}/timings`, { slots });
@@ -2910,10 +2938,10 @@ function TimingsEditorModal({
       } else {
         await api.put(`/menus/${menu.id}/timings`, { slots });
       }
-      toast.success('Timings saved');
+      toast.success(t('menu.toastTimingsSaved'));
       onSaved();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to save timings');
+      toast.error(e.response?.data?.message || t('menu.toastFailedSaveTimings'));
     } finally {
       setBusy(false);
     }
@@ -2925,19 +2953,19 @@ function TimingsEditorModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={`Timings — ${menu.name}`}
+      title={t('menu.timingsTitleTemplate', { name: menu.name })}
       footer={
         <div className="flex items-center justify-between w-full">
           <button
             className="btn-ghost text-xs"
             onClick={() => setSlots((s) => [...s, { dayOfWeek: 1, startMinute: 9 * 60, endMinute: 17 * 60 }])}
           >
-            <Plus size={13} /> Add slot
+            <Plus size={13} /> {t('menu.timingsAddSlot')}
           </button>
           <div className="flex gap-2">
-            <button className="btn-secondary" onClick={onClose}>Cancel</button>
+            <button className="btn-secondary" onClick={onClose}>{t('menu.modalCancel')}</button>
             <button className="btn-primary" onClick={save} disabled={busy}>
-              {busy ? 'Saving…' : 'Save timings'}
+              {busy ? t('menu.menuModalSaving') : t('menu.timingsSave')}
             </button>
           </div>
         </div>
@@ -2946,13 +2974,12 @@ function TimingsEditorModal({
       <div className="space-y-2 max-h-96 overflow-y-auto">
         {mode === 'outlet' && (
           <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 text-[11px] text-amber-800 mb-2">
-            Outlet override — these slots take precedence over the business-level timings while saved.
-            Clear all slots and save to fall back to the business defaults.
+            {t('menu.timingsOutletOverride')}
           </div>
         )}
         {slots.length === 0 ? (
           <p className="text-xs text-slate-400 italic text-center py-6">
-            No timing slots — this menu is always available. Click "Add slot" to restrict it.
+            {t('menu.timingsEmpty')}
           </p>
         ) : (
           slots.map((slot, i) => (
@@ -2974,7 +3001,7 @@ function TimingsEditorModal({
                 }
                 className="input py-1.5 text-sm"
               />
-              <span className="text-slate-400 text-xs">to</span>
+              <span className="text-slate-400 text-xs">{t('menu.timingsTo')}</span>
               <input
                 type="time"
                 value={toTimeString(slot.endMinute)}
@@ -2986,7 +3013,7 @@ function TimingsEditorModal({
               <button
                 onClick={() => setSlots((all) => all.filter((_, idx) => idx !== i))}
                 className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"
-                title="Remove slot"
+                title={t('menu.timingsRemoveSlot')}
               >
                 <Trash2 size={13} />
               </button>
@@ -3004,6 +3031,7 @@ function TimingsEditorModal({
  * and adjustments happen via the dedicated "Add stock" action on the item row.
  */
 function LimitedStockField({ editing }: { editing?: any }) {
+  const { t } = useTranslation();
   const isEdit = !!editing;
   const initialOn = !!editing?.hasLimitedStock;
   const [on, setOn] = useState(initialOn);
@@ -3017,14 +3045,14 @@ function LimitedStockField({ editing }: { editing?: any }) {
           onChange={(e) => setOn(e.target.checked)}
           className="w-4 h-4 accent-emerald-500 rounded"
         />
-        <span className="text-sm font-medium text-slate-700">Limited stock</span>
-        <span className="text-[10px] text-slate-400">(auto-hides when count reaches 0)</span>
+        <span className="text-sm font-medium text-slate-700">{t('menu.limitedStock')}</span>
+        <span className="text-[10px] text-slate-400">{t('menu.limitedStockHint')}</span>
       </label>
       {on && (
         <div className="grid grid-cols-2 gap-3 pl-6">
           <div>
             <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
-              {isEdit ? 'Set to (overrides current)' : 'Initial quantity'}
+              {isEdit ? t('menu.setToOverrides') : t('menu.initialQuantity')}
             </label>
             <input
               type="number"
@@ -3032,14 +3060,14 @@ function LimitedStockField({ editing }: { editing?: any }) {
               min="0"
               step="1"
               defaultValue={editing?.availableQuantity ?? ''}
-              placeholder="0"
+              placeholder={t('menu.placeholderZero')}
               className="input"
             />
           </div>
           {isEdit && (
             <div>
               <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
-                Currently available
+                {t('menu.currentlyAvailable')}
               </label>
               <div className={clsx(
                 'h-[42px] px-3 rounded-lg flex items-center font-bold text-sm',
@@ -3047,13 +3075,13 @@ function LimitedStockField({ editing }: { editing?: any }) {
                   ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
                   : 'bg-red-50 text-red-700 border border-red-100',
               )}>
-                {editing.availableQuantity ?? 0} left
+                {t('menu.leftInline', { count: editing.availableQuantity ?? 0 })}
               </div>
             </div>
           )}
           {isEdit && (
             <p className="col-span-2 text-[11px] text-slate-500 -mt-1">
-              To <strong>add more stock</strong>, close this form and use the green "+ Stock" button on the item row.
+              {t('menu.addMoreStockHint')}
             </p>
           )}
         </div>
@@ -3078,6 +3106,7 @@ function BundleSection({
   maxPicks: number;
   setMaxPicks: (v: number) => void;
 }) {
+  const { t } = useTranslation();
   // Flatten the menu tree to a picker-friendly list. Exclude the item
   // we're currently editing so a bundle can't include itself.
   const flat = useMemo(() => {
@@ -3115,41 +3144,41 @@ function BundleSection({
           onChange={(e) => setIsBundle(e.target.checked)}
           className="w-4 h-4 accent-brand-700 rounded"
         />
-        <span className="text-sm font-bold text-slate-700">This item is a bundle</span>
+        <span className="text-sm font-bold text-slate-700">{t('menu.bundleCheckbox')}</span>
         <span className="text-[10px] text-slate-400">
-          (combo / thali — at order time the kitchen sees each child as a separate prep ticket; the customer pays the bundle's price)
+          {t('menu.bundleHint')}
         </span>
       </label>
 
       {isBundle && (
         <div className="space-y-2">
           <p className="text-[11px] text-slate-500">
-            Add the items that make up this bundle. Each row is one component (e.g. 2× idly, 1× sambar, 1× filter coffee). Quantities multiply with the bundle order quantity.
+            {t('menu.bundleDescribe')}
           </p>
 
           {/* Customer-choice cap. 0 = all components ship; >0 = customer
               must pick exactly N of the rows below at order time. */}
           <div className="flex items-center gap-2 flex-wrap rounded-md bg-white border border-slate-200 px-3 py-2">
-            <span className="text-xs font-semibold text-slate-700">Customer picks</span>
+            <span className="text-xs font-semibold text-slate-700">{t('menu.bundleCustomerPicks')}</span>
             <input
               type="number"
               min={0}
               max={Math.max(0, rows.filter((r) => r.childItemId).length)}
               value={maxPicks || ''}
-              placeholder="0"
+              placeholder={t('menu.placeholderZero')}
               onChange={(e) => setMaxPicks(Math.max(0, Number(e.target.value) || 0))}
               className="input text-xs w-16 text-center"
             />
             <span className="text-xs text-slate-600">
-              of {rows.filter((r) => r.childItemId).length} component{rows.filter((r) => r.childItemId).length === 1 ? '' : 's'} below
+              {t('menu.bundleOfComponents', { count: rows.filter((r) => r.childItemId).length })}
             </span>
             <span className="text-[10px] text-slate-400">
-              (leave 0 to include everything — set N to let customer choose any N of the rows)
+              {t('menu.bundleCustomerPicksHint')}
             </span>
           </div>
 
           {rows.length === 0 ? (
-            <p className="text-xs italic text-slate-400">No components yet. Add at least one.</p>
+            <p className="text-xs italic text-slate-400">{t('menu.bundleNoComponents')}</p>
           ) : (
             rows.map((row, idx) => {
               const selected = row.childItemId ? itemById.get(row.childItemId) : undefined;
@@ -3160,11 +3189,11 @@ function BundleSection({
                     onChange={(e) => patchRow(idx, { childItemId: e.target.value, variantId: null })}
                     className="input text-xs flex-1"
                   >
-                    <option value="">Pick an item…</option>
+                    <option value="">{t('menu.bundlePickItem')}</option>
                     {flat.map((i) => (
                       <option key={i.id} value={i.id}>
                         {i.name}
-                        {i.isBundle ? ' [bundle]' : ''}
+                        {i.isBundle ? ` ${t('menu.bundleBadgeInList')}` : ''}
                         {' · '}{i.subName}
                       </option>
                     ))}
@@ -3175,7 +3204,7 @@ function BundleSection({
                       onChange={(e) => patchRow(idx, { variantId: e.target.value || null })}
                       className="input text-xs w-32"
                     >
-                      <option value="">Default</option>
+                      <option value="">{t('menu.bundleDefault')}</option>
                       {selected.variants.map((v) => (
                         <option key={v.id} value={v.id}>{v.name}</option>
                       ))}
@@ -3192,7 +3221,7 @@ function BundleSection({
                     type="button"
                     onClick={() => removeRow(idx)}
                     className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"
-                    title="Remove component"
+                    title={t('menu.bundleRemoveComponent')}
                   >
                     <XIcon size={13} />
                   </button>
@@ -3202,7 +3231,7 @@ function BundleSection({
           )}
 
           <button type="button" onClick={addRow} className="text-xs font-semibold text-brand-800 hover:text-brand-900 inline-flex items-center gap-1">
-            <Plus size={12} /> Add component
+            <Plus size={12} /> {t('menu.bundleAddComponent')}
           </button>
         </div>
       )}
@@ -3229,6 +3258,7 @@ function NodeTimingsEditor({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useTranslation();
   type Slot = { dayOfWeek: number; startMinute: number; endMinute: number };
   const [slots, setSlots] = useState<Slot[]>([]);
   const [busy, setBusy] = useState(false);
@@ -3239,7 +3269,7 @@ function NodeTimingsEditor({
     })));
   }, [initial, open]);
 
-  const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const dayNames = ['', t('menu.dayMon'), t('menu.dayTue'), t('menu.dayWed'), t('menu.dayThu'), t('menu.dayFri'), t('menu.daySat'), t('menu.daySun')];
   const toMinutes = (t: string) => {
     const [h, m] = (t || '00:00').split(':').map(Number);
     return (h || 0) * 60 + (m || 0);
@@ -3254,7 +3284,7 @@ function NodeTimingsEditor({
     if (!kind || !id) return;
     for (const s of slots) {
       if (s.endMinute <= s.startMinute) {
-        toast.error('Each slot must end after it starts');
+        toast.error(t('menu.toastSlotEndAfterStart'));
         return;
       }
     }
@@ -3265,11 +3295,11 @@ function NodeTimingsEditor({
         : 'items';
       await api.put(`${menuBase}/${path}/${id}/timings`, { slots });
       toast.success(slots.length === 0
-        ? 'Schedule cleared — inheriting from outlet hours'
-        : 'Schedule saved');
+        ? t('menu.toastScheduleCleared')
+        : t('menu.toastScheduleSaved'));
       onSaved();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to save schedule');
+      toast.error(e.response?.data?.message || t('menu.toastFailedSaveSchedule'));
     } finally {
       setBusy(false);
     }
@@ -3281,31 +3311,33 @@ function NodeTimingsEditor({
     <Modal
       open={open}
       onClose={onClose}
-      title={`Availability — ${name || kind}`}
+      title={name
+        ? t('menu.availabilityTitleTemplate', { name })
+        : t('menu.availabilityFallback', { kind })}
       footer={
         <div className="flex items-center justify-between w-full">
           <button
             className="btn-ghost text-xs"
             onClick={() => setSlots((s) => [...s, { dayOfWeek: 1, startMinute: 9 * 60, endMinute: 17 * 60 }])}
           >
-            <Plus size={13} /> Add slot
+            <Plus size={13} /> {t('menu.timingsAddSlot')}
           </button>
           <div className="flex gap-2">
-            <button className="btn-secondary" onClick={onClose}>Cancel</button>
+            <button className="btn-secondary" onClick={onClose}>{t('menu.modalCancel')}</button>
             <button className="btn-primary" onClick={save} disabled={busy}>
-              {busy ? 'Saving…' : 'Save schedule'}
+              {busy ? t('menu.menuModalSaving') : t('menu.saveSchedule')}
             </button>
           </div>
         </div>
       }
     >
       <div className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-[11px] text-slate-600 mb-3">
-        Leave empty to inherit from the outlet's hours. Add one or more slots to restrict this {kind} to specific days &amp; times — orders outside the window will be greyed out for customers and rejected at submit.
+        {t('menu.availabilityIntro', { kind })}
       </div>
       <div className="space-y-2 max-h-96 overflow-y-auto">
         {slots.length === 0 ? (
           <p className="text-xs text-slate-400 italic text-center py-6">
-            No custom schedule — this {kind} follows the outlet's hours.
+            {t('menu.availabilityEmpty', { kind })}
           </p>
         ) : (
           slots.map((slot, i) => (
@@ -3327,7 +3359,7 @@ function NodeTimingsEditor({
                 }
                 className="input py-1.5 text-sm"
               />
-              <span className="text-slate-400 text-xs">to</span>
+              <span className="text-slate-400 text-xs">{t('menu.timingsTo')}</span>
               <input
                 type="time"
                 value={toTimeString(slot.endMinute)}
