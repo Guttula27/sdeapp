@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
+import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import { MessageSquare, Star, IndianRupee, Reply, Filter } from 'lucide-react';
@@ -21,12 +22,14 @@ interface Review {
   orderItem?: { id: string; orderId: string; order?: { orderNumber: string; createdAt: string; totalAmount: string } };
 }
 
+// Payback mode enum + i18n key stem — labels come from t() at render time.
 const PAYBACK_MODES = [
-  { value: 'CASH', label: 'Cash' },
-  { value: 'UPI',  label: 'UPI' },
+  { value: 'CASH', labelKey: 'modeCash' },
+  { value: 'UPI',  labelKey: 'modeUpi' },
 ];
 
 export default function FeedbackPage() {
+  const { t } = useTranslation();
   const user = useSelector((s: RootState) => s.auth.user);
   const outletId: string | undefined = user?.outletId;
 
@@ -43,11 +46,11 @@ export default function FeedbackPage() {
       });
       setReviews(data.data || []);
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to load reviews');
+      toast.error(e.response?.data?.message || t('feedback.toastLoadFail'));
     } finally {
       setLoading(false);
     }
-  }, [outletId, onlyComments]);
+  }, [outletId, onlyComments, t]);
 
   useEffect(() => { fetchReviews(); }, [fetchReviews]);
 
@@ -60,15 +63,15 @@ export default function FeedbackPage() {
   }, [reviews]);
 
   if (!outletId) {
-    return <p className="p-6 text-sm text-slate-500">Feedback inbox is available for outlet-scoped users.</p>;
+    return <p className="p-6 text-sm text-slate-500">{t('feedback.outletScopedNotice')}</p>;
   }
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="page-title">Feedback</h1>
-          <p className="page-subtitle">Customer reviews on items in this outlet</p>
+          <h1 className="page-title">{t('feedback.title')}</h1>
+          <p className="page-subtitle">{t('feedback.subtitle')}</p>
         </div>
         <button
           onClick={() => setOnlyComments(v => !v)}
@@ -77,15 +80,15 @@ export default function FeedbackPage() {
             onlyComments && 'bg-brand-50 text-brand-700 border-brand-200',
           )}
         >
-          <Filter size={13} /> {onlyComments ? 'Showing: with comment' : 'All reviews'}
+          <Filter size={13} /> {onlyComments ? t('feedback.showingWithComment') : t('feedback.showingAll')}
         </button>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Stat label="Total" value={stats.total.toString()} />
-        <Stat label="Avg rating" value={stats.avg ? `${stats.avg.toFixed(1)} ★` : '—'} />
-        <Stat label="With comments" value={stats.withComment.toString()} />
-        <Stat label="Replied" value={`${stats.replied}/${stats.total || 0}`} />
+        <Stat label={t('feedback.statTotal')} value={stats.total.toString()} />
+        <Stat label={t('feedback.statAvgRating')} value={stats.avg ? t('feedback.avgWithStar', { avg: stats.avg.toFixed(1) }) : '—'} />
+        <Stat label={t('feedback.statWithComments')} value={stats.withComment.toString()} />
+        <Stat label={t('feedback.statReplied')} value={`${stats.replied}/${stats.total || 0}`} />
       </div>
 
       {loading ? (
@@ -93,8 +96,8 @@ export default function FeedbackPage() {
       ) : reviews.length === 0 ? (
         <div className="card flex flex-col items-center py-20 text-center">
           <MessageSquare size={40} className="text-slate-200 mb-3" />
-          <p className="text-slate-500 font-medium">No reviews yet</p>
-          <p className="text-xs text-slate-400 mt-1">Reviews will appear here once customers rate their items.</p>
+          <p className="text-slate-500 font-medium">{t('feedback.emptyTitle')}</p>
+          <p className="text-xs text-slate-400 mt-1">{t('feedback.emptyHint')}</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -132,6 +135,7 @@ function Stars({ value }: { value: number }) {
 }
 
 function ReviewCard({ review, onChanged }: { review: Review; onChanged: () => void }) {
+  const { t } = useTranslation();
   // Edit-in-place reply state. Pre-populates with any existing reply.
   const [replyText, setReplyText] = useState(review.replyText ?? '');
   const [replyEditing, setReplyEditing] = useState(!review.replyText);
@@ -143,15 +147,15 @@ function ReviewCard({ review, onChanged }: { review: Review; onChanged: () => vo
   const [savingPayback, setSavingPayback] = useState(false);
 
   const submitReply = async () => {
-    if (!replyText.trim()) { toast.error('Type a reply first'); return; }
+    if (!replyText.trim()) { toast.error(t('feedback.toastReplyEmpty')); return; }
     setSavingReply(true);
     try {
       await api.post(`/reviews/${review.id}/reply`, { replyText: replyText.trim() });
-      toast.success('Reply saved');
+      toast.success(t('feedback.toastReplySaved'));
       setReplyEditing(false);
       onChanged();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to save reply');
+      toast.error(e.response?.data?.message || t('feedback.toastReplyFail'));
     } finally {
       setSavingReply(false);
     }
@@ -159,16 +163,16 @@ function ReviewCard({ review, onChanged }: { review: Review; onChanged: () => vo
 
   const submitPayback = async () => {
     const amt = Number(paybackAmount);
-    if (!Number.isFinite(amt) || amt <= 0) { toast.error('Enter a positive amount'); return; }
+    if (!Number.isFinite(amt) || amt <= 0) { toast.error(t('feedback.toastPaybackPositive')); return; }
     setSavingPayback(true);
     try {
       await api.post(`/reviews/${review.id}/payback`, { amount: amt, mode: paybackMode });
-      toast.success(`Payback recorded · ₹${amt.toFixed(2)}`);
+      toast.success(t('feedback.toastPaybackRecorded', { amount: amt.toFixed(2) }));
       setPaybackOpen(false);
       setPaybackAmount('');
       onChanged();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to record payback');
+      toast.error(e.response?.data?.message || t('feedback.toastPaybackFail'));
     } finally {
       setSavingPayback(false);
     }
@@ -182,20 +186,20 @@ function ReviewCard({ review, onChanged }: { review: Review; onChanged: () => vo
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <Stars value={review.rating} />
-            <span className="text-xs font-bold text-slate-700">{review.rating}/5</span>
+            <span className="text-xs font-bold text-slate-700">{t('feedback.ratingOutOf', { n: review.rating })}</span>
             <span className="text-xs text-slate-400">·</span>
             <p className="text-sm font-bold text-slate-900 truncate">{review.item?.name}</p>
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            {review.customer?.name || 'Guest'}
+            {review.customer?.name || t('feedback.guest')}
             {review.customer?.phone && <span className="text-slate-400"> · {review.customer.phone}</span>}
-            <span className="text-slate-400"> · Order {review.orderItem?.order?.orderNumber}</span>
+            <span className="text-slate-400"> · {t('feedback.orderPrefix', { number: review.orderItem?.order?.orderNumber ?? '' })}</span>
             <span className="text-slate-400"> · {new Date(review.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
           </p>
         </div>
         {hasPayback && (
           <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
-            Payback ₹{Number(review.paybackPayment!.amount).toFixed(2)} · {review.paybackPayment!.mode}
+            {t('feedback.paybackChip', { amount: Number(review.paybackPayment!.amount).toFixed(2), mode: review.paybackPayment!.mode })}
           </span>
         )}
       </div>
@@ -209,13 +213,13 @@ function ReviewCard({ review, onChanged }: { review: Review; onChanged: () => vo
       {/* Reply block */}
       <div className="rounded-xl border border-slate-100 p-3 space-y-2">
         <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-          <Reply size={12} /> Your reply
+          <Reply size={12} /> {t('feedback.yourReply')}
           {review.replyText && !replyEditing && (
             <button
               onClick={() => setReplyEditing(true)}
               className="ml-auto text-[11px] text-brand-600 hover:text-brand-700 font-bold"
             >
-              Edit
+              {t('feedback.editReply')}
             </button>
           )}
         </div>
@@ -225,7 +229,7 @@ function ReviewCard({ review, onChanged }: { review: Review; onChanged: () => vo
               value={replyText}
               onChange={(e) => setReplyText(e.target.value)}
               rows={2}
-              placeholder="Thanks for your feedback — we'll…"
+              placeholder={t('feedback.replyPlaceholder')}
               className="w-full text-xs rounded-lg border border-slate-200 px-3 py-2 focus:outline-none focus:border-brand-400 resize-none"
             />
             <div className="flex justify-end gap-2">
@@ -234,7 +238,7 @@ function ReviewCard({ review, onChanged }: { review: Review; onChanged: () => vo
                   onClick={() => { setReplyText(review.replyText ?? ''); setReplyEditing(false); }}
                   className="text-xs font-semibold text-slate-500 px-3 py-1.5 rounded-lg"
                 >
-                  Cancel
+                  {t('feedback.cancel')}
                 </button>
               )}
               <button
@@ -242,7 +246,7 @@ function ReviewCard({ review, onChanged }: { review: Review; onChanged: () => vo
                 disabled={savingReply}
                 className="text-xs font-bold bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg"
               >
-                {savingReply ? 'Saving…' : review.replyText ? 'Update' : 'Send reply'}
+                {savingReply ? t('feedback.saving') : review.replyText ? t('feedback.updateReply') : t('feedback.sendReply')}
               </button>
             </div>
           </>
@@ -259,34 +263,38 @@ function ReviewCard({ review, onChanged }: { review: Review; onChanged: () => vo
       {/* Payback block */}
       {hasPayback ? (
         <p className="text-[11px] text-emerald-700">
-          Payback recorded {review.paybackPayment!.createdAt && new Date(review.paybackPayment!.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}.
+          {t('feedback.paybackRecordedOn', {
+            date: review.paybackPayment!.createdAt
+              ? new Date(review.paybackPayment!.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+              : '',
+          })}
         </p>
       ) : paybackOpen ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 space-y-2">
           <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
-            <IndianRupee size={12} /> Initiate payback
+            <IndianRupee size={12} /> {t('feedback.initiatePayback')}
           </p>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Amount (₹)</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">{t('feedback.paybackAmountLabel')}</label>
               <input
                 type="number"
                 min="0"
                 step="0.01"
                 value={paybackAmount}
                 onChange={(e) => setPaybackAmount(e.target.value)}
-                placeholder="e.g. 100"
+                placeholder={t('feedback.paybackAmountPlaceholder')}
                 className="input text-xs"
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Mode</label>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">{t('feedback.paybackModeLabel')}</label>
               <select
                 value={paybackMode}
                 onChange={(e) => setPaybackMode(e.target.value)}
                 className="input text-xs"
               >
-                {PAYBACK_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                {PAYBACK_MODES.map(m => <option key={m.value} value={m.value}>{t(`feedback.${m.labelKey}`)}</option>)}
               </select>
             </div>
           </div>
@@ -295,14 +303,14 @@ function ReviewCard({ review, onChanged }: { review: Review; onChanged: () => vo
               onClick={() => { setPaybackOpen(false); setPaybackAmount(''); }}
               className="text-xs font-semibold text-slate-500 px-3 py-1.5 rounded-lg"
             >
-              Cancel
+              {t('feedback.cancel')}
             </button>
             <button
               onClick={submitPayback}
               disabled={savingPayback}
               className="text-xs font-bold bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg"
             >
-              {savingPayback ? 'Recording…' : 'Record payback'}
+              {savingPayback ? t('feedback.recording') : t('feedback.recordPayback')}
             </button>
           </div>
         </div>
@@ -311,7 +319,7 @@ function ReviewCard({ review, onChanged }: { review: Review; onChanged: () => vo
           onClick={() => setPaybackOpen(true)}
           className="text-[11px] font-bold text-amber-700 hover:text-amber-800 inline-flex items-center gap-1"
         >
-          <IndianRupee size={11} /> Initiate payback
+          <IndianRupee size={11} /> {t('feedback.initiatePayback')}
         </button>
       )}
     </div>
