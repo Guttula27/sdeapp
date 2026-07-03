@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { WifiOff, RefreshCw, CloudOff, X } from 'lucide-react';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
@@ -15,6 +16,7 @@ import { replayEntry } from '../../services/api';
 // persistent toast with a Retry button.
 
 export default function OfflineBanner() {
+  const { t } = useTranslation();
   const { online, apiReachable } = useNetworkStatus();
   const { pathname } = useLocation();
   const isHome = pathname === '/';
@@ -41,29 +43,29 @@ export default function OfflineBanner() {
     try {
       const result = await drain(replayEntry);
       if (result.succeeded > 0) {
-        toast.success(`${result.succeeded} action${result.succeeded === 1 ? '' : 's'} synced`);
+        toast.success(t('common.syncedCount', { count: result.succeeded }));
       }
       // Purged zombies are silent — they were already lost causes.
       if (result.failed > 0) {
         // Each persistent entry gets its own toast so the user can retry
         // them individually. duration:Infinity keeps the toast around
-        // until dismissed; t.id namespaced per key for dedupe.
+        // until dismissed; toastCtx.id namespaced per key for dedupe.
         for (const e of getEntries()) {
           toast.error(
-            (t) => (
+            (toastCtx) => (
               <div className="flex items-center gap-2 text-sm">
                 <span className="flex-1">
-                  <span className="font-bold">{e.label}</span> couldn't sync
+                  <span className="font-bold">{e.label}</span> {t('common.couldNotSyncSuffix')}
                   {e.lastError ? <span className="block text-[10px] opacity-70 mt-0.5">{e.lastError}</span> : null}
                 </span>
                 <button
                   className="bg-white/20 hover:bg-white/30 text-white text-xs font-bold px-2 py-1 rounded-md inline-flex items-center gap-1"
                   onClick={async () => {
-                    toast.dismiss(t.id);
+                    toast.dismiss(toastCtx.id);
                     await drainNow();
                   }}
                 >
-                  <RefreshCw size={11} /> Retry
+                  <RefreshCw size={11} /> {t('common.retry')}
                 </button>
               </div>
             ),
@@ -92,29 +94,29 @@ export default function OfflineBanner() {
       {isDown ? (
         <>
           <WifiOff size={13} />
-          <span>{!navigator.onLine ? 'You appear to be offline' : 'Connection unstable — retrying'}</span>
+          <span>{!navigator.onLine ? t('common.offlineNavigator') : t('common.connectionUnstable')}</span>
           {hasPending && (
             <span className="ml-2 inline-flex items-center gap-1 bg-white/20 px-1.5 py-0.5 rounded-full">
-              <CloudOff size={10} /> {pending.length} queued
+              <CloudOff size={10} /> {t('common.queuedCount', { count: pending.length })}
             </span>
           )}
         </>
       ) : (
         <>
           <CloudOff size={13} />
-          <span>{pending.length} action{pending.length === 1 ? '' : 's'} queued for sync</span>
+          <span>{t('common.queuedForSync', { count: pending.length })}</span>
           <button
             onClick={drainNow}
             disabled={draining}
             className="ml-2 bg-white/25 hover:bg-white/35 px-2 py-0.5 rounded-md inline-flex items-center gap-1 text-[11px]"
           >
             <RefreshCw size={10} className={draining ? 'animate-spin' : ''} />
-            {draining ? 'Syncing…' : 'Retry now'}
+            {draining ? t('common.syncing') : t('common.retryNow')}
           </button>
           <button
-            onClick={() => { clearAll(); toast.success('Sync queue cleared'); }}
-            title="Discard queued actions"
-            aria-label="Discard queued actions"
+            onClick={() => { clearAll(); toast.success(t('common.syncQueueCleared')); }}
+            title={t('common.discardQueued')}
+            aria-label={t('common.discardQueued')}
             className="ml-1 bg-white/15 hover:bg-white/25 px-1.5 py-0.5 rounded-md inline-flex items-center text-[11px]"
           >
             <X size={11} />

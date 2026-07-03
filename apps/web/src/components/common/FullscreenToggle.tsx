@@ -1,4 +1,5 @@
 import { Maximize2, Minimize2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 
 /**
@@ -15,11 +16,12 @@ export default function FullscreenToggle({
   onClick: () => void;
   className?: string;
 }) {
+  const { t } = useTranslation();
   return (
     <button
       onClick={onClick}
       className={clsx('btn-ghost p-2 text-slate-500 hover:text-slate-800', className)}
-      title={active ? 'Exit full screen' : 'Full screen (good for landscape on mobile)'}
+      title={active ? t('common.fullscreenExit') : t('common.fullscreenEnter')}
     >
       {active ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
     </button>

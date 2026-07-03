@@ -1,4 +1,5 @@
 import { AlertTriangle } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import Modal from './Modal';
 
 interface Props {
@@ -12,19 +13,21 @@ interface Props {
   loading?: boolean;
 }
 
-export default function ConfirmDialog({ open, onClose, onConfirm, title, message, confirmLabel = 'Confirm', danger = false, loading }: Props) {
+export default function ConfirmDialog({ open, onClose, onConfirm, title, message, confirmLabel, danger = false, loading }: Props) {
+  const { t } = useTranslation();
+  const confirm = confirmLabel ?? t('common.confirm');
   return (
     <Modal open={open} onClose={onClose} title={title} size="sm"
       footer={
         <>
-          <button className="btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+          <button className="btn-secondary" onClick={onClose} disabled={loading}>{t('common.cancel')}</button>
           <button
             className={danger ? 'btn-danger' : 'btn-primary'}
             onClick={onConfirm}
             disabled={loading}
           >
             {loading && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-            {confirmLabel}
+            {confirm}
           </button>
         </>
       }
