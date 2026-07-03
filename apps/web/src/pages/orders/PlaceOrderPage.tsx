@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSelector } from 'react-redux';
+import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import {
@@ -55,6 +56,7 @@ type CartLine = {
 };
 
 export default function PlaceOrderPage() {
+  const { t } = useTranslation();
   const user = useSelector((s: RootState) => s.auth.user);
   const outletId = user?.outletId || 'demo-outlet';
 
@@ -112,7 +114,7 @@ export default function PlaceOrderPage() {
     if (!lastOrder) return;
     const printerId = outlet?.receiptPrinterId;
     if (!printerId) {
-      toast.error('No receipt printer configured for this outlet');
+      toast.error(t('placeOrder.toastNoPrinterConfigured'));
       return;
     }
     setPrintingReceipt(true);
@@ -124,9 +126,9 @@ export default function PlaceOrderPage() {
       }
       const { data } = await api.get(`/outlets/${outletId}/orders/${lastOrder.id}`);
       await printCustomerReceipt(printerId, buildReceiptPayload(data.data));
-      toast.success('Receipt sent to printer');
+      toast.success(t('placeOrder.toastReceiptSentToPrinter'));
     } catch (e: any) {
-      toast.error(e?.message || 'Print failed');
+      toast.error(e?.message || t('placeOrder.toastPrintFailed'));
     } finally {
       setPrintingReceipt(false);
     }
@@ -193,10 +195,10 @@ export default function PlaceOrderPage() {
     try {
       const { connectPrinter } = await import('../../utils/bluetoothPrinter');
       await connectPrinter(printerId);
-      setReceiptPrinterTick((t) => t + 1);
-      toast.success('Receipt printer paired — auto-print is armed');
+      setReceiptPrinterTick((tk) => tk + 1);
+      toast.success(t('placeOrder.toastReceiptPairedArmed'));
     } catch (e: any) {
-      if (e?.name !== 'NotFoundError') toast.error(e?.message || 'Pairing cancelled');
+      if (e?.name !== 'NotFoundError') toast.error(e?.message || t('placeOrder.toastPairingCancelled'));
     }
   };
 
@@ -281,9 +283,9 @@ export default function PlaceOrderPage() {
       // already painted, we're done — just signal stale data. Otherwise
       // surface the error so the screen isn't a silent blank.
       if (cached) {
-        toast('Using cached menu — you appear to be offline', { icon: '📡' });
+        toast(t('placeOrder.toastCachedMenu'), { icon: '📡' });
       } else {
-        toast.error(e?.response?.data?.message || 'Could not load menu and no cache is available');
+        toast.error(e?.response?.data?.message || t('placeOrder.toastCouldNotLoadMenu'));
       }
     } finally {
       setLoading(false);
@@ -449,7 +451,7 @@ export default function PlaceOrderPage() {
         if (!nagged) {
           nagged = true;
           toast(
-            `Order ${o.orderNumber} arrived but the printer isn't paired this session. Tap "Connect printer" to enable auto-print.`,
+            t('placeOrder.toastAutoPrintNag', { number: o.orderNumber }),
             { icon: '🖨️', duration: 7000 },
           );
         }
@@ -460,12 +462,12 @@ export default function PlaceOrderPage() {
         await ensurePrinterConnected(printerId);
         const { data } = await api.get(`/outlets/${o.outletId || outletId}/orders/${o.id}`);
         await printCustomerReceipt(printerId, buildReceiptPayload(data.data));
-        toast.success(`Receipt printed for ${o.orderNumber}`, { icon: '🖨️' });
+        toast.success(t('placeOrder.toastReceiptAutoPrinted', { number: o.orderNumber }), { icon: '🖨️' });
       } catch (e: any) {
         // Print failure: roll back the dedupe so a manual retry / a
         // reconnect-then-next-order doesn't get permanently skipped.
         autoPrintedReceiptsRef.current.delete(o.id);
-        toast.error(e?.message || 'Receipt auto-print failed');
+        toast.error(e?.message || t('placeOrder.toastReceiptAutoFailed'));
       }
     };
     socket.on('orderCreated', onCreated);
@@ -531,11 +533,13 @@ export default function PlaceOrderPage() {
   // the modal now so toppings are never silently skipped.
   const tryAdd = (item: any) => {
     if (openStatus && !openStatus.isOpen) {
-      toast.error(`Outlet is currently closed${openStatus.reason ? ` · ${openStatus.reason}` : ''}`);
+      toast.error(openStatus.reason
+        ? t('placeOrder.toastOutletClosedWithReason', { reason: openStatus.reason })
+        : t('placeOrder.toastOutletClosed'));
       return;
     }
     if (!item.isAvailable) {
-      toast.error(`${item.name} is currently not available`);
+      toast.error(t('placeOrder.toastItemUnavailable', { name: item.name }));
       return;
     }
     setVariantPick(item);
@@ -587,11 +591,13 @@ export default function PlaceOrderPage() {
   const submit = async (mode: 'CASH' | 'UPI') => {
     if (!cart.length) return;
     if (openStatus && !openStatus.isOpen) {
-      toast.error(`Outlet is currently closed${openStatus.reason ? ` · ${openStatus.reason}` : ''}`);
+      toast.error(openStatus.reason
+        ? t('placeOrder.toastOutletClosedWithReason', { reason: openStatus.reason })
+        : t('placeOrder.toastOutletClosed'));
       return;
     }
     if (bookingMode === 'table' && !tableId) {
-      toast.error('Pick a table before placing this order');
+      toast.error(t('placeOrder.toastPickTable'));
       return;
     }
     setPlacing(true);
@@ -625,13 +631,13 @@ export default function PlaceOrderPage() {
         // ends up in the outbox via the api interceptor's failure path.
         __outboxLabel: 'Place order',
       } as any);
-      toast.success(`Order ${data.data.orderNumber} placed`);
+      toast.success(t('placeOrder.toastOrderPlaced', { number: data.data.orderNumber }));
       setLastOrder({ id: data.data.id, orderNumber: data.data.orderNumber });
       // Auto-print receipt if the outlet's receiptAutoPrint flag is
       // set AND a printer is configured AND it's currently connected.
       // Best-effort: failures toast but don't block the reset.
       try { await maybeAutoPrintReceipt(data.data); }
-      catch (e: any) { toast.error(`Receipt print failed: ${e?.message ?? e}`); }
+      catch (e: any) { toast.error(t('placeOrder.toastReceiptPrintFailed', { msg: e?.message ?? String(e) })); }
       setCart([]);
       // Wipe the persisted cart explicitly so a refresh starts clean.
       try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
@@ -674,7 +680,7 @@ export default function PlaceOrderPage() {
         // Stay on this page after an offline queue too; the offline
         // toast already confirms the provisional number.
       } else {
-        toast.error(e.response?.data?.message || 'Failed to place order');
+        toast.error(e.response?.data?.message || t('placeOrder.toastFailedToPlace'));
       }
     } finally {
       setPlacing(false);
@@ -754,7 +760,7 @@ export default function PlaceOrderPage() {
       snapshot,
     };
     await saveOfflineOrder(record);
-    toast.success(`Offline · order saved as ${provisional}`, { duration: 6000 });
+    toast.success(t('placeOrder.toastOfflineSaved', { number: provisional }), { duration: 6000 });
 
     // Best-effort print: printer is bluetooth, so it works without
     // network. Auto-print + manual rules still apply.
@@ -762,7 +768,7 @@ export default function PlaceOrderPage() {
       try {
         await printCustomerReceipt(outlet.receiptPrinterId, buildReceiptPayload(snapshot));
       } catch (err: any) {
-        toast.error(`Receipt print failed: ${err?.message ?? err}`);
+        toast.error(t('placeOrder.toastReceiptPrintFailed', { msg: err?.message ?? String(err) }));
       }
     }
   };
@@ -771,7 +777,7 @@ export default function PlaceOrderPage() {
   const placePostpaid = async () => {
     if (!cart.length) return;
     if (bookingMode !== 'table' || !tableId) {
-      toast.error('Pick a table before placing this order');
+      toast.error(t('placeOrder.toastPickTable'));
       return;
     }
     setPlacing(true);
@@ -818,12 +824,12 @@ export default function PlaceOrderPage() {
           try {
             await printCustomerReceipt(outlet.receiptPrinterId, buildReceiptPayload(consolidated));
           } catch (err: any) {
-            toast.error(`Receipt print failed: ${err?.message ?? err}`);
+            toast.error(t('placeOrder.toastReceiptPrintFailed', { msg: err?.message ?? String(err) }));
           }
         }
         setCart([]);
         try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
-        toast.success(`Added to offline tab ${existingTab.id}`);
+        toast.success(t('placeOrder.toastAddedToOffline', { id: existingTab.id }));
         return;
       }
 
@@ -831,7 +837,7 @@ export default function PlaceOrderPage() {
       if (openOrder) {
         // Append to the open order — no new order number, no payment.
         await api.post(`/outlets/${outletId}/orders/${openOrder.id}/items`, { items: itemsPayload });
-        toast.success('Items added to order');
+        toast.success(t('placeOrder.toastItemsAddedToOrder'));
       } else {
         await api.post(`/outlets/${outletId}/orders`, {
           tableId,
@@ -839,7 +845,7 @@ export default function PlaceOrderPage() {
           items: itemsPayload,
           customerPhone: phone || undefined,
         });
-        toast.success('Order placed — bill stays open');
+        toast.success(t('placeOrder.toastPlacedBillOpen'));
       }
       setCart([]);
       try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
@@ -858,7 +864,7 @@ export default function PlaceOrderPage() {
         setCart([]);
         try { localStorage.removeItem(cartKey); } catch { /* best-effort */ }
       } else {
-        toast.error(e.response?.data?.message || 'Failed to place order');
+        toast.error(e.response?.data?.message || t('placeOrder.toastFailedToPlace'));
       }
     } finally {
       setPlacing(false);
@@ -980,12 +986,12 @@ export default function PlaceOrderPage() {
     const snapshot = buildConsolidatedOfflineSnapshot(seedTab, batch);
     const record: OfflineOrder = { ...seedTab, snapshot, batches: [batch] };
     await saveOfflineOrder(record);
-    toast.success(`Offline tab opened · ${provisional}`, { duration: 6000 });
+    toast.success(t('placeOrder.toastOfflineTabOpened', { number: provisional }), { duration: 6000 });
     if (outlet?.receiptAutoPrint && outlet?.receiptPrinterId && isBluetoothSupported() && isPrinterConnected(outlet.receiptPrinterId)) {
       try {
         await printCustomerReceipt(outlet.receiptPrinterId, buildReceiptPayload(snapshot));
       } catch (err: any) {
-        toast.error(`Receipt print failed: ${err?.message ?? err}`);
+        toast.error(t('placeOrder.toastReceiptPrintFailed', { msg: err?.message ?? String(err) }));
       }
     }
   };
@@ -999,7 +1005,7 @@ export default function PlaceOrderPage() {
       setBillingState('billing');
       await refreshTableTabs();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to request bill');
+      toast.error(e.response?.data?.message || t('placeOrder.toastFailedRequestBill'));
     } finally {
       setPlacing(false);
     }
@@ -1019,7 +1025,7 @@ export default function PlaceOrderPage() {
       if (mode === 'UPI' && data?.data?.paymentId) {
         await api.post(`/payments/${data.data.paymentId}/confirm`, { gatewayRef: '' });
       }
-      toast.success(`Payment recorded · ₹${Number(openOrder.totalAmount).toFixed(2)}`);
+      toast.success(t('placeOrder.toastPaymentRecorded', { amount: Number(openOrder.totalAmount).toFixed(2) }));
       setLastOrder({ id: openOrder.id, orderNumber: openOrder.orderNumber });
       setOpenOrder(null);
       setBillingState('idle');
@@ -1030,7 +1036,7 @@ export default function PlaceOrderPage() {
       // Stay on the Place Order page so staff can move straight on to
       // the next order/table; the toast confirms the closed tab.
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to record payment');
+      toast.error(e.response?.data?.message || t('placeOrder.toastFailedRecordPayment'));
     } finally {
       setPlacing(false);
     }
@@ -1060,7 +1066,9 @@ export default function PlaceOrderPage() {
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2 text-amber-800">
           <Lock size={14} className="shrink-0" />
           <p className="text-xs font-semibold">
-            Outlet is currently closed{openStatus?.reason ? ` · ${openStatus.reason}` : ''}. Place Order is disabled.
+            {openStatus?.reason
+              ? t('placeOrder.outletClosedBannerWithReason', { reason: openStatus.reason })
+              : t('placeOrder.outletClosedBanner')}
           </p>
         </div>
       )}
@@ -1072,7 +1080,7 @@ export default function PlaceOrderPage() {
               "categories" below as sub-nav. Hidden in single-menu outlets. */}
           {enabledMenus.length > 1 && (
             <div className="bg-gradient-to-r from-slate-900 to-slate-800 px-4 py-2.5 flex items-center gap-3 border-b border-slate-700">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">Menu</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">{t('placeOrder.menuLabel')}</p>
               <div className="flex-1 flex gap-2 overflow-x-auto scrollbar-hide">
                 {enabledMenus.map((m) => (
                   <button
@@ -1115,7 +1123,7 @@ export default function PlaceOrderPage() {
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Search items…"
+                placeholder={t('placeOrder.searchItems')}
                 className="input pl-8 py-1.5 text-sm w-48"
               />
             </div>
@@ -1135,17 +1143,17 @@ export default function PlaceOrderPage() {
                     ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
                     : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100',
                 )}
-                title={receiptPrinterReady ? 'Receipt printer paired — auto-print armed' : 'Tap to pair the receipt printer for this session'}
+                title={receiptPrinterReady ? t('placeOrder.printerReadyTitle') : t('placeOrder.printerConnectTitle')}
               >
                 <PrinterIcon size={11} />
-                {receiptPrinterReady ? 'Printer ready' : 'Connect printer'}
+                {receiptPrinterReady ? t('placeOrder.printerReady') : t('placeOrder.printerConnect')}
               </button>
             )}
             <button
               type="button"
               onClick={toggleFullscreen}
               className="btn-ghost p-2 text-slate-500 hover:text-slate-800 shrink-0"
-              title={fullscreen ? 'Exit full screen' : 'Full screen — counter / landscape tablet'}
+              title={fullscreen ? t('placeOrder.fullscreenExit') : t('placeOrder.fullscreenEnter')}
             >
               {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
             </button>
@@ -1191,7 +1199,7 @@ export default function PlaceOrderPage() {
                 Array.from({ length: 5 }).map((_, i) => <div key={i} className="card h-16 animate-pulse" />)
               ) : items.length === 0 ? (
                 <p className="text-sm text-slate-400 italic text-center py-12">
-                  Currently there are no items available
+                  {t('placeOrder.noItemsAvailable')}
                 </p>
               ) : (
                 items.map((item: any) => {
@@ -1203,9 +1211,9 @@ export default function PlaceOrderPage() {
                     : Number(item.effectivePrice ?? item.basePrice);
                   const disabled = outletClosed || !item.isAvailable;
                   const disabledReason = outletClosed
-                    ? 'Outlet closed'
+                    ? t('placeOrder.outletClosed')
                     : !item.isAvailable
-                      ? 'Currently not available'
+                      ? t('placeOrder.itemUnavailable')
                       : null;
                   return (
                     <div
@@ -1240,7 +1248,7 @@ export default function PlaceOrderPage() {
                           <p className="text-[11px] text-slate-400 line-clamp-1">{item.shortDescription}</p>
                         )}
                         <p className="text-sm font-black text-slate-900 mt-0.5">
-                          {hasVariants ? `from ₹${lowPrice.toFixed(0)}` : `₹${lowPrice.toFixed(0)}`}
+                          {hasVariants ? t('placeOrder.fromPrice', { price: lowPrice.toFixed(0) }) : `₹${lowPrice.toFixed(0)}`}
                         </p>
                       </div>
                       <button
@@ -1253,7 +1261,7 @@ export default function PlaceOrderPage() {
                             : 'bg-brand-500 hover:bg-brand-600 text-white',
                         )}
                       >
-                        <Plus size={12} /> Add{qty > 0 && ` · ${qty}`}
+                        <Plus size={12} /> {qty > 0 ? t('placeOrder.addBtnWithQty', { qty }) : t('placeOrder.addBtn')}
                       </button>
                     </div>
                   );
@@ -1268,21 +1276,21 @@ export default function PlaceOrderPage() {
           {lastOrder && outlet?.receiptAllowManualPrint && outlet?.receiptPrinterId && isBluetoothSupported() && (
             <div className="px-3 py-2 border-b border-slate-100 bg-emerald-50/50 flex items-center justify-between gap-2">
               <p className="text-[11px] text-emerald-800 truncate">
-                Last order placed · <span className="font-bold">{lastOrder.orderNumber}</span>
+                {t('placeOrder.lastOrderPlaced')}<span className="font-bold">{lastOrder.orderNumber}</span>
               </p>
               <div className="flex items-center gap-1 shrink-0">
                 <button
                   onClick={printLastReceipt}
                   disabled={printingReceipt}
                   className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-                  title="Reprint the customer receipt for the last placed order"
+                  title={t('placeOrder.printReceiptTitle')}
                 >
-                  <PrinterIcon size={11} /> {printingReceipt ? 'Printing…' : 'Print receipt'}
+                  <PrinterIcon size={11} /> {printingReceipt ? t('placeOrder.printingReceipt') : t('placeOrder.printReceipt')}
                 </button>
                 <button
                   onClick={() => setLastOrder(null)}
                   className="text-emerald-700/60 hover:text-emerald-900 p-1"
-                  title="Dismiss"
+                  title={t('placeOrder.dismiss')}
                 >
                   <XIcon size={11} />
                 </button>
@@ -1292,13 +1300,13 @@ export default function PlaceOrderPage() {
           <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <ShoppingBag size={15} className="text-brand-500" />
-              <p className="text-sm font-bold text-slate-900">Cart</p>
+              <p className="text-sm font-bold text-slate-900">{t('placeOrder.cartTitle')}</p>
               <span className="text-[10px] font-bold bg-brand-100 text-brand-700 px-2 py-0.5 rounded-full">
-                {cartCount} item{cartCount !== 1 ? 's' : ''}
+                {t('placeOrder.cartCount', { count: cartCount })}
               </span>
             </div>
             {cart.length > 0 && (
-              <button onClick={() => setCart([])} className="text-[11px] text-slate-400 hover:text-red-500">Clear</button>
+              <button onClick={() => setCart([])} className="text-[11px] text-slate-400 hover:text-red-500">{t('placeOrder.clear')}</button>
             )}
           </div>
 
@@ -1309,7 +1317,7 @@ export default function PlaceOrderPage() {
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <Lock size={11} className="text-slate-400" />
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                    Placed · {openOrder.orderNumber}
+                    {t('placeOrder.cartPlaced', { orderNumber: openOrder.orderNumber })}
                   </p>
                 </div>
                 <div className="space-y-1.5">
@@ -1325,13 +1333,13 @@ export default function PlaceOrderPage() {
                   ))}
                 </div>
                 {cart.length > 0 && (
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mt-3 mb-1.5">New items</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mt-3 mb-1.5">{t('placeOrder.cartNewItems')}</p>
                 )}
               </div>
             )}
             {cart.length === 0 ? (
               <div className="text-center py-12 text-sm text-slate-400 italic">
-                {openOrder ? 'No new items yet — pick from the menu' : 'No items yet — pick from the menu'}
+                {openOrder ? t('placeOrder.cartEmptyNewFlow') : t('placeOrder.cartEmpty')}
               </div>
             ) : (
               (() => {
@@ -1385,20 +1393,20 @@ export default function PlaceOrderPage() {
           {/* Totals + CTA */}
           <div className="px-4 py-3 border-t border-slate-100 space-y-3">
             <div className="space-y-1 text-xs">
-              <div className="flex justify-between text-slate-500"><span>Subtotal</span><span>₹{subtotal.toFixed(2)}</span></div>
+              <div className="flex justify-between text-slate-500"><span>{t('placeOrder.subtotal')}</span><span>₹{subtotal.toFixed(2)}</span></div>
               {taxAmount > 0 && (
                 <>
-                  <div className="flex justify-between text-slate-500"><span>SGST <span className="text-[10px] text-slate-400">est.</span></span><span>₹{(taxAmount / 2).toFixed(2)}</span></div>
-                  <div className="flex justify-between text-slate-500"><span>CGST <span className="text-[10px] text-slate-400">est.</span></span><span>₹{(taxAmount / 2).toFixed(2)}</span></div>
+                  <div className="flex justify-between text-slate-500"><span>{t('placeOrder.sgst')} <span className="text-[10px] text-slate-400">{t('placeOrder.est')}</span></span><span>₹{(taxAmount / 2).toFixed(2)}</span></div>
+                  <div className="flex justify-between text-slate-500"><span>{t('placeOrder.cgst')} <span className="text-[10px] text-slate-400">{t('placeOrder.est')}</span></span><span>₹{(taxAmount / 2).toFixed(2)}</span></div>
                 </>
               )}
               {parcelAmount > 0 && (
                 <div className="flex justify-between text-slate-500">
-                  <span>Parcel charge</span><span>₹{parcelAmount.toFixed(2)}</span>
+                  <span>{t('placeOrder.parcelCharge')}</span><span>₹{parcelAmount.toFixed(2)}</span>
                 </div>
               )}
               <div className="flex justify-between text-slate-900 font-black text-sm pt-1 border-t border-slate-100">
-                <span>Total</span><span>₹{totalAmount.toFixed(2)}</span>
+                <span>{t('placeOrder.total')}</span><span>₹{totalAmount.toFixed(2)}</span>
               </div>
             </div>
 
@@ -1415,7 +1423,7 @@ export default function PlaceOrderPage() {
                       bookingMode === m ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
                     )}
                   >
-                    {m === 'counter' ? <><Package size={12} /> Counter</> : <><Table2 size={12} /> Table</>}
+                    {m === 'counter' ? <><Package size={12} /> {t('placeOrder.bookingCounter')}</> : <><Table2 size={12} /> {t('placeOrder.bookingTable')}</>}
                   </button>
                 ))}
               </div>
@@ -1425,7 +1433,7 @@ export default function PlaceOrderPage() {
               <label className="flex items-center gap-2 bg-slate-50 rounded-xl px-3 py-2 cursor-pointer">
                 <input type="checkbox" checked={isParcel} onChange={e => setIsParcel(e.target.checked)} className="w-4 h-4 accent-brand-500" />
                 <Package size={13} className="text-slate-400" />
-                <span className="text-xs font-semibold text-slate-700">Parcel / takeaway</span>
+                <span className="text-xs font-semibold text-slate-700">{t('placeOrder.parcelTakeaway')}</span>
               </label>
             ) : (
               <div className="grid grid-cols-2 gap-2 bg-slate-50 rounded-xl px-3 py-2.5">
@@ -1433,9 +1441,9 @@ export default function PlaceOrderPage() {
                     column holds its own label so the pair stays
                     readable inside the narrow cart sidebar. */}
                 <div className="min-w-0">
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Section</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">{t('placeOrder.sectionLabel')}</label>
                   {visibleTableTypes.length === 0 ? (
-                    <p className="text-[11px] text-slate-400 italic">No sections</p>
+                    <p className="text-[11px] text-slate-400 italic">{t('placeOrder.noSections')}</p>
                   ) : (
                     <div className="flex flex-wrap gap-1">
                       {visibleTableTypes.map((tt) => {
@@ -1460,7 +1468,7 @@ export default function PlaceOrderPage() {
                   )}
                 </div>
                 <div className="min-w-0">
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Table</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">{t('placeOrder.tableLabel')}</label>
                   <select
                     value={tableId}
                     onChange={(e) => setTableId(e.target.value)}
@@ -1468,10 +1476,10 @@ export default function PlaceOrderPage() {
                     className="input text-xs w-full"
                   >
                     <option value="">
-                      {!tableTypeId ? 'Pick section' : tablesForType.length ? 'Select…' : 'No tables'}
+                      {!tableTypeId ? t('placeOrder.pickSection') : tablesForType.length ? t('placeOrder.selectTable') : t('placeOrder.noTables')}
                     </option>
-                    {tablesForType.map((t: any) => (
-                      <option key={t.id} value={t.id}>Table {t.number} · {t.capacity}p</option>
+                    {tablesForType.map((tbl: any) => (
+                      <option key={tbl.id} value={tbl.id}>{t('placeOrder.tableOption', { number: tbl.number, capacity: tbl.capacity })}</option>
                     ))}
                   </select>
                 </div>
@@ -1487,14 +1495,14 @@ export default function PlaceOrderPage() {
               <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-2">
                 <div className="flex items-center justify-between gap-2 mb-1.5">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
-                    Open tabs at this table
+                    {t('placeOrder.openTabsTitle')}
                     <span className="text-[10px] font-semibold text-slate-400">
                       · {tableOpenTabs.length}
                     </span>
                   </p>
                   <button
                     onClick={startNewTab}
-                    title="New tab (different customer)"
+                    title={t('placeOrder.newTabTitle')}
                     className="inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-500 hover:text-brand-700 hover:bg-brand-50 border border-slate-200 transition-colors"
                   >
                     <Plus size={12} />
@@ -1502,7 +1510,7 @@ export default function PlaceOrderPage() {
                 </div>
                 {tableOpenTabs.length === 0 ? (
                   <p className="text-[11px] text-slate-400 italic py-2 text-center">
-                    No open tabs yet. Add items below to start one.
+                    {t('placeOrder.noOpenTabs')}
                   </p>
                 ) : (
                   <ul className="space-y-1">
@@ -1525,7 +1533,7 @@ export default function PlaceOrderPage() {
                                 <span>#{tab.orderNumber}</span>
                                 {billed && (
                                   <span className="text-[9px] font-bold bg-violet-100 text-violet-800 border border-violet-200 px-1 py-0.5 rounded">
-                                    Bill requested
+                                    {t('placeOrder.billRequested')}
                                   </span>
                                 )}
                               </p>
@@ -1554,13 +1562,13 @@ export default function PlaceOrderPage() {
                 htmlFor="customer-phone-input"
                 className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1 shrink-0"
               >
-                <Phone size={10} /> Phone
+                <Phone size={10} /> {t('placeOrder.phoneLabel')}
               </label>
               <input
                 id="customer-phone-input"
                 value={customerPhone}
                 onChange={e => setCustomerPhone(e.target.value)}
-                placeholder="+91 ... (optional)"
+                placeholder={t('placeOrder.phonePlaceholder')}
                 className="input text-xs flex-1 min-w-0"
               />
             </div>
@@ -1581,14 +1589,14 @@ export default function PlaceOrderPage() {
                         className="w-full bg-gradient-to-r from-emerald-500 to-emerald-600 text-white py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-[52px]"
                       >
                         {placing && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-                        <Banknote size={18} /> Cash · ₹{Number(openOrder.totalAmount).toFixed(2)}
+                        <Banknote size={18} /> {t('placeOrder.payCash', { amount: Number(openOrder.totalAmount).toFixed(2) })}
                       </button>
                       <button
                         onClick={() => payBill('UPI')}
                         disabled={placing}
                         className="w-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-[52px]"
                       >
-                        <Smartphone size={18} /> UPI · ₹{Number(openOrder.totalAmount).toFixed(2)}
+                        <Smartphone size={18} /> {t('placeOrder.payUpi', { amount: Number(openOrder.totalAmount).toFixed(2) })}
                       </button>
                     </>
                   ) : (
@@ -1599,15 +1607,17 @@ export default function PlaceOrderPage() {
                         className="w-full bg-gradient-to-r from-brand-500 to-brand-700 text-white py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-[52px]"
                       >
                         {placing && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-                        <Plus size={18} /> {openOrder ? 'Add to Order' : 'Place Order'}
+                        <Plus size={18} /> {openOrder ? t('placeOrder.addToOrderBtn') : t('placeOrder.placeOrderBtn')}
                       </button>
                       <button
                         onClick={pressBillNow}
                         disabled={!openOrder || placing}
-                        title={!openOrder ? 'Place items first before billing' : undefined}
+                        title={!openOrder ? t('placeOrder.billNowDisabledTitle') : undefined}
                         className="w-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-[52px]"
                       >
-                        <Banknote size={18} /> Bill Now{openOrder ? ` · ₹${Number(openOrder.totalAmount).toFixed(2)}` : ''}
+                        <Banknote size={18} /> {openOrder
+                          ? t('placeOrder.billNowWithAmount', { amount: Number(openOrder.totalAmount).toFixed(2) })
+                          : t('placeOrder.billNow')}
                       </button>
                     </>
                   )
@@ -1619,14 +1629,14 @@ export default function PlaceOrderPage() {
                       className="w-full bg-gradient-to-r from-emerald-500 to-emerald-600 text-white py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-[52px]"
                     >
                       {placing && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-                      <Banknote size={18} /> Cash · ₹{totalAmount.toFixed(2)}
+                      <Banknote size={18} /> {t('placeOrder.payCash', { amount: totalAmount.toFixed(2) })}
                     </button>
                     <button
                       onClick={() => submit('UPI')}
                       disabled={!cart.length || placing || outletClosed || (bookingMode === 'table' && !tableId)}
                       className="w-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-[52px]"
                     >
-                      <Smartphone size={18} /> UPI · ₹{totalAmount.toFixed(2)}
+                      <Smartphone size={18} /> {t('placeOrder.payUpi', { amount: totalAmount.toFixed(2) })}
                     </button>
                   </>
                 )}
@@ -1661,6 +1671,7 @@ function ItemDetailDialog({
   onClose: () => void;
   onAdd: (variant: any | undefined, toppings: CartTopping[], qty: number) => void;
 }) {
+  const { t } = useTranslation();
   const [variantId, setVariantId] = useState<string>(item.variants?.[0]?.id ?? '');
   const [qty, setQty] = useState(1);
   // Topping selection — { selected, optionId? } per link.
@@ -1747,7 +1758,7 @@ function ItemDetailDialog({
           {/* Variants */}
           {item.variants?.length > 0 && (
             <section>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Variant</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">{t('placeOrder.modalVariant')}</p>
               <div className="space-y-1.5">
                 {item.variants.map((v: any) => {
                   const active = v.id === variantId;
@@ -1778,7 +1789,7 @@ function ItemDetailDialog({
           {/* Toppings */}
           {item.itemToppings?.length > 0 && (
             <section>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Add-ons</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">{t('placeOrder.modalAddons')}</p>
               <div className="space-y-2">
                 {item.itemToppings.map((link: any) => {
                   const sel = topSel[link.toppingId] || { selected: link.isRequired };
@@ -1799,7 +1810,7 @@ function ItemDetailDialog({
                         />
                         <span className="text-xs font-semibold text-slate-800 flex-1">
                           {link.topping.name}
-                          {link.isRequired && <span className="ml-1 text-[10px] text-red-500">required</span>}
+                          {link.isRequired && <span className="ml-1 text-[10px] text-red-500">{t('placeOrder.modalRequired')}</span>}
                         </span>
                         {!hasOptions && <span className="text-xs font-bold text-slate-700">+₹{linkAdd.toFixed(0)}</span>}
                       </label>
@@ -1843,7 +1854,7 @@ function ItemDetailDialog({
             onClick={() => onAdd(variant, toppings, qty)}
             className="flex-1 bg-gold-500 hover:bg-gold-600 text-charcoal-900  text-white font-bold py-2.5 rounded-xl text-sm"
           >
-            Add {qty} for ₹{lineTotal.toFixed(0)}
+            {t('placeOrder.modalAddQty', { qty, total: lineTotal.toFixed(0) })}
           </button>
         </div>
       </div>
