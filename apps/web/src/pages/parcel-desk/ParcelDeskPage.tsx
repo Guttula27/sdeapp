@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { Navigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import { Package, ShoppingBag, Clock, CheckCircle2, ChefHat, ChevronDown, Maximize2 } from 'lucide-react';
@@ -35,17 +36,18 @@ type OrderRow = {
 type Queue = { pack: OrderRow[]; handover: OrderRow[] };
 const EMPTY_QUEUE: Queue = { pack: [], handover: [] };
 
-const LANE_META: Record<Lane, { title: string; subtitle: string; tint: string; accent: string; icon: any }> = {
+// Lane palette + i18n key stems. Labels/subtitles come from t() at render time.
+const LANE_META: Record<Lane, { titleKey: string; subtitleKey: string; tint: string; accent: string; icon: any }> = {
   pack: {
-    title: 'Pack',
-    subtitle: 'Kitchen finished — pack the parcel and mark it ready for handover.',
+    titleKey:    'lanePack',
+    subtitleKey: 'lanePackSubtitle',
     tint: 'bg-amber-50 border-amber-200',
     accent: 'text-amber-700',
     icon: Package,
   },
   handover: {
-    title: 'Handover',
-    subtitle: 'Parcel packed — waiting for the customer to collect.',
+    titleKey:    'laneHandover',
+    subtitleKey: 'laneHandoverSubtitle',
     tint: 'bg-emerald-50 border-emerald-200',
     accent: 'text-emerald-700',
     icon: ShoppingBag,
@@ -81,6 +83,7 @@ function elapsedMins(iso: string) {
 }
 
 export default function ParcelDeskPage() {
+  const { t } = useTranslation();
   const user = useSelector((s: RootState) => s.auth.user);
   const { tier, has } = useUserRole();
   // useFullscreen MUST sit above every conditional `return` below —
@@ -150,7 +153,7 @@ export default function ParcelDeskPage() {
       toast.success(label);
       fetchQueue();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Could not update');
+      toast.error(e?.response?.data?.message || t('parcelDesk.toastCouldNotUpdate'));
     }
   };
 
@@ -166,7 +169,7 @@ export default function ParcelDeskPage() {
       );
       fetchQueue();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Could not update item');
+      toast.error(e?.response?.data?.message || t('parcelDesk.toastCouldNotUpdateItem'));
     }
   };
 
@@ -193,7 +196,7 @@ export default function ParcelDeskPage() {
   if (!outletId) {
     return (
       <div className="p-8 text-sm text-slate-500">
-        Parcel desk is per-outlet. Your account isn't linked to an outlet yet.
+        {t('parcelDesk.outletScopedNotice')}
       </div>
     );
   }
@@ -208,14 +211,14 @@ export default function ParcelDeskPage() {
     >
       <header className="flex items-center justify-between mb-4 gap-2">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Parcel desk</h1>
+          <h1 className="text-xl font-bold text-slate-900">{t('parcelDesk.title')}</h1>
           <p className="text-xs text-slate-500">
-            Pack parcels coming out of the kitchen and hand them over to customers as they collect.
+            {t('parcelDesk.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <div className="text-xs text-slate-400">
-            {loading ? 'Loading…' : `${counts.pack + counts.handover} open`}
+            {loading ? t('parcelDesk.loading') : t('parcelDesk.openCount', { count: counts.pack + counts.handover })}
           </div>
           <FullscreenToggle active={isFullscreen} onClick={toggleFullscreen} />
         </div>
@@ -244,14 +247,14 @@ export default function ParcelDeskPage() {
                   'hidden lg:flex flex-col items-center justify-center gap-3 rounded-2xl border p-3 transition-all hover:brightness-95',
                   meta.tint,
                 )}
-                title={`Expand ${meta.title}`}
+                title={t('parcelDesk.expandLane', { title: t(`parcelDesk.${meta.titleKey}`) })}
               >
                 <Icon size={18} className={meta.accent} />
                 <span
                   className={clsx('text-[11px] font-bold uppercase tracking-wider', meta.accent)}
                   style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
                 >
-                  {meta.title}
+                  {t(`parcelDesk.${meta.titleKey}`)}
                 </span>
                 <span className="text-xs font-bold bg-white/80 rounded-full px-2 py-0.5 text-slate-700">
                   {rows.length}
@@ -273,7 +276,7 @@ export default function ParcelDeskPage() {
                 <div className="flex items-center gap-2 min-w-0">
                   <Icon size={16} className={meta.accent} />
                   <h2 className={clsx('text-sm font-bold uppercase tracking-wider', meta.accent)}>
-                    {meta.title}
+                    {t(`parcelDesk.${meta.titleKey}`)}
                   </h2>
                   <span className="text-xs font-semibold bg-white/70 rounded-full px-2 py-0.5 text-slate-600">
                     {rows.length}
@@ -287,17 +290,17 @@ export default function ParcelDeskPage() {
                       ? 'bg-white/80 text-slate-700 hover:bg-white'
                       : 'bg-white/50 text-slate-500 hover:bg-white/80',
                   )}
-                  title={isExpanded ? 'Collapse to equal columns' : 'Expand this lane'}
+                  title={isExpanded ? t('parcelDesk.collapseTitle') : t('parcelDesk.expandTitle')}
                 >
                   <Maximize2 size={13} />
                 </button>
               </header>
               {!isExpanded && (
-                <p className="text-[11px] text-slate-500 px-1 mb-3">{meta.subtitle}</p>
+                <p className="text-[11px] text-slate-500 px-1 mb-3">{t(`parcelDesk.${meta.subtitleKey}`)}</p>
               )}
 
               {rows.length === 0 && (
-                <p className="text-xs text-slate-400 italic px-2 py-6 text-center">Nothing in this lane.</p>
+                <p className="text-xs text-slate-400 italic px-2 py-6 text-center">{t('parcelDesk.emptyLane')}</p>
               )}
 
               {/* Multi-column masonry matches the Kitchen + Service desk
@@ -336,19 +339,19 @@ export default function ParcelDeskPage() {
                             </span>
                           )}
                           <span className="text-[10px] font-semibold bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">
-                            Parcel
+                            {t('parcelDesk.parcelBadge')}
                           </span>
                           <span className="text-[10px] font-semibold text-slate-500">
-                            {items.length} item{items.length === 1 ? '' : 's'}
+                            {t('parcelDesk.itemsCount', { count: items.length })}
                           </span>
                           {readyCount > 0 && lane === 'pack' && (
                             <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded animate-pulse">
-                              {readyCount} to pack
+                              {t('parcelDesk.readyToPack', { count: readyCount })}
                             </span>
                           )}
                           {packedCount > 0 && lane === 'pack' && (
                             <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">
-                              {packedCount} packed
+                              {t('parcelDesk.packedBadge', { count: packedCount })}
                             </span>
                           )}
                         </div>
@@ -397,13 +400,13 @@ export default function ParcelDeskPage() {
                             >
                               <span className="font-semibold text-slate-900 min-w-[1.5rem]">×{it.quantity}</span>
                               <span className="flex-1 truncate">
-                                {it.item?.name || 'Item'}
+                                {it.item?.name || t('parcelDesk.itemFallback')}
                                 {it.variant?.name ? ` — ${it.variant.name}` : ''}
                                 {it.notes ? <span className="text-slate-400"> · {it.notes}</span> : null}
                               </span>
                               {isPreReady && (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 px-2 py-0.5 rounded-full bg-white border border-slate-200">
-                                  <ChefHat size={10} /> cooking
+                                  <ChefHat size={10} /> {t('parcelDesk.cookingBadge')}
                                 </span>
                               )}
                               {isReady && lane === 'pack' && (
@@ -411,29 +414,29 @@ export default function ParcelDeskPage() {
                                   onClick={(e) => { e.stopPropagation(); advanceItemStatus(o.id, it.id, 'PACKED'); }}
                                   className="inline-flex items-center gap-1 bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-bold rounded-md px-2.5 py-1 transition-colors"
                                 >
-                                  <Package size={11} /> Mark packed
+                                  <Package size={11} /> {t('parcelDesk.markPacked')}
                                 </button>
                               )}
                               {isPacked && (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                                  <CheckCircle2 size={10} /> packed
+                                  <CheckCircle2 size={10} /> {t('parcelDesk.packedInline')}
                                 </span>
                               )}
                             </li>
                           );
                         })}
                         {items.length === 0 && (
-                          <li className="text-xs italic text-slate-400">No items in this lane.</li>
+                          <li className="text-xs italic text-slate-400">{t('parcelDesk.emptyItems')}</li>
                         )}
                       </ul>
 
                       <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                         {lane === 'handover' && (
                           <button
-                            onClick={() => advanceStatus(o.id, 'SERVED', 'Handed over to customer')}
+                            onClick={() => advanceStatus(o.id, 'SERVED', t('parcelDesk.handedOverToCustomer'))}
                             className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors"
                           >
-                            <CheckCircle2 size={13} /> Mark handed over
+                            <CheckCircle2 size={13} /> {t('parcelDesk.markHandedOver')}
                           </button>
                         )}
                       </div>
