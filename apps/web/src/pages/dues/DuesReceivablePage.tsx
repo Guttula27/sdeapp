@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
+import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { RootState } from '../../store';
 import api from '../../services/api';
@@ -29,6 +30,7 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 
 export default function DuesReceivablePage() {
+  const { t } = useTranslation();
   const user = useSelector((s: RootState) => s.auth.user);
   const businessId = user?.businessId;
   const userOutletId = user?.outletId || '';
@@ -86,11 +88,11 @@ export default function DuesReceivablePage() {
       });
       setRows(data.data || data || []);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to load receivables');
+      toast.error(e?.response?.data?.message || t('dues.toastLoadFail'));
     } finally {
       setLoading(false);
     }
-  }, [outletId, ordersFrom, ordersTo, settlementsFrom, settlementsTo]);
+  }, [outletId, ordersFrom, ordersTo, settlementsFrom, settlementsTo, t]);
 
   useEffect(() => { fetchRows(); }, [fetchRows]);
 
@@ -121,11 +123,11 @@ export default function DuesReceivablePage() {
     if (!settleTarget) return;
     const amount = Number(settleAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      toast.error('Enter a valid amount');
+      toast.error(t('dues.toastAmountInvalid'));
       return;
     }
     if (amount > settleTarget.currentBalance + 0.01) {
-      toast.error(`Amount exceeds outstanding balance (₹${settleTarget.currentBalance.toFixed(2)})`);
+      toast.error(t('dues.toastAmountExceeds', { amount: settleTarget.currentBalance.toFixed(2) }));
       return;
     }
     setSettling(true);
@@ -137,11 +139,11 @@ export default function DuesReceivablePage() {
         reference: settleReference.trim() || undefined,
         notes: settleNotes.trim() || undefined,
       });
-      toast.success('Dues settled');
+      toast.success(t('dues.toastSettled'));
       setSettleTarget(null);
       fetchRows();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to settle');
+      toast.error(e?.response?.data?.message || t('dues.toastSettleFail'));
     } finally {
       setSettling(false);
     }
@@ -158,7 +160,7 @@ export default function DuesReceivablePage() {
   // already in memory.
   const exportCsv = () => {
     if (rows.length === 0) {
-      toast('Nothing to export');
+      toast(t('dues.toastNothingToExport'));
       return;
     }
     const esc = (v: string | number | null | undefined) => {
@@ -167,8 +169,8 @@ export default function DuesReceivablePage() {
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const header = [
-      'Customer', 'Phone', 'Tag', 'Max ceiling (₹)',
-      'Outstanding (₹)', 'Charged in range (₹)', 'Collected in range (₹)',
+      t('dues.csvHeaderCustomer'), t('dues.csvHeaderPhone'), t('dues.csvHeaderTag'), t('dues.csvHeaderCeiling'),
+      t('dues.csvHeaderOutstanding'), t('dues.csvHeaderCharged'), t('dues.csvHeaderCollected'),
     ];
     const lines = rows.map((r) => [
       esc(r.name),
@@ -182,7 +184,7 @@ export default function DuesReceivablePage() {
     // Totals row last — easy for the admin pasting into Excel to see
     // the bottom line without an extra step.
     lines.push([
-      esc('TOTAL'), '', '', '',
+      esc(t('dues.csvTotalRow')), '', '', '',
       esc(totals.currentBalance.toFixed(2)),
       esc(totals.ordersInRangeTotal.toFixed(2)),
       esc(totals.settlementsInRangeTotal.toFixed(2)),
@@ -216,9 +218,9 @@ export default function DuesReceivablePage() {
       `}</style>
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="page-title">Dues — Receivable</h1>
+          <h1 className="page-title">{t('dues.title')}</h1>
           <p className="page-subtitle">
-            Customers carrying outstanding pay-later balances{activeOutletName ? ` — ${activeOutletName}` : ''}.
+            {activeOutletName ? t('dues.subtitleWithOutlet', { outlet: activeOutletName }) : `${t('dues.subtitle')}.`}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap print-hide">
@@ -226,17 +228,17 @@ export default function DuesReceivablePage() {
             className="btn-secondary !py-1.5 !px-3 text-xs"
             disabled={rows.length === 0}
             onClick={exportCsv}
-            title="Download the customer-wise rows as CSV (totals appended)"
+            title={t('dues.exportCsvTitle')}
           >
-            Export CSV
+            {t('dues.exportCsv')}
           </button>
           <button
             className="btn-secondary !py-1.5 !px-3 text-xs"
             disabled={rows.length === 0}
             onClick={() => window.print()}
-            title="Open the print dialog. The .print-hide chrome below is suppressed in print CSS."
+            title={t('dues.printTitle')}
           >
-            Print
+            {t('dues.print')}
           </button>
           {isMultiOutlet && (
             <select
@@ -253,45 +255,45 @@ export default function DuesReceivablePage() {
       {/* Period filters — two independent windows. */}
       <div className="card p-4 grid grid-cols-1 md:grid-cols-2 gap-4 print-hide">
         <div className="space-y-2">
-          <p className="text-[11px] font-semibold text-slate-600 uppercase tracking-wide">Orders in range</p>
+          <p className="text-[11px] font-semibold text-slate-600 uppercase tracking-wide">{t('dues.ordersInRange')}</p>
           <div className="grid grid-cols-2 gap-2">
-            <Field label="From"><input type="date" className="input" value={ordersFrom} onChange={(e) => setOrdersFrom(e.target.value)} /></Field>
-            <Field label="To">  <input type="date" className="input" value={ordersTo}   onChange={(e) => setOrdersTo(e.target.value)}   /></Field>
+            <Field label={t('dues.from')}><input type="date" className="input" value={ordersFrom} onChange={(e) => setOrdersFrom(e.target.value)} /></Field>
+            <Field label={t('dues.to')}>  <input type="date" className="input" value={ordersTo}   onChange={(e) => setOrdersTo(e.target.value)}   /></Field>
           </div>
         </div>
         <div className="space-y-2">
-          <p className="text-[11px] font-semibold text-slate-600 uppercase tracking-wide">Settlements in range</p>
+          <p className="text-[11px] font-semibold text-slate-600 uppercase tracking-wide">{t('dues.settlementsInRange')}</p>
           <div className="grid grid-cols-2 gap-2">
-            <Field label="From"><input type="date" className="input" value={settlementsFrom} onChange={(e) => setSettlementsFrom(e.target.value)} /></Field>
-            <Field label="To">  <input type="date" className="input" value={settlementsTo}   onChange={(e) => setSettlementsTo(e.target.value)}   /></Field>
+            <Field label={t('dues.from')}><input type="date" className="input" value={settlementsFrom} onChange={(e) => setSettlementsFrom(e.target.value)} /></Field>
+            <Field label={t('dues.to')}>  <input type="date" className="input" value={settlementsTo}   onChange={(e) => setSettlementsTo(e.target.value)}   /></Field>
           </div>
         </div>
       </div>
 
       {/* Summary row. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <SummaryCard label="Total outstanding" amount={totals.currentBalance} hint="Live balance, ignores date filters" />
-        <SummaryCard label="Charged in range"  amount={totals.ordersInRangeTotal} hint="Sum of pay-later orders in the orders window" />
-        <SummaryCard label="Collected in range" amount={totals.settlementsInRangeTotal} hint="Sum of settlements in the settlements window" tone="emerald" />
+        <SummaryCard label={t('dues.totalOutstanding')}  amount={totals.currentBalance}          hint={t('dues.totalOutstandingHint')} />
+        <SummaryCard label={t('dues.chargedInRange')}    amount={totals.ordersInRangeTotal}      hint={t('dues.chargedInRangeHint')} />
+        <SummaryCard label={t('dues.collectedInRange')}  amount={totals.settlementsInRangeTotal} hint={t('dues.collectedInRangeHint')} tone="emerald" />
       </div>
 
       {/* Table. */}
       <div className="card overflow-hidden">
         {loading ? (
-          <div className="p-12 text-center text-sm text-slate-500">Loading…</div>
+          <div className="p-12 text-center text-sm text-slate-500">{t('dues.loading')}</div>
         ) : rows.length === 0 ? (
           <div className="p-12 text-center text-sm text-slate-500">
-            No customers with pay-later activity at this outlet yet.
+            {t('dues.empty')}
           </div>
         ) : (
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="text-left  px-4 py-2">Customer</th>
-                <th className="text-left  px-4 py-2">Tag</th>
-                <th className="text-right px-4 py-2">Outstanding</th>
-                <th className="text-right px-4 py-2">Charged (range)</th>
-                <th className="text-right px-4 py-2">Collected (range)</th>
+                <th className="text-left  px-4 py-2">{t('dues.colCustomer')}</th>
+                <th className="text-left  px-4 py-2">{t('dues.colTag')}</th>
+                <th className="text-right px-4 py-2">{t('dues.colOutstanding')}</th>
+                <th className="text-right px-4 py-2">{t('dues.colChargedRange')}</th>
+                <th className="text-right px-4 py-2">{t('dues.colCollectedRange')}</th>
                 <th className="text-right px-4 py-2 print-hide"></th>
               </tr>
             </thead>
@@ -309,7 +311,7 @@ export default function DuesReceivablePage() {
                         style={{ backgroundColor: r.tag.color }}
                       >
                         {r.tag.name}
-                        {r.tag.maxDueAmount != null ? ` · cap ₹${r.tag.maxDueAmount}` : ''}
+                        {r.tag.maxDueAmount != null ? t('dues.capSuffix', { amount: r.tag.maxDueAmount }) : ''}
                       </span>
                     ) : (
                       <span className="text-xs text-slate-400">—</span>
@@ -331,10 +333,10 @@ export default function DuesReceivablePage() {
                         disabled={r.currentBalance <= 0}
                         onClick={() => openSettle(r)}
                       >
-                        Settle
+                        {t('dues.settle')}
                       </button>
                     ) : (
-                      <span className="text-[11px] text-slate-400">No permission</span>
+                      <span className="text-[11px] text-slate-400">{t('dues.noPermission')}</span>
                     )}
                   </td>
                 </tr>
@@ -348,12 +350,12 @@ export default function DuesReceivablePage() {
       <Modal
         open={!!settleTarget}
         onClose={() => setSettleTarget(null)}
-        title={`Settle dues — ${settleTarget?.name || ''}`}
+        title={t('dues.modalTitle', { name: settleTarget?.name || '' })}
         footer={
           <>
-            <button className="btn-secondary" onClick={() => setSettleTarget(null)}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setSettleTarget(null)}>{t('dues.cancel')}</button>
             <button form="settle-form" type="submit" className="btn-primary" disabled={settling}>
-              {settling ? 'Saving…' : 'Record settlement'}
+              {settling ? t('dues.saving') : t('dues.recordSettlement')}
             </button>
           </>
         }
@@ -361,9 +363,9 @@ export default function DuesReceivablePage() {
         {settleTarget && (
           <form id="settle-form" onSubmit={submitSettle} className="space-y-4">
             <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              Outstanding balance: <span className="font-bold">₹{settleTarget.currentBalance.toFixed(2)}</span>
+              {t('dues.outstandingPrefix')} <span className="font-bold">₹{settleTarget.currentBalance.toFixed(2)}</span>
             </div>
-            <Field label="Amount (₹)">
+            <Field label={t('dues.amountLabel')}>
               <input
                 type="number"
                 min="0"
@@ -374,23 +376,29 @@ export default function DuesReceivablePage() {
                 required
               />
               <p className="text-[11px] text-slate-500 mt-1">
-                Partial settle is allowed; you can't enter more than the outstanding balance.
+                {t('dues.amountHint')}
               </p>
             </Field>
-            <Field label="Payment mode">
+            <Field label={t('dues.paymentMode')}>
               <select
                 className="input"
                 value={settleMode}
                 onChange={(e) => setSettleMode(e.target.value as PaymentMode)}
               >
-                <option value="CASH">Cash</option>
-                <option value="UPI">UPI</option>
-                <option value="CARD">Card</option>
-                <option value="RAZORPAY">Razorpay</option>
-                <option value="OTHER">Other settlement (e.g. salary deduction)</option>
+                <option value="CASH">{t('dues.modeCash')}</option>
+                <option value="UPI">{t('dues.modeUpi')}</option>
+                <option value="CARD">{t('dues.modeCard')}</option>
+                <option value="RAZORPAY">{t('dues.modeRazorpay')}</option>
+                <option value="OTHER">{t('dues.modeOther')}</option>
               </select>
             </Field>
-            <Field label={`Reference (optional, ${settleMode === 'UPI' ? 'UPI txn id' : settleMode === 'RAZORPAY' ? 'Razorpay payment id' : 'memo'})`}>
+            <Field label={t('dues.referenceLabel', {
+              context: settleMode === 'UPI'
+                ? t('dues.refUpi')
+                : settleMode === 'RAZORPAY'
+                  ? t('dues.refRazorpay')
+                  : t('dues.refMemo'),
+            })}>
               <input
                 type="text"
                 className="input"
@@ -398,7 +406,7 @@ export default function DuesReceivablePage() {
                 onChange={(e) => setSettleReference(e.target.value)}
               />
             </Field>
-            <Field label="Notes (optional)">
+            <Field label={t('dues.notesLabel')}>
               <textarea
                 className="input min-h-[60px]"
                 value={settleNotes}
