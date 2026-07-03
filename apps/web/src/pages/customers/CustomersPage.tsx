@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSelector } from 'react-redux';
+import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import dayjs from 'dayjs';
@@ -13,6 +14,7 @@ import { useUserRole } from '../../hooks/useUserRole';
 dayjs.extend(relativeTime);
 
 export default function CustomersPage() {
+  const { t } = useTranslation();
   const user = useSelector((s: RootState) => s.auth.user);
   const businessId = user?.businessId;
   const userOutletId = user?.outletId || '';
@@ -29,9 +31,9 @@ export default function CustomersPage() {
   // Filters
   const [nameFilter, setNameFilter]     = useState('');
   const [phoneFilter, setPhoneFilter]   = useState('');
-  const [tagFilter, setTagFilter]       = useState<'ALL' | 'NONE' | string>('ALL');   // ALL | NONE | <tagId>
-  const [activityFilter, setActivityFilter] = useState<'ALL' | 'WITH' | 'NONE'>('ALL'); // ALL | WITH orders | NONE
-  const [spendFilter, setSpendFilter]   = useState<'ALL' | 'GT500' | 'GT2000'>('ALL'); // spend tiers
+  const [tagFilter, setTagFilter]       = useState<'ALL' | 'NONE' | string>('ALL');
+  const [activityFilter, setActivityFilter] = useState<'ALL' | 'WITH' | 'NONE'>('ALL');
+  const [spendFilter, setSpendFilter]   = useState<'ALL' | 'GT500' | 'GT2000'>('ALL');
   const [sortBy, setSortBy]             = useState<'RECENT' | 'NAME' | 'ORDERS' | 'SPEND'>('RECENT');
 
   // Add-customer modal
@@ -40,8 +42,7 @@ export default function CustomersPage() {
   const [newPhone, setNewPhone] = useState('');
   const [adding, setAdding] = useState(false);
 
-  // Orders + detail modals stacked: orders list opens first, then a selected
-  // order details on top of it.
+  // Orders + detail modals stacked
   const [ordersFor, setOrdersFor] = useState<any | null>(null);
   const [customerOrders, setCustomerOrders] = useState<any[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
@@ -53,20 +54,15 @@ export default function CustomersPage() {
     setLoadingOrders(true);
     try {
       const { data } = await api.get(`/outlets/${outletId}/customers/${customer.id}/orders`);
-      // The customer-orders endpoint returns a paginated envelope
-      //   { items, nextCursor, limit }
-      // (changed in the perf-phase-2 cursor-pagination work). Earlier
-      // versions returned a bare array, so we defensively accept both
-      // shapes — `data.data` can be the array directly OR the wrapper.
       const payload = data.data ?? data;
       const list = Array.isArray(payload) ? payload : (payload?.items ?? []);
       setCustomerOrders(Array.isArray(list) ? list : []);
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to load orders');
+      toast.error(e.response?.data?.message || t('customers.toastLoadOrdersFail'));
     } finally {
       setLoadingOrders(false);
     }
-  }, [outletId]);
+  }, [outletId, t]);
 
   useEffect(() => {
     if (!businessId) return;
@@ -79,25 +75,19 @@ export default function CustomersPage() {
       .catch(() => {});
   }, [businessId]);
 
-  // userId -> outstanding dues balance for the active outlet. Populated
-  // off the receivable endpoint so we don't hit GET /balance per row.
   const [duesByUser, setDuesByUser] = useState<Record<string, number>>({});
 
   const fetchAll = useCallback(async () => {
     if (!outletId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [c, t, d] = await Promise.all([
+      const [c, tagsRes, d] = await Promise.all([
         api.get(`/outlets/${outletId}/customers`),
         api.get(`/outlets/${outletId}/customer-tags`),
-        // Receivable returns one row per customer with any pay-later
-        // activity. Customers without activity are absent from the
-        // response → treat as zero. Failure is non-fatal so the page
-        // still renders without the dues column.
         api.get(`/outlets/${outletId}/dues/receivable`).catch(() => ({ data: { data: [] } })),
       ]);
       setCustomers(c.data.data || []);
-      setTags(t.data.data || []);
+      setTags(tagsRes.data.data || []);
       const map: Record<string, number> = {};
       for (const row of (d.data.data || d.data || []) as Array<{ userId: string; currentBalance: number }>) {
         map[row.userId] = row.currentBalance;
@@ -112,20 +102,20 @@ export default function CustomersPage() {
 
   const addCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPhone.trim()) { toast.error('Phone number is required'); return; }
+    if (!newPhone.trim()) { toast.error(t('customers.toastPhoneRequired')); return; }
     setAdding(true);
     try {
       await api.post(`/outlets/${outletId}/customers`, {
         name: newName.trim() || undefined,
         phone: newPhone.trim(),
       });
-      toast.success('Customer added');
+      toast.success(t('customers.toastAdded'));
       setAddOpen(false);
       setNewName('');
       setNewPhone('');
       fetchAll();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to add customer');
+      toast.error(e.response?.data?.message || t('customers.toastAddFail'));
     } finally {
       setAdding(false);
     }
@@ -136,15 +126,14 @@ export default function CustomersPage() {
     try {
       const { data } = await api.put(`/outlets/${outletId}/customers/${userId}/tag`, { tagId });
       setCustomers(prev => prev.map(c => c.id === userId ? { ...c, tag: data.data.tag } : c));
-      toast.success(tagId ? 'Tag assigned' : 'Tag cleared');
+      toast.success(tagId ? t('customers.toastTagAssigned') : t('customers.toastTagCleared'));
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed');
+      toast.error(e.response?.data?.message || t('customers.toastTagFail'));
     } finally {
       setSavingFor(null);
     }
   };
 
-  // Outlet-tier admins are pinned to their own outlet — hide the cross-outlet switcher.
   const { tier } = useUserRole();
   const isMultiOutlet = tier !== 'outlet' && outlets.length > 1;
   const filtered = customers
@@ -192,11 +181,11 @@ export default function CustomersPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="page-title">Customers</h1>
+          <h1 className="page-title">{t('customers.title')}</h1>
           <p className="page-subtitle">
             {isFiltered
-              ? `${filtered.length} of ${customers.length} customer${customers.length !== 1 ? 's' : ''}`
-              : `${customers.length} customer${customers.length !== 1 ? 's' : ''}`}
+              ? t('customers.countFiltered', { filtered: filtered.length, total: customers.length, count: customers.length })
+              : t('customers.countTotal', { count: customers.length })}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -212,7 +201,7 @@ export default function CustomersPage() {
             </select>
           )}
           <button className="btn-primary" onClick={() => setAddOpen(true)} disabled={!outletId}>
-            <Plus size={15} /> Add Customer
+            <Plus size={15} /> {t('customers.addCustomer')}
           </button>
         </div>
       </div>
@@ -222,9 +211,9 @@ export default function CustomersPage() {
       ) : filtered.length === 0 ? (
         <div className="card flex flex-col items-center py-20 text-center">
           <Users size={40} className="text-slate-200 mb-3" />
-          <p className="text-slate-500 font-medium">{search ? 'No matches' : 'No customers yet'}</p>
+          <p className="text-slate-500 font-medium">{search ? t('customers.noMatches') : t('customers.emptyTitle')}</p>
           <p className="text-xs text-slate-400 mt-1">
-            {search ? 'Try a different name or phone.' : 'Customers will appear here after their first order at this outlet.'}
+            {search ? t('customers.noMatchesHint') : t('customers.emptyHint')}
           </p>
         </div>
       ) : (
@@ -237,16 +226,16 @@ export default function CustomersPage() {
                     onClick={() => setSortBy(sortBy === 'NAME' ? 'RECENT' : 'NAME')}
                     className={`inline-flex items-center gap-1 ${sortBy === 'NAME' ? 'text-brand-600' : ''}`}
                   >
-                    Customer {sortBy === 'NAME' && '↑'}
+                    {t('customers.colCustomer')} {sortBy === 'NAME' && '↑'}
                   </button>
                 </th>
-                <th className="px-4 pt-3 pb-1 text-left font-semibold">Contact</th>
+                <th className="px-4 pt-3 pb-1 text-left font-semibold">{t('customers.colContact')}</th>
                 <th className="px-4 pt-3 pb-1 text-right font-semibold">
                   <button
                     onClick={() => setSortBy(sortBy === 'ORDERS' ? 'RECENT' : 'ORDERS')}
                     className={`inline-flex items-center gap-1 ${sortBy === 'ORDERS' ? 'text-brand-600' : ''}`}
                   >
-                    Orders {sortBy === 'ORDERS' && '↓'}
+                    {t('customers.colOrders')} {sortBy === 'ORDERS' && '↓'}
                   </button>
                 </th>
                 <th className="px-4 pt-3 pb-1 text-right font-semibold">
@@ -254,7 +243,7 @@ export default function CustomersPage() {
                     onClick={() => setSortBy(sortBy === 'SPEND' ? 'RECENT' : 'SPEND')}
                     className={`inline-flex items-center gap-1 ${sortBy === 'SPEND' ? 'text-brand-600' : ''}`}
                   >
-                    Spend {sortBy === 'SPEND' && '↓'}
+                    {t('customers.colSpend')} {sortBy === 'SPEND' && '↓'}
                   </button>
                 </th>
                 <th className="px-4 pt-3 pb-1 text-left font-semibold">
@@ -262,11 +251,11 @@ export default function CustomersPage() {
                     onClick={() => setSortBy(sortBy === 'RECENT' ? 'NAME' : 'RECENT')}
                     className={`inline-flex items-center gap-1 ${sortBy === 'RECENT' ? 'text-brand-600' : ''}`}
                   >
-                    Last Order {sortBy === 'RECENT' && '↓'}
+                    {t('customers.colLastOrder')} {sortBy === 'RECENT' && '↓'}
                   </button>
                 </th>
-                <th className="px-4 pt-3 pb-1 text-right font-semibold">Dues</th>
-                <th className="px-4 pt-3 pb-1 text-left font-semibold">Tag</th>
+                <th className="px-4 pt-3 pb-1 text-right font-semibold">{t('customers.colDues')}</th>
+                <th className="px-4 pt-3 pb-1 text-left font-semibold">{t('customers.colTag')}</th>
               </tr>
               {/* Inline filter row inside the header */}
               <tr className="border-b border-slate-200">
@@ -274,7 +263,7 @@ export default function CustomersPage() {
                   <input
                     value={nameFilter}
                     onChange={e => setNameFilter(e.target.value)}
-                    placeholder="Filter name…"
+                    placeholder={t('customers.filterName')}
                     className="w-full bg-white border border-slate-200 rounded-md px-2 py-1 text-xs"
                   />
                 </th>
@@ -282,7 +271,7 @@ export default function CustomersPage() {
                   <input
                     value={phoneFilter}
                     onChange={e => setPhoneFilter(e.target.value)}
-                    placeholder="Filter phone…"
+                    placeholder={t('customers.filterPhone')}
                     className="w-full bg-white border border-slate-200 rounded-md px-2 py-1 text-xs"
                   />
                 </th>
@@ -292,9 +281,9 @@ export default function CustomersPage() {
                     onChange={e => setActivityFilter(e.target.value as any)}
                     className="w-full bg-white border border-slate-200 rounded-md px-1.5 py-1 text-xs"
                   >
-                    <option value="ALL">Any</option>
-                    <option value="WITH">With orders</option>
-                    <option value="NONE">No orders</option>
+                    <option value="ALL">{t('customers.filterAny')}</option>
+                    <option value="WITH">{t('customers.filterWith')}</option>
+                    <option value="NONE">{t('customers.filterNone')}</option>
                   </select>
                 </th>
                 <th className="px-4 pb-2 normal-case font-normal">
@@ -303,15 +292,15 @@ export default function CustomersPage() {
                     onChange={e => setSpendFilter(e.target.value as any)}
                     className="w-full bg-white border border-slate-200 rounded-md px-1.5 py-1 text-xs"
                   >
-                    <option value="ALL">Any</option>
-                    <option value="GT500">≥ ₹500</option>
-                    <option value="GT2000">≥ ₹2,000</option>
+                    <option value="ALL">{t('customers.filterAny')}</option>
+                    <option value="GT500">{t('customers.filterSpendGT500')}</option>
+                    <option value="GT2000">{t('customers.filterSpendGT2000')}</option>
                   </select>
                 </th>
                 <th className="px-4 pb-2 normal-case font-normal">
                   {isFiltered && (
                     <button onClick={clearFilters} className="text-[11px] font-semibold text-slate-500 hover:text-red-500">
-                      Clear filters
+                      {t('customers.clearFilters')}
                     </button>
                   )}
                 </th>
@@ -322,9 +311,9 @@ export default function CustomersPage() {
                     onChange={e => setTagFilter(e.target.value)}
                     className="w-full bg-white border border-slate-200 rounded-md px-1.5 py-1 text-xs"
                   >
-                    <option value="ALL">Any</option>
-                    <option value="NONE">— No tag —</option>
-                    {tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    <option value="ALL">{t('customers.filterAny')}</option>
+                    <option value="NONE">{t('customers.filterNoTag')}</option>
+                    {tags.map(tg => <option key={tg.id} value={tg.id}>{tg.name}</option>)}
                   </select>
                 </th>
               </tr>
@@ -338,7 +327,7 @@ export default function CustomersPage() {
                     c.orderCount > 0 && 'cursor-pointer',
                   )}
                   onClick={() => c.orderCount > 0 && openCustomerOrders(c)}
-                  title={c.orderCount > 0 ? 'View orders' : ''}
+                  title={c.orderCount > 0 ? t('customers.viewOrders') : ''}
                 >
                   <td className="px-4 py-3">
                     <p className="font-semibold text-slate-800 flex items-center gap-1.5">
@@ -380,9 +369,9 @@ export default function CustomersPage() {
                         onChange={e => setTag(c.id, e.target.value || null)}
                         className="input py-1.5 px-2 text-xs min-w-[130px]"
                       >
-                        <option value="">— No tag —</option>
-                        {tags.map(t => (
-                          <option key={t.id} value={t.id}>{t.name}</option>
+                        <option value="">{t('customers.filterNoTag')}</option>
+                        {tags.map(tg => (
+                          <option key={tg.id} value={tg.id}>{tg.name}</option>
                         ))}
                       </select>
                     </div>
@@ -398,14 +387,19 @@ export default function CustomersPage() {
       <Modal
         open={!!ordersFor && !orderDetail}
         onClose={() => setOrdersFor(null)}
-        title={ordersFor ? `Orders by ${ordersFor.name || ordersFor.phone || 'customer'}` : 'Orders'}
+        title={ordersFor
+          ? t('customers.modalOrdersTitle', { name: ordersFor.name || ordersFor.phone || t('customers.customerFallback') })
+          : t('customers.modalOrdersTitleFallback')}
         subtitle={
           ordersFor
-            ? `${ordersFor.orderCount} order${ordersFor.orderCount !== 1 ? 's' : ''} · ₹${Number(ordersFor.totalSpend || 0).toFixed(0)} total`
+            ? t('customers.ordersSubtitle', {
+                count: ordersFor.orderCount,
+                total: Number(ordersFor.totalSpend || 0).toFixed(0),
+              })
             : ''
         }
         size="md"
-        footer={<button className="btn-secondary" onClick={() => setOrdersFor(null)}>Close</button>}
+        footer={<button className="btn-secondary" onClick={() => setOrdersFor(null)}>{t('customers.close')}</button>}
       >
         {loadingOrders ? (
           <div className="space-y-2 py-2">
@@ -414,7 +408,7 @@ export default function CustomersPage() {
             ))}
           </div>
         ) : customerOrders.length === 0 ? (
-          <p className="text-sm text-slate-500 py-8 text-center">No orders yet.</p>
+          <p className="text-sm text-slate-500 py-8 text-center">{t('customers.noOrdersYet')}</p>
         ) : (
           <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
             {customerOrders.map((o) => (
@@ -430,7 +424,7 @@ export default function CustomersPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-semibold text-slate-800 truncate">
-                        #{o.orderNumber}{o.tokenNumber != null && <span className="text-slate-400 font-normal"> · Token {o.tokenNumber}</span>}
+                        #{o.orderNumber}{o.tokenNumber != null && <span className="text-slate-400 font-normal"> · {t('customers.tokenPrefix', { n: o.tokenNumber })}</span>}
                       </p>
                       <span
                         className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
@@ -447,13 +441,13 @@ export default function CustomersPage() {
                     <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
                       <Clock size={10} />
                       {dayjs(o.createdAt).format('DD MMM YYYY, h:mm A')}
-                      {o.table && <span className="ml-2">· Table {o.table.number}</span>}
-                      {o.isParcel && <span className="ml-2">· Parcel</span>}
+                      {o.table && <span className="ml-2">· {t('customers.tableSuffix', { n: o.table.number })}</span>}
+                      {o.isParcel && <span className="ml-2">· {t('customers.parcelSuffix')}</span>}
                     </p>
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-bold text-slate-900">₹{Number(o.totalAmount).toFixed(0)}</p>
-                    <p className="text-[10px] text-slate-400">{o.items?.length || 0} item{(o.items?.length || 0) !== 1 ? 's' : ''}</p>
+                    <p className="text-[10px] text-slate-400">{t('customers.itemsCount', { count: o.items?.length || 0 })}</p>
                   </div>
                   <ChevronRight size={14} className="text-slate-300" />
                 </div>
@@ -467,17 +461,17 @@ export default function CustomersPage() {
       <Modal
         open={!!orderDetail}
         onClose={() => setOrderDetail(null)}
-        title={orderDetail ? `Order ${orderDetail.orderNumber}` : 'Order'}
+        title={orderDetail ? t('customers.modalOrderTitle', { number: orderDetail.orderNumber }) : t('customers.modalOrderTitleFallback')}
         subtitle={
           orderDetail
-            ? `${dayjs(orderDetail.createdAt).format('DD MMM YYYY, h:mm A')}${orderDetail.table ? ` · Table ${orderDetail.table.number}` : orderDetail.isParcel ? ' · Parcel' : ''}`
+            ? `${dayjs(orderDetail.createdAt).format('DD MMM YYYY, h:mm A')}${orderDetail.table ? ` · ${t('customers.tableSuffix', { n: orderDetail.table.number })}` : orderDetail.isParcel ? ` · ${t('customers.parcelSuffix')}` : ''}`
             : ''
         }
         size="lg"
         footer={
           <div className="flex items-center justify-between w-full">
             <button className="btn-secondary" onClick={() => setOrderDetail(null)}>
-              <ArrowLeft size={13} /> Back
+              <ArrowLeft size={13} /> {t('customers.back')}
             </button>
           </div>
         }
@@ -491,19 +485,13 @@ export default function CustomersPage() {
             </div>
 
             <div className="space-y-2">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Items</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{t('customers.itemsHeading')}</p>
               {orderDetail.items?.map((it: any) => (
                 <div key={it.id} className="bg-slate-50 rounded-xl px-3 py-2.5 flex items-center gap-3">
                   <span className="w-7 h-7 bg-brand-100 text-brand-900 rounded-lg flex items-center justify-center font-bold text-xs shrink-0">
                     {it.quantity}
                   </span>
                   <div className="flex-1 min-w-0">
-                    {/* The customer-orders endpoint returns the slim
-                        shape (perf-phase-2) — item / variant relations
-                        aren't selected. Read the snapshot fields
-                        (frozen at order time so receipts stay stable
-                        through name edits), with the relation as a
-                        legacy fallback. */}
                     <p className="text-sm font-semibold text-slate-800 truncate">
                       {it.itemNameSnapshot ?? it.item?.name ?? '—'}
                     </p>
@@ -521,33 +509,33 @@ export default function CustomersPage() {
             </div>
 
             <div className="border-t border-slate-100 pt-3 space-y-1.5">
-              <div className="flex justify-between text-xs text-slate-500"><span>Subtotal</span><span>₹{Number(orderDetail.subtotal).toFixed(2)}</span></div>
+              <div className="flex justify-between text-xs text-slate-500"><span>{t('customers.subtotal')}</span><span>₹{Number(orderDetail.subtotal).toFixed(2)}</span></div>
               {Number(orderDetail.taxAmount) > 0 && (
                 <>
                   <div className="flex justify-between text-xs text-slate-500">
-                    <span>SGST</span>
+                    <span>{t('customers.sgst')}</span>
                     <span>₹{Number(orderDetail.sgstAmount ?? Number(orderDetail.taxAmount) / 2).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-xs text-slate-500">
-                    <span>CGST</span>
+                    <span>{t('customers.cgst')}</span>
                     <span>₹{Number(orderDetail.cgstAmount ?? Number(orderDetail.taxAmount) / 2).toFixed(2)}</span>
                   </div>
                 </>
               )}
               {Number(orderDetail.parcelAmount) > 0 && (
-                <div className="flex justify-between text-xs text-slate-500"><span>Parcel</span><span>₹{Number(orderDetail.parcelAmount).toFixed(2)}</span></div>
+                <div className="flex justify-between text-xs text-slate-500"><span>{t('customers.parcel')}</span><span>₹{Number(orderDetail.parcelAmount).toFixed(2)}</span></div>
               )}
               {Number(orderDetail.discountAmount) > 0 && (
-                <div className="flex justify-between text-xs text-emerald-600"><span>Discount</span><span>− ₹{Number(orderDetail.discountAmount).toFixed(2)}</span></div>
+                <div className="flex justify-between text-xs text-emerald-600"><span>{t('customers.discount')}</span><span>− ₹{Number(orderDetail.discountAmount).toFixed(2)}</span></div>
               )}
               <div className="flex justify-between text-sm font-black text-slate-900 pt-1 border-t border-slate-100">
-                <span>Total</span><span>₹{Number(orderDetail.totalAmount).toFixed(2)}</span>
+                <span>{t('customers.total')}</span><span>₹{Number(orderDetail.totalAmount).toFixed(2)}</span>
               </div>
             </div>
 
             {orderDetail.payments?.length > 0 && (
               <div className="border-t border-slate-100 pt-3">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Payments</p>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">{t('customers.paymentsHeading')}</p>
                 <div className="space-y-1">
                   {orderDetail.payments.map((p: any) => (
                     <div key={p.id} className="flex items-center justify-between text-xs">
@@ -566,15 +554,15 @@ export default function CustomersPage() {
       <Modal
         open={addOpen}
         onClose={() => !adding && setAddOpen(false)}
-        title="Add Customer"
-        subtitle="Capture a customer's phone now; orders made later will link automatically."
+        title={t('customers.modalAddTitle')}
+        subtitle={t('customers.modalAddSubtitle')}
         size="sm"
         footer={
           <>
-            <button className="btn-secondary" onClick={() => setAddOpen(false)} disabled={adding}>Cancel</button>
+            <button className="btn-secondary" onClick={() => setAddOpen(false)} disabled={adding}>{t('customers.cancel')}</button>
             <button form="add-cust-form" type="submit" className="btn-primary" disabled={adding || !newPhone.trim()}>
               {adding && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-              Add
+              {t('customers.addBtn')}
             </button>
           </>
         }
@@ -582,25 +570,25 @@ export default function CustomersPage() {
         <form id="add-cust-form" onSubmit={addCustomer} className="space-y-3">
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide flex items-center gap-1.5">
-              <UserIcon size={11} /> Name <span className="text-slate-400 font-normal normal-case ml-1">optional</span>
+              <UserIcon size={11} /> {t('customers.nameLabel')} <span className="text-slate-400 font-normal normal-case ml-1">{t('customers.optional')}</span>
             </label>
             <input
               value={newName}
               onChange={e => setNewName(e.target.value)}
               className="input"
-              placeholder="e.g. Ramesh"
+              placeholder={t('customers.namePlaceholder')}
             />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide flex items-center gap-1.5">
-              <Phone size={11} /> Phone <span className="text-red-500 ml-0.5">*</span>
+              <Phone size={11} /> {t('customers.phoneLabel')} <span className="text-red-500 ml-0.5">*</span>
             </label>
             <input
               value={newPhone}
               onChange={e => setNewPhone(e.target.value)}
               required
               className="input"
-              placeholder="+91 …"
+              placeholder={t('customers.phonePlaceholder')}
               autoFocus
             />
           </div>
@@ -610,24 +598,13 @@ export default function CustomersPage() {
   );
 }
 
-/**
- * Compact chip summarising how an order was settled. Three branches:
- *   1) DUES   — pay-later debit on the customer's ledger, not voided.
- *   2) PAID   — has a Payment row with status SUCCESS (real refunds
- *               excluded so a refund row doesn't masquerade as a paid
- *               settlement).
- *   3) UNPAID — anything else (postpaid tab waiting for Bill Now,
- *               pending Razorpay, cancelled / refunded fully…).
- *
- * Reads slim fields the customer-orders endpoint now projects:
- *   order.payments[], order.duesLedger[].
- */
 function PaymentChip({ order }: { order: any }) {
+  const { t } = useTranslation();
   const duesLive = (order?.duesLedger ?? []).some((d: any) => !d.voidedAt);
   if (duesLive) {
     return (
       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap bg-amber-100 text-amber-800 border border-amber-200">
-        Dues · pay later
+        {t('customers.chipDues')}
       </span>
     );
   }
@@ -637,13 +614,13 @@ function PaymentChip({ order }: { order: any }) {
   if (settledPayment) {
     return (
       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap bg-emerald-100 text-emerald-800 border border-emerald-200">
-        Paid · {settledPayment.mode}
+        {t('customers.chipPaid', { mode: settledPayment.mode })}
       </span>
     );
   }
   return (
     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap bg-slate-100 text-slate-600 border border-slate-200">
-      Unpaid
+      {t('customers.chipUnpaid')}
     </span>
   );
 }
