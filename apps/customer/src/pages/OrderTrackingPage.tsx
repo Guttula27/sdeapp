@@ -809,8 +809,12 @@ function TrackPageAdCard({
 }) {
   const { t } = useTranslation();
   const storageKey = 'pwa.track.adCollapsed';
+  // Default to COLLAPSED so the tracking view isn't crowded on first
+  // load — customer opts in by tapping the "Show ad" pill. Only an
+  // explicit '0' in sessionStorage keeps it open across renders in
+  // the same tab (i.e. after the customer expanded it once).
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try { return sessionStorage.getItem(storageKey) === '1'; } catch { return false; }
+    try { return sessionStorage.getItem(storageKey) !== '0'; } catch { return true; }
   });
   const setCollapsedPersisted = (v: boolean) => {
     setCollapsed(v);
