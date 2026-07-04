@@ -431,13 +431,21 @@ async function main() {
 
     writeFileSync(outFile, JSON.stringify(translated, null, 2) + '\n');
     // Sidecar tracks the source value behind each translated key so the
-    // next run can skip unchanged entries. Paths whose translation fell
-    // back to English are deliberately excluded — leaving them out marks
-    // them as "needs translation" for the next run, which prevents the
-    // dictionary from drifting into stale English fallbacks forever.
+    // next run can skip unchanged entries. Behaviour differs by mode:
+    //   - Interactive / dev runs (default): exclude paths whose
+    //     translation fell back to English, so a future run retries
+    //     them when the translator recovers. This is the safety net
+    //     against the dictionary drifting into stale English forever.
+    //   - --existing-only (prod prebuild): INCLUDE failed paths too.
+    //     Prod docker builds don't persist output back to git, so
+    //     without this every deploy would re-hit Lingva for the same
+    //     failed strings forever. Marking them settled means prod
+    //     stops trying; when Lingva recovers, dev runs the generator
+    //     locally with --force to re-attempt and commit real
+    //     translations.
     const sidecarOut = {};
     for (const [path, val] of Object.entries(sourceFlat)) {
-      if (failedSources.has(val)) continue;
+      if (!existingOnly && failedSources.has(val)) continue;
       sidecarOut[path] = val;
     }
     writeFileSync(sidecar, JSON.stringify(sidecarOut, null, 2) + '\n');

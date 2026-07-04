@@ -99,7 +99,10 @@
     "offerSpend": "₹{{amount}} செலவு செய்யுங்கள் → {{item}} ஐப் பெறுங்கள்",
     "offerBuyGet": "Buy {{buyQty}}× {{buyItem}} → {{getQty}}× {{getItem}} free",
     "freeItemFallback": "free item",
-    "itemFallback": "பொருள்"
+    "itemFallback": "பொருள்",
+    "viewToggle": "View",
+    "viewList": "List view",
+    "viewGrid": "Grid view"
   },
   "order": {
     "myOrders": "என் உத்தரவுகள்",
@@ -595,7 +598,11 @@
     "submit": "சமர்ப்பிக்கவும்",
     "replyLabel": "பதில்",
     "replyFrom": "{{name}} இலிருந்து பதில்",
-    "refundReceived": "திரும்பப் பெறப்பட்டது · {{mode}} வழியாக ₹{{amount}}"
+    "refundReceived": "திரும்பப் பெறப்பட்டது · {{mode}} வழியாக ₹{{amount}}",
+    "sponsored": "Sponsored",
+    "adLearnMore": "Learn more",
+    "adInfoLabel": "About this ad",
+    "adInfo": "Ads help keep the app free. Tap the outlet name to visit."
   },
   "cluster": {
     "notFound": "கிளஸ்டர் கிடைக்கவில்லை",

@@ -99,7 +99,10 @@
     "offerSpend": "₹{{amount}} ఖర్చు చేయండి → {{item}} పొందండి",
     "offerBuyGet": "{{buyQty}}× {{buyItem}} → {{getQty}}× {{getItem}}ని ఉచితంగా కొనుగోలు చేయండి",
     "freeItemFallback": "ఉచిత అంశం",
-    "itemFallback": "అంశం"
+    "itemFallback": "అంశం",
+    "viewToggle": "View",
+    "viewList": "List view",
+    "viewGrid": "Grid view"
   },
   "order": {
     "myOrders": "నా ఆదేశాలు",
@@ -595,7 +598,11 @@
     "submit": "సమర్పించండి",
     "replyLabel": "ప్రత్యుత్తరం ఇవ్వండి",
     "replyFrom": "{{name}} నుండి ప్రత్యుత్తరం",
-    "refundReceived": "రీఫండ్ అందుకుంది · {{mode}} ద్వారా ₹{{amount}}"
+    "refundReceived": "రీఫండ్ అందుకుంది · {{mode}} ద్వారా ₹{{amount}}",
+    "sponsored": "Sponsored",
+    "adLearnMore": "Learn more",
+    "adInfoLabel": "About this ad",
+    "adInfo": "Ads help keep the app free. Tap the outlet name to visit."
   },
   "cluster": {
     "notFound": "క్లస్టర్ కనుగొనబడలేదు",

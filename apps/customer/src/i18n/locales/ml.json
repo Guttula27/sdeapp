@@ -99,7 +99,10 @@
     "offerSpend": "₹{{amount}} ചെലവഴിക്കുക → {{item}} നേടുക",
     "offerBuyGet": "{{buyQty}}× {{buyItem}} → {{getQty}}× {{getItem}} സൗജന്യമായി വാങ്ങുക",
     "freeItemFallback": "സൗജന്യ ഇനം",
-    "itemFallback": "ഇനം"
+    "itemFallback": "ഇനം",
+    "viewToggle": "View",
+    "viewList": "List view",
+    "viewGrid": "Grid view"
   },
   "order": {
     "myOrders": "എൻ്റെ ഉത്തരവുകൾ",
@@ -595,7 +598,11 @@
     "submit": "സമർപ്പിക്കുക",
     "replyLabel": "മറുപടി നൽകുക",
     "replyFrom": "{{name}}-ൽ നിന്നുള്ള മറുപടി",
-    "refundReceived": "റീഫണ്ട് ലഭിച്ചു · {{mode}} വഴി ₹{{amount}}"
+    "refundReceived": "റീഫണ്ട് ലഭിച്ചു · {{mode}} വഴി ₹{{amount}}",
+    "sponsored": "Sponsored",
+    "adLearnMore": "Learn more",
+    "adInfoLabel": "About this ad",
+    "adInfo": "Ads help keep the app free. Tap the outlet name to visit."
   },
   "cluster": {
     "notFound": "ക്ലസ്റ്റർ കണ്ടെത്തിയില്ല",

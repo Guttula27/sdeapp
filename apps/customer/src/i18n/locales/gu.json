@@ -99,7 +99,10 @@
     "offerSpend": "₹{{amount}} ખર્ચો → {{item}} મેળવો",
     "offerBuyGet": "{{buyQty}}× {{buyItem}} → {{getQty}}× {{getItem}} મફતમાં ખરીદો",
     "freeItemFallback": "મફત વસ્તુ",
-    "itemFallback": "વસ્તુ"
+    "itemFallback": "વસ્તુ",
+    "viewToggle": "View",
+    "viewList": "List view",
+    "viewGrid": "Grid view"
   },
   "order": {
     "myOrders": "મારા ઓર્ડર",
@@ -595,7 +598,11 @@
     "submit": "સબમિટ કરો",
     "replyLabel": "જવાબ આપો",
     "replyFrom": "{{name}} તરફથી જવાબ આપો",
-    "refundReceived": "રિફંડ પ્રાપ્ત થયું · {{mode}} મારફતે ₹{{amount}}"
+    "refundReceived": "રિફંડ પ્રાપ્ત થયું · {{mode}} મારફતે ₹{{amount}}",
+    "sponsored": "Sponsored",
+    "adLearnMore": "Learn more",
+    "adInfoLabel": "About this ad",
+    "adInfo": "Ads help keep the app free. Tap the outlet name to visit."
   },
   "cluster": {
     "notFound": "ક્લસ્ટર મળ્યું નથી",

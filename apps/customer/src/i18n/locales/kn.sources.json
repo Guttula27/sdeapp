@@ -658,5 +658,12 @@
   "days.soon": "soon",
   "days.later": "later",
   "days.am": "AM",
-  "days.pm": "PM"
+  "days.pm": "PM",
+  "menu.viewToggle": "View",
+  "menu.viewList": "List view",
+  "menu.viewGrid": "Grid view",
+  "track.sponsored": "Sponsored",
+  "track.adLearnMore": "Learn more",
+  "track.adInfoLabel": "About this ad",
+  "track.adInfo": "Ads help keep the app free. Tap the outlet name to visit."
 }

@@ -99,7 +99,10 @@
     "offerSpend": "₹{{amount}} খরচ করুন → {{item}} পান",
     "offerBuyGet": "{{buyQty}}× {{buyItem}} → {{getQty}}× {{getItem}} বিনামূল্যে কিনুন",
     "freeItemFallback": "বিনামূল্যে আইটেম",
-    "itemFallback": "আইটেম"
+    "itemFallback": "আইটেম",
+    "viewToggle": "View",
+    "viewList": "List view",
+    "viewGrid": "Grid view"
   },
   "order": {
     "myOrders": "আমার আদেশ",
@@ -595,7 +598,11 @@
     "submit": "জমা দিন",
     "replyLabel": "উত্তর দিন",
     "replyFrom": "{{name}} থেকে উত্তর",
-    "refundReceived": "অর্থ ফেরত গৃহীত হয়েছে · {{mode}} এর মাধ্যমে ₹{{amount}}"
+    "refundReceived": "অর্থ ফেরত গৃহীত হয়েছে · {{mode}} এর মাধ্যমে ₹{{amount}}",
+    "sponsored": "Sponsored",
+    "adLearnMore": "Learn more",
+    "adInfoLabel": "About this ad",
+    "adInfo": "Ads help keep the app free. Tap the outlet name to visit."
   },
   "cluster": {
     "notFound": "ক্লাস্টার পাওয়া যায়নি",

@@ -99,7 +99,10 @@
     "offerSpend": "Spend ₹{{amount}} → get {{item}}",
     "offerBuyGet": "{{buyQty}}× {{buyItem}} → {{getQty}}× {{getItem}} ಖರೀದಿಸಿ",
     "freeItemFallback": "ಉಚಿತ ಐಟಂ",
-    "itemFallback": "ಐಟಂ"
+    "itemFallback": "ಐಟಂ",
+    "viewToggle": "View",
+    "viewList": "List view",
+    "viewGrid": "Grid view"
   },
   "order": {
     "myOrders": "ನನ್ನ ಆದೇಶಗಳು",
@@ -595,7 +598,11 @@
     "submit": "ಸಲ್ಲಿಸಿ",
     "replyLabel": "ಉತ್ತರಿಸು",
     "replyFrom": "{{name}} ನಿಂದ ಪ್ರತ್ಯುತ್ತರ",
-    "refundReceived": "ಮರುಪಾವತಿಯನ್ನು ಸ್ವೀಕರಿಸಲಾಗಿದೆ · {{mode}} ಮೂಲಕ ₹{{amount}}"
+    "refundReceived": "ಮರುಪಾವತಿಯನ್ನು ಸ್ವೀಕರಿಸಲಾಗಿದೆ · {{mode}} ಮೂಲಕ ₹{{amount}}",
+    "sponsored": "Sponsored",
+    "adLearnMore": "Learn more",
+    "adInfoLabel": "About this ad",
+    "adInfo": "Ads help keep the app free. Tap the outlet name to visit."
   },
   "cluster": {
     "notFound": "ಕ್ಲಸ್ಟರ್ ಕಂಡುಬಂದಿಲ್ಲ",

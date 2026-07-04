@@ -599,7 +599,10 @@
     "toastFailedRecordPayment": "Failed to record payment",
     "toastAutoPrintNag": "Order {{number}} arrived but the printer isn't paired this session. Tap \"Connect printer\" to enable auto-print.",
     "toastReceiptAutoPrinted": "Receipt printed for {{number}}",
-    "toastReceiptAutoFailed": "Receipt auto-print failed"
+    "toastReceiptAutoFailed": "Receipt auto-print failed",
+    "viewToggle": "View",
+    "viewList": "List view",
+    "viewGrid": "Grid view"
   },
   "menu": {
     "titleBusinessMenu": "Business Menu",

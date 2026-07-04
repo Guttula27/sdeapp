@@ -99,7 +99,10 @@
     "offerSpend": "₹{{amount}} खर्च करें → {{item}} प्राप्त करें",
     "offerBuyGet": "{{buyQty}}× {{buyItem}} → {{getQty}}× {{getItem}} निःशुल्क खरीदें",
     "freeItemFallback": "निःशुल्क वस्तु",
-    "itemFallback": "वस्तु"
+    "itemFallback": "वस्तु",
+    "viewToggle": "View",
+    "viewList": "List view",
+    "viewGrid": "Grid view"
   },
   "order": {
     "myOrders": "मेरे ऑर्डर",
@@ -595,7 +598,11 @@
     "submit": "जमा करना",
     "replyLabel": "जवाब",
     "replyFrom": "{{name}} से उत्तर",
-    "refundReceived": "रिफंड प्राप्त हुआ · {{mode}} के माध्यम से ₹{{amount}}"
+    "refundReceived": "रिफंड प्राप्त हुआ · {{mode}} के माध्यम से ₹{{amount}}",
+    "sponsored": "Sponsored",
+    "adLearnMore": "Learn more",
+    "adInfoLabel": "About this ad",
+    "adInfo": "Ads help keep the app free. Tap the outlet name to visit."
   },
   "cluster": {
     "notFound": "क्लस्टर नहीं मिला",
