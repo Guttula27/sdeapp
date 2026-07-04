@@ -101,6 +101,77 @@ const HOSTS = process.env.LINGVA_URL
 const FETCH_TIMEOUT_MS = parseInt(process.env.LINGVA_TIMEOUT_MS || '8000', 10);
 const blockedHosts = new Map();
 
+// MyMemory is our fallback when every Lingva mirror is offline (the whole
+// Lingva fleet has had extended outages). Passing an email raises the
+// anonymous quota from 10k → 50k words/day, so the user can set
+// MYMEMORY_EMAIL if they hit the limit on a big run.
+const MYMEMORY_URL = 'https://api.mymemory.translated.net/get';
+const MYMEMORY_EMAIL = process.env.MYMEMORY_EMAIL || '';
+let mymemoryBlockedUntil = 0;
+let mymemoryFails = 0;
+
+// MyMemory-specific backoff — shorter base than Lingva since a single
+// bad input (untranslatable glyph, empty string) shouldn't block the
+// whole pool for a minute during a bulk run. Only actual HTTP failures
+// escalate; per-string "no translation" results just fail that string.
+const MYMEMORY_BACKOFF_BASE_MS = 2_000;
+const MYMEMORY_BACKOFF_CAP_MS = 30_000;
+const MYMEMORY_MAX_WAIT_MS = 45_000; // absolute cap on wait-then-retry
+async function translateViaMyMemory(text, fromCode, toCode) {
+  // If MyMemory is on cooldown, WAIT rather than failing — otherwise a
+  // single 5xx will cause every queued worker to burn its string and move
+  // on, torching the whole batch during the cooldown window.
+  const now = Date.now();
+  if (mymemoryBlockedUntil > now) {
+    const wait = Math.min(mymemoryBlockedUntil - now, MYMEMORY_MAX_WAIT_MS);
+    const jitter = Math.floor(wait * (Math.random() * 0.3));
+    await sleep(wait + jitter);
+  }
+  const langpair = `${fromCode}|${toCode}`;
+  const q = encodeURIComponent(text);
+  const email = MYMEMORY_EMAIL ? `&de=${encodeURIComponent(MYMEMORY_EMAIL)}` : '';
+  const url = `${MYMEMORY_URL}?q=${q}&langpair=${langpair}${email}`;
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      // HTTP failure = provider is stressed. Escalate cooldown.
+      mymemoryFails++;
+      mymemoryBlockedUntil = Date.now() + Math.min(MYMEMORY_BACKOFF_BASE_MS * 2 ** (mymemoryFails - 1), MYMEMORY_BACKOFF_CAP_MS);
+      throw new Error(`mymemory ${res.status}`);
+    }
+    const data = await res.json();
+    const translated = data?.responseData?.translatedText;
+    // Quota-exhausted signal: real provider-level failure, cool down.
+    if (typeof translated === 'string' && (/YOU USED ALL AVAILABLE FREE TRANSLATIONS/i.test(translated) || /MYMEMORY WARNING/i.test(translated))) {
+      mymemoryFails++;
+      mymemoryBlockedUntil = Date.now() + Math.min(MYMEMORY_BACKOFF_BASE_MS * 2 ** (mymemoryFails - 1), MYMEMORY_BACKOFF_CAP_MS);
+      throw new Error(`mymemory quota: ${String(translated).slice(0, 80)}`);
+    }
+    // Non-empty and not an English passthrough: success. Reset backoff.
+    if (typeof translated === 'string'
+        && translated.trim()
+        && translated.trim().toLowerCase() !== text.trim().toLowerCase()) {
+      mymemoryFails = 0;
+      return translated;
+    }
+    // Per-string miss (untranslatable input, English passthrough): don't
+    // punish the provider — just fail this one string and let the caller
+    // keep English for it.
+    throw new Error(`mymemory no translation${translated ? `: ${String(translated).slice(0, 60)}` : ''}`);
+  } catch (e) {
+    if (!e.message?.startsWith('mymemory')) {
+      // Network / timeout error: this is provider-level.
+      mymemoryFails++;
+      mymemoryBlockedUntil = Date.now() + Math.min(MYMEMORY_BACKOFF_BASE_MS * 2 ** (mymemoryFails - 1), MYMEMORY_BACKOFF_CAP_MS);
+    }
+    throw e;
+  }
+}
+
 // Protect i18next interpolation placeholders ({{name}}) from the
 // translator — Lingva happily translates "{{value}}" into the target
 // language ("{{मान}}" for Hindi), which breaks t('key', {value:N}).
@@ -152,6 +223,10 @@ async function translateOne(text, fromCode, toCode, workerStart = 0) {
   // if every mirror is in cooldown, wait for the soonest one with jitter
   // so workers don't all retry at exactly the same instant.
   for (let pass = 0; pass < 3; pass++) {
+    // If every Lingva mirror is currently in cooldown, don't sit here
+    // waiting for one to recover — fall through to MyMemory immediately.
+    const allBlocked = HOSTS.every((h) => (blockedHosts.get(h) ?? 0) > Date.now());
+    if (allBlocked) break;
     for (let i = 0; i < HOSTS.length; i++) {
       const host = HOSTS[(workerStart + i) % HOSTS.length];
       const blockedUntil = blockedHosts.get(host) ?? 0;
@@ -201,7 +276,16 @@ async function translateOne(text, fromCode, toCode, workerStart = 0) {
       }
     }
   }
-  throw lastError instanceof Error ? lastError : new Error('Lingva failed');
+  // Fallback: Lingva is unreachable or all mirrors are rate-limited.
+  // MyMemory has been stable through Lingva's outages.
+  try {
+    const translated = await translateViaMyMemory(frozen, fromCode, toCode);
+    await sleep(REQUEST_GAP_MS);
+    return thawPlaceholders(translated, map);
+  } catch (e) {
+    lastError = e;
+  }
+  throw lastError instanceof Error ? lastError : new Error('all providers failed');
 }
 
 // Walk the source tree, classify every leaf string at `path` as either
@@ -219,6 +303,17 @@ function classifyTree(node, previous, prevSrc, path = '', acc = { carryMap: {}, 
     if (!force && previous && !prevSrc) {
       const carried = getNested(previous, path);
       if (typeof carried === 'string' && carried.trim()) { acc.carryMap[path] = carried; return acc; }
+    }
+    // existing-only mode (used by the prod prebuild hook) treats
+    // "already present in the previous locale file" as good enough,
+    // even when the previous value is the English fallback. This
+    // prevents prod from hammering Lingva every deploy for strings
+    // that failed translation locally — the developer commits when
+    // Lingva recovers, prod picks it up next build. Genuinely new
+    // strings (not in previous at all) still hit the translator.
+    if (!force && existingOnly && previous) {
+      const carried = getNested(previous, path);
+      if (typeof carried === 'string') { acc.carryMap[path] = carried; return acc; }
     }
     acc.needSet.add(node);
     return acc;

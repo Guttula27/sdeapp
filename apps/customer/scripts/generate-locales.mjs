@@ -220,6 +220,17 @@ function classifyTree(node, previous, prevSrc, path = '', acc = { carryMap: {}, 
       const carried = getNested(previous, path);
       if (typeof carried === 'string' && carried.trim()) { acc.carryMap[path] = carried; return acc; }
     }
+    // existing-only mode (used by the prod prebuild hook) treats
+    // "already present in the previous locale file" as good enough,
+    // even when the previous value is the English fallback. This
+    // prevents prod from hammering Lingva every deploy for strings
+    // that failed translation locally — the developer commits when
+    // Lingva recovers, prod picks it up next build. Genuinely new
+    // strings (not in previous at all) still hit the translator.
+    if (!force && existingOnly && previous) {
+      const carried = getNested(previous, path);
+      if (typeof carried === 'string') { acc.carryMap[path] = carried; return acc; }
+    }
     acc.needSet.add(node);
     return acc;
   }
