@@ -29,6 +29,12 @@ export default defineConfig({
       workbox: {
         // Precache the app shell + static assets at build time.
         globPatterns: ['**/*.{js,css,html,svg,ico,png,webmanifest}'],
+        // The main bundle is ~2.5 MB (react + redux + i18n dictionaries
+        // for 8 locales + qr / pdf libs) — over Workbox's default 2 MB
+        // precache cap. Raising to 4 MB avoids a build failure without
+        // meaningfully changing SW install size; if the bundle keeps
+        // growing, split via manualChunks first.
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         // Fall back to the SPA shell on offline navigation; let /api
         // requests flow through the runtime caching rules instead.
         navigateFallback: '/index.html',
