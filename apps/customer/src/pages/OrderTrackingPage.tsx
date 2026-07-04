@@ -7,6 +7,7 @@ import {
   CheckCircle2, Clock, ChefHat, Bell, Package2,
   RotateCcw, Star, AlertTriangle, X, ChevronDown, ChevronUp,
   MessageSquare, IndianRupee, ArrowLeft, Heart, Plus,
+  Info, ArrowRight,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import api from '../services/api';
@@ -746,7 +747,7 @@ export default function OrderTrackingPage() {
         </div>
       </div>
 
-      <TrackPageAdCard outletName={order.outlet?.name} />
+      <TrackPageAdCard outletName={order.outlet?.name} creative={order.outlet?.trackingAdCreative} />
     </div>
   );
 }
@@ -754,26 +755,58 @@ export default function OrderTrackingPage() {
 /**
  * Bottom-pinned advertisement banner on the order tracking page.
  *
- * Styling intent: the banner must read as an AD SLOT, not as a
- * brand element of the app. So:
- *   - Off-white card (slate-50 / amber-tinged), NOT brand-teal.
- *   - Prominent "SPONSORED" badge top-right.
- *   - Distinct typography (slate text) — no white-on-teal that would
- *     visually merge into the page's brand chrome.
- * Once real campaigns ship, this same shell renders image / video /
- * gif creative with the badge unchanged; the outlet-name banner is
- * the fallback when no campaign is active for the outlet.
+ * Modelled after a Google AdMob display banner:
+ *   - Tall image-forward creative (portrait-ish) so it reads as a real
+ *     ad, not a brand element of the app.
+ *   - Collapse handle is a chevron pill sitting ABOVE the ad frame —
+ *     ties the ad and its dismiss control together visually and matches
+ *     the pattern the customer already recognizes from other apps.
+ *   - AdChoices "info" icon in the top-right corner — the standard
+ *     industry disclosure affordance. Tap for the "why am I seeing this"
+ *     hint (placeholder toast for now; hooks into a real disclosure
+ *     dialog when the ad backend ships).
+ *   - "SPONSORED" chip on the creative so the ad boundary is legible
+ *     even when the image + CTA blur together.
+ *   - CTA pill in the corner ("Learn more →") gives the click target a
+ *     shape a customer recognises from banner ads.
  *
- * Behaviour: collapsible. The X collapses to a tiny pill ("Show ad")
- * so the customer can reclaim screen space; sessionStorage persists
- * the dismissed state per-tab so it doesn't pop back on every re-
- * render but doesn't survive across sessions (we still want the next
- * visit to show the slot).
+ * When no ad-server creative is available for the outlet, we fall back
+ * to a fullbleed gradient with the outlet's initial as a large glyph —
+ * still occupies the slot so the layout is stable when campaigns switch
+ * on/off.
+ *
+ * Behaviour: collapsible via the chevron. sessionStorage persists the
+ * hidden state per-tab so it doesn't pop back on every re-render but
+ * doesn't survive across sessions (next visit re-shows the slot).
  *
  * Sticky-positioned: the nearest scroll container is BottomNav's
  * <main>, so `sticky bottom-0` pins to the viewport's lower edge.
  */
-function TrackPageAdCard({ outletName }: { outletName?: string | null }) {
+/**
+ * Ad creative shape the backend will emit for this slot once the ad
+ * pipeline ships. Kept optional so the fallback branch (outlet initial
+ * on a gradient) still renders when no campaign is active. `videoUrl`
+ * takes precedence over `imageUrl` when both are present — richer
+ * medium wins. `posterUrl` is used as the video's poster so the first
+ * frame doesn't flash black on iOS while the video buffers.
+ */
+type AdCreative = {
+  imageUrl?: string | null;
+  videoUrl?: string | null;
+  posterUrl?: string | null;
+  headline?: string | null;
+  subtitle?: string | null;
+  ctaLabel?: string | null;
+  ctaHref?: string | null;
+};
+
+function TrackPageAdCard({
+  outletName,
+  creative,
+}: {
+  outletName?: string | null;
+  creative?: AdCreative | null;
+}) {
   const { t } = useTranslation();
   const storageKey = 'pwa.track.adCollapsed';
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -801,31 +834,116 @@ function TrackPageAdCard({ outletName }: { outletName?: string | null }) {
     );
   }
 
+  const initial = outletName.trim().charAt(0).toUpperCase();
+
   return (
     <div className="sticky bottom-0 left-0 right-0 z-30 px-3 pb-3 pt-2 bg-gradient-to-t from-slate-50 via-slate-50/95 to-transparent">
-      <div
-        className="relative rounded-2xl overflow-hidden shadow-card border border-amber-200 bg-amber-50/60"
-        style={{ minHeight: 64 }}
-      >
+      {/* Collapse handle sits above the frame like the mockup — a small
+          pill with a downward chevron. Its background matches the ad
+          shell so it reads as one connected surface. */}
+      <div className="flex justify-center mb-1">
         <button
           onClick={() => setCollapsedPersisted(true)}
           aria-label={t('track.hideAd')}
-          className="absolute top-1.5 right-1.5 p-1 text-slate-400 hover:text-slate-700"
+          title={t('track.hideAd')}
+          className="inline-flex items-center justify-center w-8 h-5 rounded-t-lg bg-white border border-slate-200 border-b-0 text-slate-500 hover:text-slate-800 shadow-sm"
         >
-          <X size={13} />
+          <ChevronDown size={14} />
         </button>
+      </div>
 
-        <div className="px-4 pt-4 pb-3 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-white border border-amber-200 flex items-center justify-center shrink-0">
-            <span className="text-base font-black text-amber-700">
-              {outletName.trim().charAt(0).toUpperCase()}
-            </span>
-          </div>
-          <div className="flex-1 min-w-0 pr-12">
-            <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">
-              {t('track.broughtToYouBy')}
-            </p>
-            <p className="text-sm font-bold text-slate-800 truncate">{outletName}</p>
+      <div className="relative rounded-2xl overflow-hidden shadow-card bg-white border border-slate-200">
+        {/* Creative area — video wins over image wins over gradient
+            fallback. Aspect kept portrait (4:5) so mobile-first
+            creatives land at the right dimensions. */}
+        <div className="relative aspect-[4/5] w-full bg-gradient-to-br from-amber-100 via-orange-100 to-rose-100 overflow-hidden">
+          {creative?.videoUrl ? (
+            // muted + playsInline are required for iOS to autoplay
+            // inline; loop keeps the slot animated for the whole
+            // tracking session. The <video> covers the frame with
+            // object-cover so no letterboxing shows through.
+            <video
+              src={creative.videoUrl}
+              poster={creative.posterUrl || undefined}
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          ) : creative?.imageUrl ? (
+            <img
+              src={creative.imageUrl}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          ) : (
+            <>
+              {/* Big decorative outlet initial as the fallback "hero". */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-[9rem] font-black text-white/70 drop-shadow-sm select-none leading-none">
+                  {initial}
+                </span>
+              </div>
+              {/* Subtle brand-tinged plate ring the initial sits on. */}
+              <div className="absolute inset-6 rounded-2xl border-4 border-white/40 pointer-events-none" />
+            </>
+          )}
+
+          {/* SPONSORED chip — AdMob-style, top-left. Kept small so it
+              doesn't dominate the creative but is unmistakable. */}
+          <span className="absolute top-2 left-2 inline-flex items-center text-[9px] font-black tracking-widest bg-slate-900/70 text-white px-1.5 py-0.5 rounded">
+            {t('track.sponsored')}
+          </span>
+
+          {/* AdChoices — the "why am I seeing this" info icon. Uses a
+              toast for now; hook it up to the ad backend's disclosure
+              endpoint when it ships. */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              toast(t('track.adInfo'), { icon: 'ⓘ' });
+            }}
+            aria-label={t('track.adInfoLabel')}
+            title={t('track.adInfoLabel')}
+            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/85 hover:bg-white text-slate-600 hover:text-slate-900 inline-flex items-center justify-center shadow-sm"
+          >
+            <Info size={12} />
+          </button>
+
+          {/* Bottom text plate. Solid gradient at the very bottom so
+              headline text stays legible on any creative — image,
+              video, or fallback. */}
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent px-3 pt-8 pb-3 flex items-end justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-widest text-white/70 font-semibold">
+                {creative?.subtitle || t('track.broughtToYouBy')}
+              </p>
+              <p className="text-sm font-black text-white truncate">
+                {creative?.headline || outletName}
+              </p>
+            </div>
+            {creative?.ctaHref ? (
+              <a
+                href={creative.ctaHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold bg-white text-slate-900 rounded-full px-3 py-1.5 shadow-sm hover:bg-slate-50"
+              >
+                {creative.ctaLabel || t('track.adLearnMore')} <ArrowRight size={11} />
+              </a>
+            ) : (
+              <button
+                onClick={(e) => e.stopPropagation()}
+                className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold bg-white text-slate-900 rounded-full px-3 py-1.5 shadow-sm hover:bg-slate-50"
+              >
+                {t('track.adLearnMore')} <ArrowRight size={11} />
+              </button>
+            )}
           </div>
         </div>
       </div>
