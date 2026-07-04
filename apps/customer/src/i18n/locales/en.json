@@ -99,7 +99,10 @@
     "offerSpend": "Spend ₹{{amount}} → get {{item}}",
     "offerBuyGet": "Buy {{buyQty}}× {{buyItem}} → {{getQty}}× {{getItem}} free",
     "freeItemFallback": "free item",
-    "itemFallback": "item"
+    "itemFallback": "item",
+    "viewToggle": "View",
+    "viewList": "List view",
+    "viewGrid": "Grid view"
   },
   "order": {
     "myOrders": "My orders",

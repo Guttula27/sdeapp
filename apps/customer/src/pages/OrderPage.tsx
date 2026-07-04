@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
-import { ShoppingCart, Plus, Minus, X, LogOut, Star, Clock, ChevronRight, User, Heart, Lock } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, X, LogOut, Star, Clock, ChevronRight, User, Heart, Lock, LayoutGrid, List } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import api from '../services/api';
 import { cachedGet } from '../utils/cachedGet';
@@ -107,6 +107,18 @@ export default function OrderPage() {
   const [placing, setPlacing]     = useState(false);
   const [activeCategory, setActiveCategory] = useState('');
   const [activeSub, setActiveSub] = useState('');
+  // Menu items can be shown as a vertical list (default) or a 2-col grid
+  // with image-on-top cards. Preference persists per device so the choice
+  // survives navigation and refresh.
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
+    try {
+      const v = localStorage.getItem('menu-view-mode');
+      return v === 'grid' ? 'grid' : 'list';
+    } catch { return 'list'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('menu-view-mode', viewMode); } catch {}
+  }, [viewMode]);
   const [detailItem, setDetailItem] = useState<any>(null);
 
   // Wire the half-screen item detail + cart sheet into the browser
@@ -936,20 +948,56 @@ export default function OrderPage() {
         </div>
       )}
 
+      {/* ── List / grid toggle ───────────────────────────────── */}
+      {/* Sits above the item pane so it's visible whether the
+          customer is on the specials view or a regular category. */}
+      <div className="flex items-center justify-end px-4 py-1.5 bg-white/80 border-b border-slate-100 shrink-0">
+        <div className="inline-flex bg-slate-100 rounded-lg p-0.5" role="group" aria-label={t('menu.viewToggle')}>
+          <button
+            onClick={() => setViewMode('list')}
+            className={clsx(
+              'p-1.5 rounded-md transition-colors',
+              viewMode === 'list' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600',
+            )}
+            aria-label={t('menu.viewList')}
+            aria-pressed={viewMode === 'list'}
+            title={t('menu.viewList')}
+          >
+            <List size={14} />
+          </button>
+          <button
+            onClick={() => setViewMode('grid')}
+            className={clsx(
+              'p-1.5 rounded-md transition-colors',
+              viewMode === 'grid' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600',
+            )}
+            aria-label={t('menu.viewGrid')}
+            aria-pressed={viewMode === 'grid'}
+            title={t('menu.viewGrid')}
+          >
+            <LayoutGrid size={14} />
+          </button>
+        </div>
+      </div>
+
       {/* ── Menu content (3-pane) ────────────────────────────── */}
       {/* No pb-24 here — the BottomNav is in-flow in the shell now,
           not fixed, so we don't need to reserve space for it. */}
       <div className="flex-1 flex min-h-0">
         {activeCategory === '__special__' ? (
-          <main className="flex-1 overflow-y-auto px-3 py-3 space-y-2 min-w-0">
+          <main className={clsx(
+            'flex-1 overflow-y-auto px-3 py-3 min-w-0',
+            viewMode === 'grid' ? 'grid grid-cols-2 gap-2 auto-rows-max' : 'space-y-2',
+          )}>
             {(() => {
               const specialItems = menu
                 .flatMap((c: any) => c.subcategories?.flatMap((s: any) => s.items || []) || [])
                 .filter((i: any) => i.isDisplayed && i.isSpecial);
               if (specialItems.length === 0) {
-                return <p className="text-sm text-slate-400 italic text-center py-12">{t('menu.noSpecials')}</p>;
+                return <p className={clsx('text-sm text-slate-400 italic text-center py-12', viewMode === 'grid' && 'col-span-2')}>{t('menu.noSpecials')}</p>;
               }
               const outletClosed = openStatus && !openStatus.isOpen;
+              const Card = viewMode === 'grid' ? MenuItemCard : MenuItemRow;
               return specialItems.map((item: any) => {
                 const outOfSchedule = item.inSchedule === false;
                 const rowDisabled = outletClosed || !item.isAvailable || outOfSchedule;
@@ -961,7 +1009,7 @@ export default function OrderPage() {
                       ? t('item.availableAt', { when: formatNextOpen(item.nextOpen, t, t('days.later')) })
                       : null;
                 return (
-                <MenuItemRow
+                <Card
                   key={item.id}
                   item={item}
                   qty={cart.filter(c => c.itemId === item.id).reduce((s, l) => s + l.quantity, 0)}
@@ -1046,18 +1094,22 @@ export default function OrderPage() {
         </aside>
 
         {/* Right: items in selected subcategory */}
-        <main className="flex-1 overflow-y-auto px-3 py-3 space-y-2 min-w-0">
+        <main className={clsx(
+          'flex-1 overflow-y-auto px-3 py-3 min-w-0',
+          viewMode === 'grid' ? 'grid grid-cols-2 gap-2 auto-rows-max' : 'space-y-2',
+        )}>
           {(() => {
             const sub = activeCat?.subcategories?.find((s: any) => s.id === activeSub);
             const items = (sub?.items || []).filter((i: any) => i.isDisplayed);
             if (items.length === 0) {
               return (
-                <p className="text-sm text-slate-400 italic text-center py-12">
+                <p className={clsx('text-sm text-slate-400 italic text-center py-12', viewMode === 'grid' && 'col-span-2')}>
                   {t('menu.noItems')}
                 </p>
               );
             }
             const outletClosed = openStatus && !openStatus.isOpen;
+            const Card = viewMode === 'grid' ? MenuItemCard : MenuItemRow;
             return items.map((item: any) => {
               const outOfSchedule = item.inSchedule === false;
               const rowDisabled = outletClosed || !item.isAvailable || outOfSchedule;
@@ -1069,7 +1121,7 @@ export default function OrderPage() {
                     ? t('item.availableAt', { when: formatNextOpen(item.nextOpen, t, t('days.later')) })
                     : null;
               return (
-              <MenuItemRow
+              <Card
                 key={item.id}
                 item={item}
                 qty={cart.filter(c => c.itemId === item.id).reduce((s, l) => s + l.quantity, 0)}
@@ -1527,6 +1579,149 @@ function MenuItemRow({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled
               <Plus size={12} /> {t('item.add')}{qty > 0 && ` · ${qty}`}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Grid-view menu card ──────────────────────────────────
+   Image-on-top layout for the 2-column grid. Shares the same
+   props signature as MenuItemRow so the two are interchangeable
+   at the call site. Kept as a separate component (rather than a
+   viewMode branch inside MenuItemRow) because the layout, badge
+   placement, and price/add positioning are all different enough
+   that a single component would end up mostly conditionals. */
+function MenuItemCard({ item, qty, onOpen, onQuickAdd, onToggleFavorite, disabled, disabledReason }: {
+  item: any; qty: number;
+  onOpen: () => void;
+  onQuickAdd: (e: React.MouseEvent) => void;
+  onToggleFavorite?: (e: React.MouseEvent) => void;
+  disabled?: boolean;
+  disabledReason?: string | null;
+}) {
+  const { t } = useTranslation();
+  const hasVariants = !!item.variants?.length;
+  const lowPrice = hasVariants
+    ? Math.min(...item.variants.map((v: any) => Number(v.effectivePrice ?? v.price)))
+    : Number(item.effectivePrice ?? item.basePrice);
+  const lowDiscounted = hasVariants
+    ? Math.min(
+        ...item.variants.map((v: any) =>
+          v.discountInfo?.discountedPrice != null
+            ? Number(v.discountInfo.discountedPrice)
+            : Number(v.effectivePrice ?? v.price),
+        ),
+      )
+    : item.discountInfo?.discountedPrice != null
+      ? Number(item.discountInfo.discountedPrice)
+      : lowPrice;
+  const hasDiscount = lowDiscounted < lowPrice - 0.005;
+  return (
+    <div
+      onClick={disabled ? undefined : onOpen}
+      role="button" tabIndex={disabled ? -1 : 0}
+      className={clsx(
+        'group text-left bg-white rounded-2xl border shadow-card overflow-hidden transition-colors flex flex-col',
+        disabled
+          ? 'border-slate-100 opacity-60 cursor-not-allowed'
+          : 'border-slate-100 hover:border-brand-200 cursor-pointer',
+      )}
+    >
+      {/* Image — fixed height keeps every card the same visual
+          size regardless of image dimensions. We use an explicit
+          h-40 (160px) rather than aspect-square because a grid
+          row's default sizing collapses aspect-ratio to 0 when
+          the row's tallest item doesn't otherwise demand height. */}
+      <div className="relative w-full h-40 bg-gradient-to-br from-slate-100 to-slate-200 overflow-hidden shrink-0">
+        {item.thumbnailUrl || item.imageUrl ? (
+          <img
+            src={item.thumbnailUrl || item.imageUrl}
+            alt={item.name}
+            loading="lazy"
+            decoding="async"
+            className={clsx('absolute inset-0 w-full h-full object-cover', disabled && 'grayscale')}
+          />
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center text-3xl">🍽️</div>
+        )}
+        <span className="absolute top-1.5 left-1.5 inline-flex items-center justify-center bg-white/95 rounded-md shadow-sm p-0.5">
+          <FoodGradeDot grade={item.foodGrade} />
+        </span>
+        {onToggleFavorite && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleFavorite(e); }}
+            className={clsx(
+              'absolute top-1.5 right-1.5 w-8 h-8 rounded-full inline-flex items-center justify-center backdrop-blur-sm transition-colors',
+              item.isFavorite ? 'bg-red-500/90 text-white' : 'bg-white/85 text-slate-500 hover:text-red-500',
+            )}
+            title={item.isFavorite ? t('item.favouriteRemove') : t('item.favouriteAdd')}
+            aria-label={item.isFavorite ? t('item.favouriteRemove') : t('item.favouriteAdd')}
+          >
+            <Heart size={14} fill={item.isFavorite ? 'currentColor' : 'none'} />
+          </button>
+        )}
+        {(item.isPopular || item.isSpecial) && (
+          <div className="absolute bottom-1.5 left-1.5 flex gap-1">
+            {item.isPopular && (
+              <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-amber-50/95 text-amber-700 px-1.5 py-0.5 rounded-full">
+                <Star size={8} fill="currentColor" /> {t('item.popular')}
+              </span>
+            )}
+            {item.isSpecial && (
+              <span className="inline-flex items-center gap-0.5 text-[9px] font-bold bg-rose-50/95 text-rose-700 px-1.5 py-0.5 rounded-full">
+                ⭐ {t('item.special')}
+              </span>
+            )}
+          </div>
+        )}
+        {disabled && disabledReason && (
+          <div className="absolute inset-x-0 bottom-0 bg-slate-900/70 text-white text-[10px] font-bold px-2 py-1 text-center">
+            {disabledReason}
+          </div>
+        )}
+      </div>
+      {/* Content — name, optional description, price row */}
+      <div className="flex-1 p-2.5 flex flex-col gap-1 min-w-0">
+        <p className="text-[13px] font-bold text-slate-900 leading-tight line-clamp-2 min-h-[2.25rem]">
+          {item.name}
+        </p>
+        {item.shortDescription && (
+          <p className="text-[11px] text-slate-400 line-clamp-1">{item.shortDescription}</p>
+        )}
+        <div className="mt-auto flex items-end justify-between gap-2 pt-1">
+          <div className="min-w-0">
+            {hasDiscount ? (
+              <div className="flex items-baseline gap-1.5 flex-wrap">
+                <span className="text-sm font-black text-emerald-700">
+                  {hasVariants ? t('item.from', { price: lowDiscounted.toFixed(0) }) : `₹${lowDiscounted.toFixed(0)}`}
+                </span>
+                <span className="text-[11px] text-slate-400 line-through">₹{lowPrice.toFixed(0)}</span>
+              </div>
+            ) : (
+              <span className="text-sm font-black text-slate-900">
+                {hasVariants ? t('item.from', { price: lowPrice.toFixed(0) }) : `₹${lowPrice.toFixed(0)}`}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={onQuickAdd}
+            disabled={disabled}
+            className={clsx(
+              'relative shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-full text-xs font-bold transition-colors',
+              disabled
+                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                : 'bg-gold-500 hover:bg-gold-600 text-charcoal-900',
+            )}
+            aria-label={qty > 0 ? t('item.add') + ` (${qty})` : t('item.add')}
+          >
+            <Plus size={16} />
+            {qty > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-brand-500 text-white text-[9px] font-bold flex items-center justify-center">
+                {qty}
+              </span>
+            )}
+          </button>
         </div>
       </div>
     </div>

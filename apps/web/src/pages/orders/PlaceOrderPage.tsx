@@ -7,6 +7,7 @@ import {
   Plus, Minus, ShoppingBag, Trash2, Banknote, Smartphone,
   Phone, Package, X as XIcon, Search, Lock, Table2,
   Maximize2, Minimize2, Printer as PrinterIcon,
+  LayoutGrid, List,
 } from 'lucide-react';
 import { RootState } from '../../store';
 import api from '../../services/api';
@@ -66,6 +67,21 @@ export default function PlaceOrderPage() {
   const [activeCat, setActiveCat] = useState('');
   const [activeSub, setActiveSub] = useState('');
   const [search, setSearch] = useState('');
+  // Compact toolbar: search is a bare icon-button by default; expands
+  // to an input only when opened. Keeps category tabs from overflowing.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  // View preference for the items pane — persists per device so the
+  // waitstaff's chosen layout survives navigation and refresh.
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
+    try {
+      const v = localStorage.getItem('place-order-view-mode');
+      return v === 'grid' ? 'grid' : 'list';
+    } catch { return 'list'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('place-order-view-mode', viewMode); } catch {}
+  }, [viewMode]);
 
   // Multiple-menus state. Populated from the outlet's menu list; we only
   // show tab chrome when there's more than one enabled menu, otherwise the
@@ -1118,15 +1134,42 @@ export default function PlaceOrderPage() {
                 </button>
               ))}
             </div>
-            <div className="relative shrink-0">
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder={t('placeOrder.searchItems')}
-                className="input pl-8 py-1.5 text-sm w-48"
-              />
-            </div>
+            {searchOpen || search ? (
+              <div className="relative shrink-0">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  ref={searchInputRef}
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  onBlur={() => { if (!search) setSearchOpen(false); }}
+                  onKeyDown={(e) => { if (e.key === 'Escape') { setSearch(''); setSearchOpen(false); (e.target as HTMLInputElement).blur(); } }}
+                  placeholder={t('placeOrder.searchItems')}
+                  className="input pl-8 pr-7 py-1.5 text-sm w-48"
+                  autoFocus
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => { setSearch(''); setSearchOpen(false); }}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-700"
+                    title={t('placeOrder.clear')}
+                    aria-label={t('placeOrder.clear')}
+                  >
+                    <XIcon size={12} />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchInputRef.current?.focus()); }}
+                className="btn-ghost p-2 text-slate-500 hover:text-slate-800 shrink-0"
+                title={t('placeOrder.searchItems')}
+                aria-label={t('placeOrder.searchItems')}
+              >
+                <Search size={15} />
+              </button>
+            )}
             {/* Receipt printer pill — visible when the outlet has any
                 receipt-print flag on and a printer configured. Tap to
                 pair via Web Bluetooth (or re-pair after a page reload).
@@ -1149,6 +1192,32 @@ export default function PlaceOrderPage() {
                 {receiptPrinterReady ? t('placeOrder.printerReady') : t('placeOrder.printerConnect')}
               </button>
             )}
+            <div className="inline-flex bg-slate-100 rounded-lg p-0.5 shrink-0" role="group" aria-label={t('placeOrder.viewToggle')}>
+              <button
+                onClick={() => setViewMode('list')}
+                className={clsx(
+                  'p-1.5 rounded-md transition-colors',
+                  viewMode === 'list' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600',
+                )}
+                aria-label={t('placeOrder.viewList')}
+                aria-pressed={viewMode === 'list'}
+                title={t('placeOrder.viewList')}
+              >
+                <List size={14} />
+              </button>
+              <button
+                onClick={() => setViewMode('grid')}
+                className={clsx(
+                  'p-1.5 rounded-md transition-colors',
+                  viewMode === 'grid' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600',
+                )}
+                aria-label={t('placeOrder.viewGrid')}
+                aria-pressed={viewMode === 'grid'}
+                title={t('placeOrder.viewGrid')}
+              >
+                <LayoutGrid size={14} />
+              </button>
+            </div>
             <button
               type="button"
               onClick={toggleFullscreen}
@@ -1194,11 +1263,16 @@ export default function PlaceOrderPage() {
             </aside>
 
             {/* Items */}
-            <main className="flex-1 overflow-y-auto p-3 space-y-2 min-w-0">
+            <main className={clsx(
+              'flex-1 overflow-y-auto p-3 min-w-0',
+              viewMode === 'grid' ? 'grid grid-cols-2 xl:grid-cols-3 gap-2 auto-rows-max' : 'space-y-2',
+            )}>
               {loading ? (
-                Array.from({ length: 5 }).map((_, i) => <div key={i} className="card h-16 animate-pulse" />)
+                Array.from({ length: viewMode === 'grid' ? 6 : 5 }).map((_, i) => (
+                  <div key={i} className={clsx('card animate-pulse', viewMode === 'grid' ? 'h-56' : 'h-16')} />
+                ))
               ) : items.length === 0 ? (
-                <p className="text-sm text-slate-400 italic text-center py-12">
+                <p className={clsx('text-sm text-slate-400 italic text-center py-12', viewMode === 'grid' && 'col-span-2 xl:col-span-3')}>
                   {t('placeOrder.noItemsAvailable')}
                 </p>
               ) : (
@@ -1215,6 +1289,69 @@ export default function PlaceOrderPage() {
                     : !item.isAvailable
                       ? t('placeOrder.itemUnavailable')
                       : null;
+                  if (viewMode === 'grid') {
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => !disabled && tryAdd(item)}
+                        role={disabled ? undefined : 'button'}
+                        tabIndex={disabled ? -1 : 0}
+                        className={clsx(
+                          'bg-white rounded-2xl border overflow-hidden flex flex-col transition-colors',
+                          disabled
+                            ? 'border-slate-100 opacity-60 cursor-not-allowed'
+                            : 'border-slate-100 cursor-pointer hover:border-brand-200',
+                        )}
+                      >
+                        <div className="relative w-full h-40 bg-gradient-to-br from-slate-100 to-slate-200 overflow-hidden shrink-0">
+                          {item.thumbnailUrl || item.imageUrl ? (
+                            <img
+                              src={item.thumbnailUrl || item.imageUrl}
+                              alt={item.name}
+                              className={clsx('absolute inset-0 w-full h-full object-cover', disabled && 'grayscale')}
+                            />
+                          ) : (
+                            <div className="absolute inset-0 flex items-center justify-center text-3xl">🍽️</div>
+                          )}
+                          <span className="absolute top-1.5 left-1.5 inline-flex items-center justify-center bg-white/95 rounded-md shadow-sm p-0.5">
+                            <FoodGradeDot grade={item.foodGrade} />
+                          </span>
+                          {disabledReason && (
+                            <div className="absolute inset-x-0 bottom-0 bg-slate-900/70 text-white text-[10px] font-bold px-2 py-1 text-center">
+                              {disabledReason}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 p-2.5 flex flex-col gap-1 min-w-0">
+                          <p className="text-[13px] font-bold text-slate-900 leading-tight line-clamp-2 min-h-[2.25rem]">
+                            {item.name}
+                          </p>
+                          {item.shortDescription && (
+                            <p className="text-[11px] text-slate-400 line-clamp-1">{item.shortDescription}</p>
+                          )}
+                          <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+                            <span className="text-sm font-black text-slate-900">
+                              {hasVariants ? t('placeOrder.fromPrice', { price: lowPrice.toFixed(0) }) : `₹${lowPrice.toFixed(0)}`}
+                            </span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); tryAdd(item); }}
+                              disabled={disabled}
+                              className={clsx(
+                                'shrink-0 inline-flex items-center justify-center gap-0.5 w-9 h-9 rounded-full text-xs font-bold',
+                                disabled
+                                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                  : 'bg-brand-500 hover:bg-brand-600 text-white',
+                              )}
+                              aria-label={t('placeOrder.addBtn')}
+                              title={qty > 0 ? t('placeOrder.addBtnWithQty', { qty }) : t('placeOrder.addBtn')}
+                            >
+                              <Plus size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
                   return (
                     <div
                       key={item.id}
