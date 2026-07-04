@@ -854,9 +854,12 @@ function TrackPageAdCard({
 
       <div className="relative rounded-2xl overflow-hidden shadow-card bg-white border border-slate-200">
         {/* Creative area — video wins over image wins over gradient
-            fallback. Aspect kept portrait (4:5) so mobile-first
-            creatives land at the right dimensions. */}
-        <div className="relative aspect-[4/5] w-full bg-gradient-to-br from-amber-100 via-orange-100 to-rose-100 overflow-hidden">
+            fallback. Height is viewport-relative (~28% of screen) so
+            the ad slot never dominates the tracking view. Min/max
+            clamps keep it usable on very short (landscape phone) or
+            very tall (tablet) viewports; the object-cover on the
+            media inside handles any aspect mismatch. */}
+        <div className="relative w-full h-[28vh] min-h-[180px] max-h-[280px] bg-gradient-to-br from-amber-100 via-orange-100 to-rose-100 overflow-hidden">
           {creative?.videoUrl ? (
             // muted + playsInline are required for iOS to autoplay
             // inline; loop keeps the slot animated for the whole
@@ -882,14 +885,16 @@ function TrackPageAdCard({
             />
           ) : (
             <>
-              {/* Big decorative outlet initial as the fallback "hero". */}
+              {/* Big decorative outlet initial as the fallback "hero".
+                  Sized in em relative to a 6rem base so it scales
+                  cleanly across the 180-280px height clamp. */}
               <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-[9rem] font-black text-white/70 drop-shadow-sm select-none leading-none">
+                <span className="text-[6rem] font-black text-white/70 drop-shadow-sm select-none leading-none">
                   {initial}
                 </span>
               </div>
               {/* Subtle brand-tinged plate ring the initial sits on. */}
-              <div className="absolute inset-6 rounded-2xl border-4 border-white/40 pointer-events-none" />
+              <div className="absolute inset-4 rounded-2xl border-4 border-white/40 pointer-events-none" />
             </>
           )}
 
