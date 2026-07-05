@@ -751,12 +751,12 @@ model Outlet {
   splitExpireAfterMinutes   Int                @default(1440)
   splitFeesAbsorbedBy       SplitFeeAbsorption @default(OUTLET)
 
-  // Business-admin-controlled feature toggle. When false, the
-  // outlet admin doesn't see the Aggregators sub-page under
-  // Settings, and inbound webhooks for this outlet keep working
-  // only via integrations that were already set up before the flag
-  // was flipped (the AggregatorIntegration table is independent of
-  // this flag). Default false so the toggle is opt-in per outlet.
+  // Business-admin-controlled feature toggle. The Aggregators nav
+  // item is now visible for every outlet admin regardless of this
+  // flag (see Layout.tsx — the UI gate was removed). Kept in the
+  // schema so the OutletsPage business-admin form can still record
+  // the intent per outlet, but no code reads it right now. Default
+  // stays false so new outlets don't clash with existing seed data.
   aggregatorEnabled Boolean @default(false)
 
   // i18n denorm — see Business.* for the shape/lifecycle.

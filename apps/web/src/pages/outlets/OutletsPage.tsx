@@ -361,13 +361,13 @@ export default function OutletsPage() {
                         <input
                           type="checkbox"
                           name="aggregatorEnabled"
-                          defaultChecked={!!selected.aggregatorEnabled}
+                          defaultChecked={selected.aggregatorEnabled !== false}
                           className="mt-0.5"
                         />
                         <span>
                           <span className="block text-xs font-semibold text-slate-700">Aggregator integration</span>
                           <span className="block text-[10px] text-slate-500">
-                            When on, the outlet admin sees the Aggregators settings page (Zomato / Swiggy / Uber Eats). Off by default.
+                            Zomato / Swiggy / Uber Eats. On by default — untick to hide the outlet admin's integration form for this outlet.
                           </span>
                         </span>
                       </label>
