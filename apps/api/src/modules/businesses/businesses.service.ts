@@ -40,6 +40,10 @@ export class CreateBusinessDto {
   @IsString() @IsOptional() adminPhone?: string;
   @IsString() @IsOptional() adminName?: string;
   @IsOptional() multipleMenusEnabled?: boolean;
+  // Business-level toggle for aggregator (Zomato / Swiggy / Uber Eats)
+  // integrations. When false the Aggregators settings sub-page is
+  // hidden for every outlet under this business.
+  @IsBoolean() @IsOptional() aggregatorEnabled?: boolean;
   // Cluster businesses (food court / theatre roof) aggregate outlets from
   // OTHER businesses via the ClusterMember join. They own no outlets, seed
   // no menu, and the admin user is optional (platform-admin managed).

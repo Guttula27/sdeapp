@@ -126,6 +126,7 @@ export default function PlatformPage() {
         adminPhone: fd.get('adminPhone'),
         adminName: fd.get('adminName') || undefined,
         isCluster,
+        aggregatorEnabled: fd.get('aggregatorEnabled') === 'on',
       });
       toast.success(isCluster ? 'Cluster business created' : 'Business created');
       setBizModal(false);
@@ -434,6 +435,18 @@ export default function PlatformPage() {
           <Field label="GST Number">
             <input name="gstNumber" className="input font-mono" placeholder="29ABCDE1234F1Z5" />
           </Field>
+          {/* Aggregator opt-in. When off the Aggregators settings sub-page is
+              hidden for every outlet under this business. Business admin can
+              flip it later from Business Profile. */}
+          <label className="flex items-start gap-2 cursor-pointer rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <input type="checkbox" name="aggregatorEnabled" className="mt-0.5" />
+            <span>
+              <span className="block text-xs font-semibold text-slate-800">Enable marketplace aggregators</span>
+              <span className="block text-[11px] text-slate-500 leading-relaxed">
+                Zomato / Swiggy / Uber Eats. Leave off for dine-in-only tenants — outlet admins won't see the Aggregators settings sub-page.
+              </span>
+            </span>
+          </label>
           {isClusterForm && (
             <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-1">
               <p className="text-xs font-bold text-indigo-700 uppercase tracking-wider">Cluster</p>

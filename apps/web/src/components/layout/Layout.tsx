@@ -43,6 +43,25 @@ function scrubSeatingNav(items: NavItem[]): NavItem[] {
     .filter((x): x is NavItem => x !== null);
 }
 
+// Strips the "/aggregators" entry (and its /aggregators/mappings child, if
+// added later) from both top-level nav and Settings children. Used when
+// either the business-level `Business.aggregatorEnabled` opt-in or the
+// per-outlet `Outlet.aggregatorEnabled` override is off — the option is
+// hidden completely instead of being greyed out.
+function stripAggregatorsNav(items: NavItem[]): NavItem[] {
+  const isAggregator = (path: string) => path === '/aggregators' || path.startsWith('/aggregators/');
+  return items
+    .map((it): NavItem | null => {
+      if (isAggregator(it.to)) return null;
+      if (it.children) {
+        const kept = it.children.filter((c) => !isAggregator(c.to));
+        return { ...it, children: kept };
+      }
+      return it;
+    })
+    .filter((x): x is NavItem => x !== null);
+}
+
 // Service Stations are an extension of Dine-In Sections — a service
 // station maps staff to a set of tables inside a section. With zero
 // sections, the Service Stations form has nothing to assign to, so we
@@ -485,12 +504,16 @@ export default function Layout() {
   const scrubbed = !!user?.outletId && outletType && !allowsSeating(outletType)
     ? scrubSeatingNav(rawNav)
     : rawNav;
-  // Aggregators (Zomato / Swiggy / Uber Eats) are now surfaced for every
-  // outlet admin. The paynpik_outlets.aggregatorEnabled flag stays in
-  // the schema so a business admin can still turn the integration off
-  // per outlet from OutletsPage, but the nav item itself is always
-  // visible so outlet admins discover the feature.
-  const afterAggregatorGate = scrubbed;
+  // Aggregators (Zomato / Swiggy / Uber Eats) is a two-tier opt-in. The
+  // Business-level `Business.aggregatorEnabled` gates the tenant as a
+  // whole; `Outlet.aggregatorEnabled` is a per-outlet override the
+  // business admin flips from OutletsPage. If either is off for this
+  // user's outlet we strip the entry from Settings entirely — the goal
+  // is to hide the sub-page for dine-in-only tenants, not to grey it out.
+  const bizAggregatorOn = user?.business?.aggregatorEnabled === true;
+  const outletAggregatorOn = user?.outlet?.aggregatorEnabled === true;
+  const aggregatorAllowed = bizAggregatorOn && outletAggregatorOn;
+  const afterAggregatorGate = aggregatorAllowed ? scrubbed : stripAggregatorsNav(scrubbed);
   // Dine-in outlet with no sections yet → grey out the Service
   // Stations nav row (still visible so the operator can see it's a
   // future step, but non-clickable with a tooltip explaining why).

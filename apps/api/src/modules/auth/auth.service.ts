@@ -78,8 +78,11 @@ export class AuthService {
         // compute on every authed request.
         responsibilities: { include: { responsibility: true } },
         // Cluster context so the client can route Cluster Owners straight
-        // to their cluster admin instead of /dashboard.
-        business: { select: { id: true, name: true, isCluster: true } },
+        // to their cluster admin instead of /dashboard. aggregatorEnabled
+        // is the business-tier toggle that gates the Aggregators nav —
+        // when false the outlet-tier `Outlet.aggregatorEnabled` has no
+        // effect because the settings entry is hidden across the tenant.
+        business: { select: { id: true, name: true, isCluster: true, aggregatorEnabled: true } },
       },
     });
 
@@ -261,7 +264,7 @@ export class AuthService {
         // Surface enough business context for the client to decide the
         // landing page. Cluster Owners go straight to the cluster admin
         // page instead of the standard /dashboard.
-        business: { select: { id: true, name: true, isCluster: true } },
+        business: { select: { id: true, name: true, isCluster: true, aggregatorEnabled: true } },
         // Outlet's type drives client-side feature gating — self-service
         // outlets hide dine-in sections, service stations and the
         // service desk nav since none of them apply. aggregatorEnabled
@@ -372,7 +375,7 @@ export class AuthService {
         mustChangePassword: true,
         businessId: true,
         outletId: true,
-        business: { select: { id: true, name: true, isCluster: true } },
+        business: { select: { id: true, name: true, isCluster: true, aggregatorEnabled: true } },
         outlet: { select: { id: true, name: true, outletType: true, aggregatorEnabled: true } },
         role: { select: { id: true, name: true } },
       },

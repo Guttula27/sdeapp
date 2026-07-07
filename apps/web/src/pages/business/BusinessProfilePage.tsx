@@ -60,6 +60,7 @@ export default function BusinessProfilePage() {
     address: '',
     addressLine1: '', addressLine2: '', city: '', state: '', pincode: '', country: 'India', mapsLocation: '',
     gstNumber: '', upiId: '',
+    aggregatorEnabled: false,
   });
   const [primary, setPrimary] = useState<string | null>(null);
   const [gallery, setGallery] = useState<{ id?: string; url: string; isNew?: boolean }[]>([]);
@@ -96,6 +97,7 @@ export default function BusinessProfilePage() {
         mapsLocation: d.mapsLocation || '',
         gstNumber: d.gstNumber || '',
         upiId: d.upiId || '',
+        aggregatorEnabled: !!d.aggregatorEnabled,
       });
       setPrimary(d.primaryImageUrl || null);
       setGallery((d.images || []).map((g: any) => ({ id: g.id, url: g.url })));
@@ -153,6 +155,7 @@ export default function BusinessProfilePage() {
         mapsLocation: form.mapsLocation.trim() || undefined,
         gstNumber: form.gstNumber.trim() || undefined,
         upiId: form.upiId.trim() || undefined,
+        aggregatorEnabled: form.aggregatorEnabled,
         primaryImageUrl: primary,
       });
 
@@ -277,6 +280,26 @@ export default function BusinessProfilePage() {
             <input value={form.upiId} onChange={e => setForm(p => ({ ...p, upiId: e.target.value }))} className="input" placeholder="business@upi" />
           </Field>
         </div>
+      </div>
+
+      {/* Features */}
+      <div className="card p-5 space-y-3">
+        <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Features</p>
+        <label className="flex items-start gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={form.aggregatorEnabled}
+            onChange={e => setForm(p => ({ ...p, aggregatorEnabled: e.target.checked }))}
+            className="mt-0.5"
+          />
+          <span>
+            <span className="block text-sm font-semibold text-slate-800">Marketplace aggregators</span>
+            <span className="block text-[11px] text-slate-500 leading-relaxed">
+              Zomato / Swiggy / Uber Eats. When off, the Aggregators settings sub-page is hidden for every outlet under this business.
+              Individual outlets can still be opted out from their per-outlet toggle in Outlets.
+            </span>
+          </span>
+        </label>
       </div>
 
       {/* Imagery */}

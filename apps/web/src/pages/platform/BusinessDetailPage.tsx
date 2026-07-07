@@ -36,6 +36,7 @@ type Business = {
   businessType: string;
   status: string;
   isCluster?: boolean;
+  aggregatorEnabled?: boolean;
   platformFeePercent?: string | number | null;
   platformFeeMinimum?: string | number | null;
   subscription?: { id: string; status: string; plan: { name: string; monthlyCost: number } } | null;
@@ -89,6 +90,21 @@ export default function BusinessDetailPage() {
       await api.patch(`/businesses/${business.id}/toggle-status`);
       toast.success(business.status === 'ACTIVE' ? 'Deactivated' : 'Activated');
       load();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleAggregator = async () => {
+    if (!business) return;
+    const next = !business.aggregatorEnabled;
+    setSaving(true);
+    try {
+      await api.patch(`/businesses/${business.id}`, { aggregatorEnabled: next });
+      setBusiness({ ...business, aggregatorEnabled: next });
+      toast.success(next ? 'Aggregators enabled' : 'Aggregators disabled');
     } catch (e: any) {
       toast.error(e?.response?.data?.message || 'Failed');
     } finally {
@@ -249,6 +265,32 @@ export default function BusinessDetailPage() {
             Inheriting platform-wide defaults. Override via the Fees page.
           </p>
         )}
+      </section>
+
+      {/* Features */}
+      <section className="card p-5">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Features</h2>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-800">Marketplace aggregators</p>
+            <p className="text-[11px] text-slate-500 leading-relaxed mt-0.5 max-w-prose">
+              Zomato / Swiggy / Uber Eats. When off, the Aggregators settings sub-page is hidden for every outlet under this business.
+            </p>
+          </div>
+          <button
+            onClick={toggleAggregator}
+            disabled={saving}
+            className={clsx(
+              'inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap',
+              business.aggregatorEnabled
+                ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
+                : 'text-slate-600 bg-slate-100 hover:bg-slate-200',
+            )}
+          >
+            {business.aggregatorEnabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+            {business.aggregatorEnabled ? 'Enabled' : 'Disabled'}
+          </button>
+        </div>
       </section>
 
       {/* Outlets list */}

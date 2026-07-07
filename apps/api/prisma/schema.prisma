@@ -526,6 +526,15 @@ model Business {
   // Every business has at least one Menu row regardless of the flag.
   multipleMenusEnabled Boolean @default(false)
 
+  // Business-level opt-in for aggregator integrations (Zomato / Swiggy /
+  // Uber Eats). When false the Aggregators settings sub-page is hidden
+  // entirely across every outlet under this business, and the per-outlet
+  // `Outlet.aggregatorEnabled` override has no effect. Turn this on
+  // during business onboarding when the tenant already sells through
+  // marketplaces; leave off for dine-in-only chains that don't need
+  // the extra config surface.
+  aggregatorEnabled Boolean @default(false)
+
   subscriptionId String?       @unique
   subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
 

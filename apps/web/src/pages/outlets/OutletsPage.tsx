@@ -339,11 +339,16 @@ export default function OutletsPage() {
                       onSubmit={(e) => {
                         e.preventDefault();
                         const fd = new FormData(e.currentTarget);
-                        saveOps(outlet.id, {
+                        const payload: Record<string, unknown> = {
                           outletType: fd.get('outletType'),
-                          // Checkbox returns 'on' when checked, null when not — coerce to bool.
-                          aggregatorEnabled: fd.get('aggregatorEnabled') === 'on',
-                        });
+                        };
+                        // Only include aggregatorEnabled when the toggle is
+                        // rendered — otherwise a hidden field would silently
+                        // reset the stored value when the business flag is off.
+                        if (user?.business?.aggregatorEnabled === true) {
+                          payload.aggregatorEnabled = fd.get('aggregatorEnabled') === 'on';
+                        }
+                        saveOps(outlet.id, payload);
                       }}
                       className="grid grid-cols-1 gap-3"
                     >
@@ -357,20 +362,33 @@ export default function OutletsPage() {
                           {OUTLET_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                         </select>
                       </div>
-                      <label className="flex items-start gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          name="aggregatorEnabled"
-                          defaultChecked={selected.aggregatorEnabled !== false}
-                          className="mt-0.5"
-                        />
-                        <span>
-                          <span className="block text-xs font-semibold text-slate-700">Aggregator integration</span>
-                          <span className="block text-[10px] text-slate-500">
-                            Zomato / Swiggy / Uber Eats. On by default — untick to hide the outlet admin's integration form for this outlet.
+                      {/* Aggregator toggle is only meaningful when the business
+                          itself has aggregators enabled. If the business flag
+                          is off, hide the outlet-level override entirely and
+                          show a small notice pointing the admin to the business
+                          setting — the setting sub-page is hidden anyway. */}
+                      {user?.business?.aggregatorEnabled === true ? (
+                        <label className="flex items-start gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            name="aggregatorEnabled"
+                            defaultChecked={selected.aggregatorEnabled === true}
+                            className="mt-0.5"
+                          />
+                          <span>
+                            <span className="block text-xs font-semibold text-slate-700">Aggregator integration</span>
+                            <span className="block text-[10px] text-slate-500">
+                              Zomato / Swiggy / Uber Eats. Tick to expose the Aggregators settings sub-page to this outlet's admin.
+                            </span>
                           </span>
-                        </span>
-                      </label>
+                        </label>
+                      ) : (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                          <p className="text-[11px] text-slate-500 leading-relaxed">
+                            Marketplace aggregators are disabled at the business level — enable them in Business Profile to opt this outlet in.
+                          </p>
+                        </div>
+                      )}
                       <p className="text-[10px] text-slate-400 -mt-1">
                         Prep time, parcel fee and Razorpay Route ID now live on the outlet's own profile.
                       </p>
