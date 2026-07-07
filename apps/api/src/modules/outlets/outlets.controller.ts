@@ -20,8 +20,12 @@ export class OutletsController {
   }
 
   @Get('business/:businessId')
-  findByBusiness(@Param('businessId') businessId: string, @PreferredLanguage() lang: string | null) {
-    return this.service.findByBusiness(businessId, lang);
+  findByBusiness(
+    @Param('businessId') businessId: string,
+    @PreferredLanguage() lang: string | null,
+    @CurrentUser() user: any,
+  ) {
+    return this.service.findByBusiness(businessId, user, lang);
   }
 
   // Static-path routes must be declared before the dynamic `:id` route below,
@@ -36,6 +40,7 @@ export class OutletsController {
   findOne(
     @Param('id') id: string,
     @PreferredLanguage() lang: string | null,
+    @CurrentUser() user: any,
     // `mode=config` (default) returns config + hours + images only.
     // `mode=layout` adds sections.tables — many hundreds of rows for
     // a busy multi-section outlet. The map view passes layout; the
@@ -44,23 +49,27 @@ export class OutletsController {
     // historical shape.
     @Query('mode') mode?: 'config' | 'layout' | 'full',
   ) {
-    return this.service.findOne(id, lang, mode);
+    return this.service.findOne(id, user, lang, mode);
   }
 
   /** Sub-resource for the layout/map view. Skips config + i18n hydration. */
   @Get(':id/layout')
-  getLayout(@Param('id') id: string) {
-    return this.service.getLayout(id);
+  getLayout(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.service.getLayout(id, user);
   }
 
   @Get(':id/dashboard')
-  dashboard(@Param('id') id: string) {
-    return this.service.getDashboard(id);
+  dashboard(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.service.getDashboard(id, user);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: Partial<CreateOutletDto>) {
-    return this.service.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: Partial<CreateOutletDto>,
+    @CurrentUser() user: any,
+  ) {
+    return this.service.update(id, dto, user);
   }
 
   @Post(':outletId/sections')
@@ -112,18 +121,22 @@ export class OutletsController {
   }
 
   @Get(':id/admin')
-  admin(@Param('id') id: string) {
-    return this.service.findAdmin(id);
+  admin(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.service.findAdmin(id, user);
   }
 
   @Post(':id/images')
-  addImage(@Param('id') id: string, @Body() body: { url: string }) {
-    return this.service.addImage(id, body.url);
+  addImage(
+    @Param('id') id: string,
+    @Body() body: { url: string },
+    @CurrentUser() user: any,
+  ) {
+    return this.service.addImage(id, body.url, user);
   }
 
   @Delete(':id/images/:imageId')
-  removeImage(@Param('imageId') imageId: string) {
-    return this.service.removeImage(imageId);
+  removeImage(@Param('imageId') imageId: string, @CurrentUser() user: any) {
+    return this.service.removeImage(imageId, user);
   }
 
   @Public()
@@ -133,33 +146,35 @@ export class OutletsController {
   }
 
   @Get(':id/token-counter')
-  getTokenCounter(@Param('id') id: string) {
-    return this.service.getTokenCounter(id);
+  getTokenCounter(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.service.getTokenCounter(id, user);
   }
 
   @Patch(':id/token-counter')
   setTokenCounter(
     @Param('id') id: string,
     @Body() body: { startNumber?: number; currentNumber?: number },
+    @CurrentUser() user: any,
   ) {
-    return this.service.setTokenCounter(id, body);
+    return this.service.setTokenCounter(id, body, user);
   }
 
   @Post(':id/token-counter/reset')
-  resetTokenCounter(@Param('id') id: string) {
-    return this.service.resetTokenCounter(id);
+  resetTokenCounter(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.service.resetTokenCounter(id, user);
   }
 
   @Get(':id/hours')
-  getHours(@Param('id') id: string) {
-    return this.service.getHours(id);
+  getHours(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.service.getHours(id, user);
   }
 
   @Put(':id/hours')
   setHours(
     @Param('id') id: string,
     @Body() body: { ranges: { dayOfWeek: number; openTime: string; closeTime: string }[] },
+    @CurrentUser() user: any,
   ) {
-    return this.service.setHours(id, body.ranges || []);
+    return this.service.setHours(id, body.ranges || [], user);
   }
 }

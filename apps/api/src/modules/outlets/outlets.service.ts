@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, ValidateIf } from 'class-validator';
@@ -8,6 +8,7 @@ import { TranslationsService } from '../translations/translations.service';
 import { EncryptionService } from '../../config/crypto/encryption.service';
 import { UserLookupService } from '../../config/crypto/user-lookup.service';
 import { allowsSeating } from '../../common/outlet-type';
+import { scopeFor } from '../../common/permissions/scope';
 
 const DEFAULT_OUTLET_ADMIN_PASSWORD = 'abc@123';
 
@@ -122,6 +123,39 @@ export class OutletsService {
     };
   }
 
+  // ─── Tenant scoping ─────────────────────────────────────
+  // Refuse point-lookups on outlets the caller doesn't own. Platform users
+  // see everything; business-tier users see outlets under their business;
+  // outlet-tier users see only their own outlet. Returns 404 (not 403) so
+  // we don't leak "outlet exists at all" to a foreign tenant.
+  private async assertOutletAccess(user: any, outletId: string): Promise<void> {
+    const scope = scopeFor(user);
+    if (scope.kind === 'platform') return;
+    const row = await this.prisma.outlet.findUnique({
+      where: { id: outletId },
+      select: { id: true, businessId: true },
+    });
+    if (!row) throw new NotFoundException('Outlet not found');
+    if (scope.kind === 'business') {
+      if (row.businessId !== scope.businessId) throw new NotFoundException('Outlet not found');
+      return;
+    }
+    // outlet scope: must be the caller's own outlet.
+    if (outletId !== scope.outletId) throw new NotFoundException('Outlet not found');
+  }
+
+  // Refuse business-scoped reads across tenants. Business-tier users can
+  // only read their own business; outlet-tier users can only read the
+  // business their outlet belongs to (and get filtered down to just that
+  // one outlet by the caller).
+  private assertBusinessAccess(user: any, businessId: string): void {
+    const scope = scopeFor(user);
+    if (scope.kind === 'platform') return;
+    if (scope.businessId !== businessId) {
+      throw new ForbiddenException('Not permitted to access this business');
+    }
+  }
+
   async create(data: CreateOutletDto) {
     const { adminPhone, adminName, ...outletData } = data;
     if (!adminPhone) throw new BadRequestException('Outlet admin phone is required');
@@ -175,9 +209,18 @@ export class OutletsService {
     return { ...outlet, admin: adminUser };
   }
 
-  async findByBusiness(businessId: string, lang?: string | null) {
+  async findByBusiness(businessId: string, user: any, lang?: string | null) {
+    // Tenant scoping: block cross-business reads for business/outlet
+    // tiers, and narrow the row set for outlet-tier callers so they only
+    // see their own outlet (not sister outlets under the same business).
+    this.assertBusinessAccess(user, businessId);
+    const scope = scopeFor(user);
+    const where: { businessId: string; id?: string } =
+      scope.kind === 'outlet'
+        ? { businessId, id: scope.outletId }
+        : { businessId };
     const outlets = await this.prisma.outlet.findMany({
-      where: { businessId },
+      where,
       include: { _count: { select: { orders: true, tables: true } } },
     });
     await this.translations.hydrate('Outlet', outlets, ['name', 'description', 'address', 'addressLine1', 'addressLine2'], lang);
@@ -198,7 +241,8 @@ export class OutletsService {
    * layout block only — useful when a UI already has the config
    * cached and only needs to refresh the map.
    */
-  async findOne(id: string, lang?: string | null, mode: 'config' | 'layout' | 'full' = 'config') {
+  async findOne(id: string, user: any, lang?: string | null, mode: 'config' | 'layout' | 'full' = 'config') {
+    await this.assertOutletAccess(user, id);
     const includeLayout = mode === 'layout' || mode === 'full';
     const outlet = await this.prisma.outlet.findUnique({
       where: { id },
@@ -220,7 +264,8 @@ export class OutletsService {
   }
 
   /** Sub-resource: just the section/table layout. Used by the map view. */
-  async getLayout(id: string) {
+  async getLayout(id: string, user: any) {
+    await this.assertOutletAccess(user, id);
     const outlet = await this.prisma.outlet.findUnique({
       where: { id },
       select: {
@@ -232,7 +277,8 @@ export class OutletsService {
     return outlet;
   }
 
-  async update(id: string, data: Partial<CreateOutletDto>) {
+  async update(id: string, data: Partial<CreateOutletDto>, user: any) {
+    await this.assertOutletAccess(user, id);
     // Switching to a self-service type only makes sense when no seating
     // artefacts exist on the outlet. Block the change otherwise so we
     // don't strand sections/tables/table-types in an inconsistent state.
@@ -272,7 +318,8 @@ export class OutletsService {
   }
 
   // ─── Outlet admin lookup ─────────────────────────────────
-  async findAdmin(outletId: string) {
+  async findAdmin(outletId: string, user: any) {
+    await this.assertOutletAccess(user, outletId);
     return this.prisma.user.findFirst({
       where: { outletId },
       orderBy: { createdAt: 'asc' },
@@ -281,7 +328,8 @@ export class OutletsService {
   }
 
   // ─── Imagery gallery ─────────────────────────────────────
-  async addImage(outletId: string, url: string) {
+  async addImage(outletId: string, url: string, user: any) {
+    await this.assertOutletAccess(user, outletId);
     const max = await this.prisma.outletImage.aggregate({
       where: { outletId },
       _max: { displayOrder: true },
@@ -291,7 +339,15 @@ export class OutletsService {
     });
   }
 
-  removeImage(imageId: string) {
+  async removeImage(imageId: string, user: any) {
+    // Look up the owning outlet first so we can enforce the same tenant
+    // check we use for direct outlet reads. Cheap targeted select.
+    const img = await this.prisma.outletImage.findUnique({
+      where: { id: imageId },
+      select: { outletId: true },
+    });
+    if (!img) throw new NotFoundException('Image not found');
+    await this.assertOutletAccess(user, img.outletId);
     return this.prisma.outletImage.delete({ where: { id: imageId } });
   }
 
@@ -406,7 +462,8 @@ export class OutletsService {
    * Token counter config. tokenStartNumber is the value reset() snaps to;
    * nextTokenNumber is the value the next order will be tagged with.
    */
-  async getTokenCounter(outletId: string) {
+  async getTokenCounter(outletId: string, user: any) {
+    await this.assertOutletAccess(user, outletId);
     const o = await this.prisma.outlet.findUnique({
       where: { id: outletId },
       select: { tokenStartNumber: true, nextTokenNumber: true, nextOrderSequence: true },
@@ -415,7 +472,8 @@ export class OutletsService {
     return o;
   }
 
-  async setTokenCounter(outletId: string, body: { startNumber?: number; currentNumber?: number }) {
+  async setTokenCounter(outletId: string, body: { startNumber?: number; currentNumber?: number }, user: any) {
+    await this.assertOutletAccess(user, outletId);
     if (body.startNumber != null && (!Number.isInteger(body.startNumber) || body.startNumber < 1)) {
       throw new BadRequestException('startNumber must be a positive integer');
     }
@@ -432,7 +490,8 @@ export class OutletsService {
     });
   }
 
-  async resetTokenCounter(outletId: string) {
+  async resetTokenCounter(outletId: string, user: any) {
+    await this.assertOutletAccess(user, outletId);
     const o = await this.prisma.outlet.findUnique({
       where: { id: outletId },
       select: { tokenStartNumber: true },
@@ -446,7 +505,8 @@ export class OutletsService {
   }
 
   // ─── Hours (per-day, multi-range) ────────────────────────
-  getHours(outletId: string) {
+  async getHours(outletId: string, user: any) {
+    await this.assertOutletAccess(user, outletId);
     return this.prisma.outletHour.findMany({
       where: { outletId },
       orderBy: [{ dayOfWeek: 'asc' }, { openTime: 'asc' }],
@@ -455,7 +515,8 @@ export class OutletsService {
 
   // Replace the entire week's schedule in one call.
   // `ranges`: [{ dayOfWeek, openTime, closeTime }, …]. Days absent from the list are treated as CLOSED.
-  async setHours(outletId: string, ranges: { dayOfWeek: number; openTime: string; closeTime: string }[]) {
+  async setHours(outletId: string, ranges: { dayOfWeek: number; openTime: string; closeTime: string }[], user: any) {
+    await this.assertOutletAccess(user, outletId);
     // Light validation
     for (const r of ranges) {
       if (r.dayOfWeek < 0 || r.dayOfWeek > 6) throw new BadRequestException('dayOfWeek must be 0-6');
@@ -647,7 +708,8 @@ export class OutletsService {
     });
   }
 
-  async getDashboard(outletId: string) {
+  async getDashboard(outletId: string, user: any) {
+    await this.assertOutletAccess(user, outletId);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 

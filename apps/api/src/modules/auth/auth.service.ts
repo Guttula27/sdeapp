@@ -83,6 +83,14 @@ export class AuthService {
         // when false the outlet-tier `Outlet.aggregatorEnabled` has no
         // effect because the settings entry is hidden across the tenant.
         business: { select: { id: true, name: true, isCluster: true, aggregatorEnabled: true } },
+        // Outlet context on first login — the sidebar reads
+        // outlet.aggregatorEnabled + outlet.outletType at render time, and
+        // login is the only moment the client's stored user gets refreshed
+        // (there's no /auth/me refetch on boot). Without this include, the
+        // outlet-tier user only sees the flag after logout/login even if
+        // the business has aggregators enabled — matches what validateUser
+        // returns for token-refresh reads.
+        outlet: { select: { id: true, name: true, outletType: true, aggregatorEnabled: true } },
       },
     });
 
