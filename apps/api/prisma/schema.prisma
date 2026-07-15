@@ -1646,6 +1646,7 @@ model OrderStatusHistory {
   createdAt DateTime @default(now())
 
   @@index([changedBy])
+  @@index([orderId])
   @@map("paynpik_order_status_history")
 }
 
@@ -1685,6 +1686,7 @@ model Payment {
   updatedAt DateTime @updatedAt
 
   @@index([cashierShiftId, status])
+  @@index([orderId])
   @@map("paynpik_payments")
 }
 
@@ -1816,6 +1818,7 @@ model Refund {
   @@index([orderId])
   @@index([status])
   @@index([cashierShiftId])
+  @@index([paymentId])
   @@map("paynpik_refunds")
 }
 
@@ -2361,6 +2364,7 @@ model CustomerDuesLedger {
   @@index([userId, outletId])
   @@index([outletId, createdAt])
   @@index([orderId])
+  @@index([outletId, voidedAt, createdAt])
   @@map("paynpik_customer_dues_ledger")
 }
 
